@@ -252,6 +252,36 @@ export interface Database {
                 };
                 Relationships: [];
             };
+            audit_logs: {
+                Row: {
+                    id: string;
+                    actor_id: string | null;
+                    entity_type: string;
+                    entity_id: string;
+                    action: string;
+                    diff_json: Json;
+                    created_at: string;
+                };
+                Insert: {
+                    id?: string;
+                    actor_id?: string | null;
+                    entity_type: string;
+                    entity_id: string;
+                    action: string;
+                    diff_json?: Json;
+                    created_at?: string;
+                };
+                Update: {
+                    id?: string;
+                    actor_id?: string | null;
+                    entity_type?: string;
+                    entity_id?: string;
+                    action?: string;
+                    diff_json?: Json;
+                    created_at?: string;
+                };
+                Relationships: [];
+            };
             user_profiles: {
                 Row: {
                     id: string;
@@ -319,7 +349,69 @@ export interface Database {
                 Relationships: [];
             };
         };
-        Functions: Record<string, never>;
+        Functions: {
+            create_activity_entry: {
+                Args: {
+                    p_member_id: string;
+                    p_note?: string | null;
+                    p_occurred_at?: string | null;
+                    p_point_rule_id: string;
+                    p_reason?: string | null;
+                };
+                Returns: string;
+            };
+            create_batch_activity_entries: {
+                Args: {
+                    p_member_ids: string[];
+                    p_note?: string | null;
+                    p_occurred_at?: string | null;
+                    p_point_rule_id: string;
+                    p_reason?: string | null;
+                };
+                Returns: string[];
+            };
+            get_my_activity_logs: {
+                Args: Record<string, never>;
+                Returns: {
+                    category_id: string;
+                    category_name: string | null;
+                    id: string;
+                    is_reversal: boolean;
+                    member_id: string;
+                    member_name: string | null;
+                    note: string | null;
+                    point_delta: number;
+                    reason: string | null;
+                    record_id: string | null;
+                    record_status: string | null;
+                    reversal_of: string | null;
+                    timestamp: string;
+                }[];
+            };
+            get_my_member_overview: {
+                Args: Record<string, never>;
+                Returns: {
+                    id: string;
+                    is_approved: boolean;
+                    is_visible: boolean;
+                    joined_at: string | null;
+                    name: string;
+                    role_id: string | null;
+                    role_name: string | null;
+                    score: number;
+                    status: Database['public']['Enums']['member_status'];
+                    team_id: string | null;
+                    team_name: string | null;
+                }[];
+            };
+            reverse_activity_entry: {
+                Args: {
+                    p_note?: string | null;
+                    p_record_id: string;
+                };
+                Returns: string;
+            };
+        };
         Enums: {
             member_status: 'active' | 'dormant' | 'inactive';
             team_type: 'core' | 'study' | 'project';

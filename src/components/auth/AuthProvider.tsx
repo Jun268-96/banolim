@@ -1,40 +1,23 @@
-import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
-import type { Session, User } from '@supabase/supabase-js';
+import React, { useEffect, useMemo, useState } from 'react';
+import type { AuthChangeEvent, Session, User } from '@supabase/supabase-js';
 import type { AppRole, UserProfile } from '../../types';
-import { buildPermissions, type AppPermissions } from '../../lib/permissions';
+import { buildPermissions } from '../../lib/permissions';
 import { isSupabaseConfigured, supabase } from '../../lib/supabase';
-
-interface AuthContextValue {
-    isLoading: boolean;
-    isAuthenticated: boolean;
-    user: User | null;
-    session: Session | null;
-    profile: UserProfile | null;
-    role: AppRole;
-    permissions: AppPermissions;
-    signInWithMagicLink: (email: string) => Promise<{ error?: string }>;
-    signOut: () => Promise<void>;
-}
-
-const AuthContext = createContext<AuthContextValue | null>(null);
+import { AuthContext, type AuthContextValue } from './auth-context';
 
 const defaultDemoProfile: UserProfile = {
     id: 'demo-user',
     email: 'local-demo@banollim.app',
     memberId: null,
     appRole: 'operator',
-    displayName: 'Local Demo',
+    displayName: '로컬 데모',
     isActive: true,
 };
 
-const inferProfileFromUser = (user: User): UserProfile => ({
-    id: user.id,
-    email: user.email ?? 'unknown@banollim.app',
-    memberId: null,
-    appRole: 'member',
-    displayName: (user.user_metadata?.full_name as string | undefined) ?? user.email ?? 'Banollim Member',
-    isActive: true,
-});
+const validRoles: AppRole[] = ['super_admin', 'operator', 'team_lead', 'member'];
+
+const normalizeAppRole = (value: string | null | undefined): AppRole | null =>
+    validRoles.includes(value as AppRole) ? (value as AppRole) : null;
 
 const mapProfileRow = (data: {
     id: string;
@@ -43,13 +26,27 @@ const mapProfileRow = (data: {
     app_role: string;
     display_name: string | null;
     is_active: boolean;
-}): UserProfile => ({
-    id: data.id,
-    email: data.email,
-    memberId: data.member_id,
-    appRole: (data.app_role as AppRole) ?? 'member',
-    displayName: data.display_name,
-    isActive: data.is_active,
+}): UserProfile => {
+    const appRole = normalizeAppRole(data.app_role);
+
+    if (!appRole) {
+        throw new Error(`지원하지 않는 앱 권한입니다: ${data.app_role}`);
+    }
+
+    return {
+        id: data.id,
+        email: data.email,
+        memberId: data.member_id,
+        appRole,
+        displayName: data.display_name,
+        isActive: data.is_active,
+    };
+};
+
+const createProfileSeed = (user: User) => ({
+    id: user.id,
+    email: user.email ?? 'unknown@banollim.app',
+    display_name: (user.user_metadata?.full_name as string | undefined) ?? user.email ?? '반올림 회원',
 });
 
 const ensureProfile = async (user: User): Promise<UserProfile | null> => {
@@ -57,16 +54,10 @@ const ensureProfile = async (user: User): Promise<UserProfile | null> => {
         return defaultDemoProfile;
     }
 
-    const inferredProfile = inferProfileFromUser(user);
+    const seed = createProfileSeed(user);
     const { data, error } = await supabase
         .from('user_profiles')
-        .insert({
-            id: inferredProfile.id,
-            email: inferredProfile.email,
-            app_role: inferredProfile.appRole,
-            display_name: inferredProfile.displayName ?? inferredProfile.email,
-            is_active: true,
-        })
+        .upsert(seed, { onConflict: 'id' })
         .select('id, email, member_id, app_role, display_name, is_active')
         .single();
 
@@ -89,38 +80,88 @@ const fetchProfile = async (user: User): Promise<UserProfile> => {
         .maybeSingle();
 
     if (error) {
-        return inferProfileFromUser(user);
+        throw new Error('권한 프로필을 조회하지 못했습니다.');
     }
 
     if (!data) {
         const createdProfile = await ensureProfile(user);
-        return createdProfile ?? inferProfileFromUser(user);
+        if (!createdProfile) {
+            throw new Error('권한 프로필이 없어서 새로 만들려고 했지만 실패했습니다.');
+        }
+
+        return createdProfile;
     }
 
     return mapProfileRow(data);
+};
+
+const getProfileErrorMessage = (error: unknown) => {
+    if (error instanceof Error && error.message) {
+        return `로그인은 되었지만 권한 프로필을 확인하지 못했습니다. ${error.message}`;
+    }
+
+    return '로그인은 되었지만 권한 프로필을 확인하지 못했습니다. 다시 로그인하거나 권한 다시 확인을 눌러 주세요.';
+};
+
+const getMagicLinkErrorMessage = (error: unknown) => {
+    const status =
+        typeof error === 'object' && error !== null && 'status' in error
+            ? Number((error as { status?: number }).status)
+            : null;
+
+    if (status === 429) {
+        return '요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.';
+    }
+
+    if (error instanceof Error && error.message) {
+        return error.message;
+    }
+
+    return '로그인 링크를 보내지 못했습니다. 잠시 후 다시 시도해 주세요.';
 };
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const [session, setSession] = useState<Session | null>(null);
     const [user, setUser] = useState<User | null>(null);
     const [profile, setProfile] = useState<UserProfile | null>(isSupabaseConfigured ? null : defaultDemoProfile);
-    const [isLoading, setIsLoading] = useState(true);
+    const [isLoading, setIsLoading] = useState(isSupabaseConfigured);
+    const [authError, setAuthError] = useState<string | null>(null);
 
     useEffect(() => {
         const client = supabase;
 
         if (!isSupabaseConfigured || !client) {
-            setSession(null);
-            setUser(null);
-            setProfile(defaultDemoProfile);
-            setIsLoading(false);
             return;
         }
 
         let isMounted = true;
 
+        const resolveProfile = async (nextUser: User | null) => {
+            if (!nextUser) {
+                if (isMounted) {
+                    setProfile(null);
+                    setAuthError(null);
+                }
+                return;
+            }
+
+            try {
+                const resolvedProfile = await fetchProfile(nextUser);
+                if (isMounted) {
+                    setProfile(resolvedProfile);
+                    setAuthError(null);
+                }
+            } catch (error) {
+                console.error('[auth] failed to resolve user profile', error);
+
+                if (isMounted) {
+                    setProfile(null);
+                    setAuthError(getProfileErrorMessage(error));
+                }
+            }
+        };
+
         const initialize = async () => {
-            setIsLoading(true);
             const {
                 data: { session: currentSession },
             } = await client.auth.getSession();
@@ -130,14 +171,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             setSession(currentSession);
             setUser(currentSession?.user ?? null);
 
-            if (currentSession?.user) {
-                const resolvedProfile = await fetchProfile(currentSession.user);
-                if (isMounted) {
-                    setProfile(resolvedProfile);
-                }
-            } else {
-                setProfile(null);
-            }
+            await resolveProfile(currentSession?.user ?? null);
 
             if (isMounted) {
                 setIsLoading(false);
@@ -148,19 +182,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         const {
             data: { subscription },
-        } = client.auth.onAuthStateChange((_event, nextSession) => {
+        } = client.auth.onAuthStateChange((_event: AuthChangeEvent, nextSession: Session | null) => {
             setSession(nextSession);
             setUser(nextSession?.user ?? null);
 
-            if (nextSession?.user) {
-                fetchProfile(nextSession.user).then((resolvedProfile) => {
-                    if (isMounted) {
-                        setProfile(resolvedProfile);
-                    }
-                });
-            } else {
-                setProfile(null);
-            }
+            void resolveProfile(nextSession?.user ?? null);
 
             if (isMounted) {
                 setIsLoading(false);
@@ -174,20 +200,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }, []);
 
     const role: AppRole = profile?.appRole ?? (isSupabaseConfigured ? 'member' : 'operator');
+    const permissions = useMemo(() => buildPermissions(role), [role]);
 
     const value = useMemo<AuthContextValue>(
         () => ({
             isLoading,
             isAuthenticated: Boolean(profile && profile.isActive),
+            authError,
             user,
             session,
             profile,
             role,
-            permissions: buildPermissions(role),
+            permissions,
             signInWithMagicLink: async (email: string) => {
                 if (!supabase) {
                     return {};
                 }
+
+                setAuthError(null);
 
                 const { error } = await supabase.auth.signInWithOtp({
                     email,
@@ -196,24 +226,33 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                     },
                 });
 
-                return error ? { error: error.message } : {};
+                return error ? { error: getMagicLinkErrorMessage(error) } : {};
+            },
+            refreshProfile: async () => {
+                if (!supabase || !user) return;
+
+                setIsLoading(true);
+
+                try {
+                    const resolvedProfile = await fetchProfile(user);
+                    setProfile(resolvedProfile);
+                    setAuthError(null);
+                } catch (error) {
+                    console.error('[auth] failed to refresh user profile', error);
+                    setProfile(null);
+                    setAuthError(getProfileErrorMessage(error));
+                } finally {
+                    setIsLoading(false);
+                }
             },
             signOut: async () => {
                 if (!supabase) return;
+                setAuthError(null);
                 await supabase.auth.signOut();
             },
         }),
-        [isLoading, profile, role, session, user],
+        [authError, isLoading, permissions, profile, role, session, user],
     );
 
     return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
-};
-
-export const useAuth = () => {
-    const value = useContext(AuthContext);
-    if (!value) {
-        throw new Error('useAuth must be used within AuthProvider.');
-    }
-
-    return value;
 };

@@ -39,10 +39,13 @@ export interface Member {
     name: string;
     score: number;
     isApproved: boolean;
+    roleId?: string | null;
     roleName?: string | null;
+    teamId?: string | null;
     teamName?: string | null;
     status?: MemberStatus;
     joinedAt?: string | null;
+    isVisible?: boolean;
 }
 
 export interface Category {
@@ -53,6 +56,7 @@ export interface Category {
 
 export interface ActivityLog {
     id: string;
+    recordId?: string | null;
     timestamp: string;
     memberId: string;
     categoryId: string;
@@ -61,4 +65,19 @@ export interface ActivityLog {
     note?: string | null;
     memberName?: string | null;
     categoryName?: string | null;
+    reversalOf?: string | null;
+    isReversal?: boolean;
+    recordStatus?: string | null;
+}
+
+export interface AuditLogEntry {
+    id: string;
+    actorId?: string | null;
+    actorName?: string | null;
+    entityType: string;
+    entityId: string;
+    action: string;
+    summary: string;
+    createdAt: string;
+    diff?: Record<string, unknown> | null;
 }

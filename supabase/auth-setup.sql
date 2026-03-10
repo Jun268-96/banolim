@@ -41,7 +41,7 @@ begin
     values (
         new.id,
         coalesce(new.email, concat(new.id::text, '@banollim.app')),
-        coalesce(new.raw_user_meta_data ->> 'full_name', new.email, 'Banollim Member'),
+        coalesce(new.raw_user_meta_data ->> 'full_name', new.email, '반올림 회원'),
         'member',
         true
     )
@@ -84,4 +84,4 @@ with check (auth.uid() = id);
 -- Example role promotion:
 -- update public.user_profiles
 -- set app_role = 'operator'
--- where email = 'name@example.com';
+-- where email = '<승격할 이메일 주소>';

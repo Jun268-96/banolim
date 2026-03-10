@@ -28,7 +28,8 @@ values
     ('attendance-present', '정기모임 출석', 'attendance'),
     ('study-participation', '스터디 참여', 'study'),
     ('presentation', '발표', 'contribution'),
-    ('late-arrival', '지각', 'attendance')
+    ('late-arrival', '지각', 'attendance'),
+    ('attendance-absent', '불참', 'attendance')
 on conflict (code) do nothing;
 
 insert into public.point_rules (activity_type_id, base_point, penalty_point, condition_json, is_active, version)
@@ -38,7 +39,8 @@ from (
         ('attendance-present', 10),
         ('study-participation', 15),
         ('presentation', 30),
-        ('late-arrival', -5)
+        ('late-arrival', -5),
+        ('attendance-absent', 0)
 ) as seed(code, points)
 join public.activity_types on activity_types.code = seed.code
 where not exists (

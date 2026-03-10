@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { ArrowRight, CalendarDays, Medal, Sparkles, TrendingUp, Users, Zap } from 'lucide-react';
 import type { ActivityLog, Category, Member, SeasonSummary } from '../../types';
 import { getCategories, getCurrentSeason, getLogs, getMembers } from '../../lib/db';
-import { useAuth } from '../auth/AuthProvider';
+import { useAuth } from '../auth/auth-context';
 import type { TabType } from '../layout/Sidebar';
 
 interface HomeTabProps {
@@ -11,11 +11,11 @@ interface HomeTabProps {
 
 const formatDate = (value?: string | null) =>
     value
-        ? new Intl.DateTimeFormat('en-US', { dateStyle: 'medium' }).format(new Date(value))
+        ? new Intl.DateTimeFormat('ko-KR', { dateStyle: 'medium' }).format(new Date(value))
         : '-';
 
 const formatDateTime = (value: string) =>
-    new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
+    new Intl.DateTimeFormat('ko-KR', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
 
 export const HomeTab: React.FC<HomeTabProps> = ({ onNavigate }) => {
     const { permissions } = useAuth();
@@ -47,14 +47,15 @@ export const HomeTab: React.FC<HomeTabProps> = ({ onNavigate }) => {
     const insights = useMemo(() => {
         const topMember = [...members].sort((a, b) => b.score - a.score)[0] ?? null;
         const recentLogs = logs.slice(0, 6);
+        const effectiveLogs = logs.filter((log) => !log.isReversal && log.recordStatus !== 'reversed');
 
         const attendanceRuleIds = new Set(
             categories
-                .filter((category) => /attendance|meeting|check-in|presence/i.test(category.categoryName))
+                .filter((category) => /attendance|meeting|check-in|presence|출석|정기모임|참석/i.test(category.categoryName))
                 .map((category) => category.id),
         );
 
-        const attendanceCounts = logs.reduce<Record<string, number>>((acc, log) => {
+        const attendanceCounts = effectiveLogs.reduce<Record<string, number>>((acc, log) => {
             if (!attendanceRuleIds.has(log.categoryId)) {
                 return acc;
             }
@@ -73,13 +74,13 @@ export const HomeTab: React.FC<HomeTabProps> = ({ onNavigate }) => {
         const hottestRule = categories
             .map((category) => ({
                 category,
-                count: logs.filter((log) => log.categoryId === category.id).length,
+                count: effectiveLogs.filter((log) => log.categoryId === category.id).length,
             }))
-            .sort((a, b) => b.count - a.count)[0] ?? null;
+                .sort((a, b) => b.count - a.count)[0] ?? null;
 
         const teamSummary = Object.entries(
             members.reduce<Record<string, { score: number; count: number }>>((acc, member) => {
-                const key = member.teamName || 'Unassigned';
+                const key = member.teamName || '미지정';
                 const current = acc[key] ?? { score: 0, count: 0 };
                 acc[key] = { score: current.score + member.score, count: current.count + 1 };
                 return acc;
@@ -88,30 +89,30 @@ export const HomeTab: React.FC<HomeTabProps> = ({ onNavigate }) => {
             .map(([team, summary]) => ({ team, ...summary }))
             .sort((a, b) => b.score - a.score);
 
-        return { topMember, recentLogs, mostConsistent, hottestRule, teamSummary };
+        return { topMember, recentLogs, mostConsistent, hottestRule, teamSummary, effectiveLogsCount: effectiveLogs.length };
     }, [categories, logs, members]);
 
     const quickActions = [
         permissions.canViewActivities
             ? {
                   id: 'activities' as const,
-                  label: 'Quick activity log',
-                  description: 'Record attendance, study, or contribution right away.',
+                  label: '정기모임 출석 입력',
+                  description: '참석, 지각, 불참 상태를 한 번에 입력합니다.',
                   icon: Zap,
               }
             : null,
         permissions.canManagePoints
             ? {
                   id: 'points' as const,
-                  label: 'Batch score action',
-                  description: 'Apply the same rule to several members in one pass.',
+                  label: '일괄 점수 반영',
+                  description: '같은 규칙을 여러 회원에게 한 번에 반영합니다.',
                   icon: Users,
               }
             : null,
         {
             id: 'stats' as const,
-            label: 'Review stats',
-            description: 'Check team movement, rule usage, and current leaders.',
+            label: '통계 보기',
+            description: '팀 흐름, 규칙 사용량, 현재 상위권을 확인합니다.',
             icon: TrendingUp,
         },
     ].filter(Boolean);
@@ -121,7 +122,7 @@ export const HomeTab: React.FC<HomeTabProps> = ({ onNavigate }) => {
             <div className="flex h-64 items-center justify-center">
                 <div className="animate-pulse flex flex-col items-center gap-4">
                     <div className="h-12 w-12 rounded-full bg-indigo-100"></div>
-                    <div className="font-medium text-indigo-600">Loading home dashboard...</div>
+                    <div className="font-medium text-indigo-600">홈 대시보드를 불러오는 중...</div>
                 </div>
             </div>
         );
@@ -134,15 +135,15 @@ export const HomeTab: React.FC<HomeTabProps> = ({ onNavigate }) => {
                     <div className="space-y-5">
                         <div className="inline-flex items-center gap-2 rounded-full border border-sky-200 bg-white/80 px-3 py-1 text-sm font-medium text-sky-700">
                             <Sparkles size={15} />
-                            Banollim operations hub
+                            반올림 운영 허브
                         </div>
 
                         <div className="space-y-3">
                             <h2 className="text-3xl font-bold tracking-tight text-slate-950 lg:text-4xl">
-                                Keep the season moving with one shared dashboard.
+                                한 화면에서 시즌 운영 흐름을 이어가세요.
                             </h2>
                             <p className="max-w-3xl text-base text-slate-600 lg:text-lg">
-                                Review the current season, jump into the next action, and keep member activity visible in one place.
+                                현재 시즌 현황을 보고, 바로 다음 작업으로 이동하고, 회원 활동을 한곳에서 관리할 수 있습니다.
                             </p>
                         </div>
 
@@ -153,7 +154,7 @@ export const HomeTab: React.FC<HomeTabProps> = ({ onNavigate }) => {
                                     onClick={() => onNavigate('activities')}
                                     className="inline-flex items-center gap-2 rounded-2xl bg-indigo-600 px-5 py-3 font-semibold text-white transition-colors hover:bg-indigo-700"
                                 >
-                                    Record an activity
+                                    정기모임 출석 입력
                                     <ArrowRight size={16} />
                                 </button>
                             )}
@@ -163,30 +164,30 @@ export const HomeTab: React.FC<HomeTabProps> = ({ onNavigate }) => {
                                     onClick={() => onNavigate('points')}
                                     className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-5 py-3 font-semibold text-slate-800 transition-colors hover:bg-slate-50"
                                 >
-                                    Open batch scoring
+                                    일괄 점수 열기
                                 </button>
                             )}
                         </div>
 
                         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                             <div className="rounded-2xl border border-slate-200 bg-white/90 p-4">
-                                <div className="text-sm text-slate-500">Current season</div>
-                                <div className="mt-2 text-xl font-bold text-slate-900">{season?.name ?? 'No active season'}</div>
+                                <div className="text-sm text-slate-500">현재 시즌</div>
+                                <div className="mt-2 text-xl font-bold text-slate-900">{season?.name ?? '활성 시즌 없음'}</div>
                                 <div className="mt-1 text-sm text-slate-500">
-                                    {season ? `${formatDate(season.startDate)} - ${formatDate(season.endDate)}` : 'Add a season to start tracking.'}
+                                    {season ? `${formatDate(season.startDate)} - ${formatDate(season.endDate)}` : '추적을 시작하려면 시즌을 추가하세요.'}
                                 </div>
                             </div>
                             <div className="rounded-2xl border border-slate-200 bg-white/90 p-4">
-                                <div className="text-sm text-slate-500">Visible members</div>
+                                <div className="text-sm text-slate-500">표시 중인 멤버</div>
                                 <div className="mt-2 text-xl font-bold text-slate-900">{members.length}</div>
                                 <div className="mt-1 text-sm text-slate-500">
-                                    {members.filter((member) => member.status === 'active').length} currently active
+                                    활동 중 {members.filter((member) => member.status === 'active').length}명
                                 </div>
                             </div>
                             <div className="rounded-2xl border border-slate-200 bg-white/90 p-4">
-                                <div className="text-sm text-slate-500">Activity records</div>
-                                <div className="mt-2 text-xl font-bold text-slate-900">{logs.length}</div>
-                                <div className="mt-1 text-sm text-slate-500">{categories.length} rules available</div>
+                                <div className="text-sm text-slate-500">활동 기록</div>
+                                <div className="mt-2 text-xl font-bold text-slate-900">{insights.effectiveLogsCount}</div>
+                                <div className="mt-1 text-sm text-slate-500">사용 가능한 규칙 {categories.length}개</div>
                             </div>
                         </div>
                     </div>
@@ -194,21 +195,21 @@ export const HomeTab: React.FC<HomeTabProps> = ({ onNavigate }) => {
                     <div className="space-y-4 rounded-[24px] border border-slate-200 bg-slate-950 p-5 text-white lg:p-6">
                         <div className="flex items-center gap-2 text-sm text-slate-300">
                             <CalendarDays size={16} />
-                            Season snapshot
+                            시즌 요약
                         </div>
                         <div>
-                            <div className="text-sm text-slate-400">Leading member</div>
-                            <div className="mt-1 text-2xl font-bold">{insights.topMember?.name ?? 'No data yet'}</div>
-                            <div className="mt-1 text-sky-300">{insights.topMember ? `${insights.topMember.score}pt` : '-'}</div>
+                            <div className="text-sm text-slate-400">선두 멤버</div>
+                            <div className="mt-1 text-2xl font-bold">{insights.topMember?.name ?? '데이터 없음'}</div>
+                            <div className="mt-1 text-sky-300">{insights.topMember ? `${insights.topMember.score}점` : '-'}</div>
                         </div>
                         <div className="grid grid-cols-2 gap-3">
                             <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                                <div className="text-xs uppercase tracking-wide text-slate-400">Top team</div>
-                                <div className="mt-2 font-semibold text-white">{insights.teamSummary[0]?.team ?? 'Pending'}</div>
+                                <div className="text-xs uppercase tracking-wide text-slate-400">상위 팀</div>
+                                <div className="mt-2 font-semibold text-white">{insights.teamSummary[0]?.team ?? '대기 중'}</div>
                             </div>
                             <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                                <div className="text-xs uppercase tracking-wide text-slate-400">Most used rule</div>
-                                <div className="mt-2 font-semibold text-white">{insights.hottestRule?.category.categoryName ?? 'Pending'}</div>
+                                <div className="text-xs uppercase tracking-wide text-slate-400">가장 많이 쓴 규칙</div>
+                                <div className="mt-2 font-semibold text-white">{insights.hottestRule?.category.categoryName ?? '대기 중'}</div>
                             </div>
                         </div>
                     </div>
@@ -240,22 +241,22 @@ export const HomeTab: React.FC<HomeTabProps> = ({ onNavigate }) => {
                         })}
                     </div>
 
-                    <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-                        <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
-                            <div>
-                                <div className="font-semibold text-slate-900">Recent activity feed</div>
-                                <div className="mt-1 text-sm text-slate-500">The latest logs recorded across the platform.</div>
+                        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+                            <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
+                                <div>
+                                    <div className="font-semibold text-slate-900">최근 활동 피드</div>
+                                    <div className="mt-1 text-sm text-slate-500">플랫폼에 기록된 최신 활동 내역입니다.</div>
+                                </div>
+                                {permissions.canViewActivities && (
+                                    <button
+                                        type="button"
+                                        onClick={() => onNavigate('activities')}
+                                        className="text-sm font-medium text-indigo-600 hover:text-indigo-700"
+                                    >
+                                        활동 보기
+                                    </button>
+                                )}
                             </div>
-                            {permissions.canViewActivities && (
-                                <button
-                                    type="button"
-                                    onClick={() => onNavigate('activities')}
-                                    className="text-sm font-medium text-indigo-600 hover:text-indigo-700"
-                                >
-                                    Open activities
-                                </button>
-                            )}
-                        </div>
                         <div className="divide-y divide-slate-100">
                             {insights.recentLogs.map((log) => (
                                 <div key={log.id} className="flex flex-col gap-2 px-6 py-4 md:flex-row md:items-center md:justify-between">
@@ -265,19 +266,19 @@ export const HomeTab: React.FC<HomeTabProps> = ({ onNavigate }) => {
                                             <span className="font-normal text-slate-400"> · </span>
                                             {log.categoryName ?? log.categoryId}
                                         </div>
-                                        <div className="mt-1 text-sm text-slate-500">{log.note || log.reason || 'No note provided'}</div>
+                                        <div className="mt-1 text-sm text-slate-500">{log.note || log.reason || '메모 없음'}</div>
                                     </div>
                                     <div className="text-right">
                                         <div className={`font-semibold ${log.pointDelta >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
                                             {log.pointDelta > 0 ? '+' : ''}
-                                            {log.pointDelta}pt
+                                            {log.pointDelta}점
                                         </div>
                                         <div className="mt-1 text-sm text-slate-500">{formatDateTime(log.timestamp)}</div>
                                     </div>
                                 </div>
                             ))}
                             {insights.recentLogs.length === 0 && (
-                                <div className="px-6 py-12 text-center text-slate-500">No activity logs yet.</div>
+                                <div className="px-6 py-12 text-center text-slate-500">아직 활동 기록이 없습니다.</div>
                             )}
                         </div>
                     </div>
@@ -287,36 +288,36 @@ export const HomeTab: React.FC<HomeTabProps> = ({ onNavigate }) => {
                     <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
                         <div className="flex items-center gap-2 font-semibold text-slate-900">
                             <Medal size={18} className="text-indigo-600" />
-                            Highlights
+                            하이라이트
                         </div>
                         <div className="mt-5 space-y-4">
                             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                                <div className="text-sm text-slate-500">Top score</div>
-                                <div className="mt-2 text-lg font-semibold text-slate-900">{insights.topMember?.name ?? 'Pending'}</div>
+                                <div className="text-sm text-slate-500">최고 점수</div>
+                                <div className="mt-2 text-lg font-semibold text-slate-900">{insights.topMember?.name ?? '대기 중'}</div>
                                 <div className="mt-1 text-sm text-indigo-600">
-                                    {insights.topMember ? `${insights.topMember.score}pt this season` : 'No score data yet'}
+                                    {insights.topMember ? `이번 시즌 ${insights.topMember.score}점` : '점수 데이터가 없습니다'}
                                 </div>
                             </div>
                             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                                <div className="text-sm text-slate-500">Most consistent attendance</div>
-                                <div className="mt-2 text-lg font-semibold text-slate-900">{insights.mostConsistent?.member.name ?? 'Pending'}</div>
+                                <div className="text-sm text-slate-500">가장 꾸준한 출석</div>
+                                <div className="mt-2 text-lg font-semibold text-slate-900">{insights.mostConsistent?.member.name ?? '대기 중'}</div>
                                 <div className="mt-1 text-sm text-emerald-700">
-                                    {insights.mostConsistent ? `${insights.mostConsistent.count} attendance logs` : 'No attendance rule detected'}
+                                    {insights.mostConsistent ? `출석 기록 ${insights.mostConsistent.count}건` : '출석 규칙이 감지되지 않았습니다'}
                                 </div>
                             </div>
                             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                                <div className="text-sm text-slate-500">Most active team</div>
-                                <div className="mt-2 text-lg font-semibold text-slate-900">{insights.teamSummary[0]?.team ?? 'Pending'}</div>
+                                <div className="text-sm text-slate-500">가장 활발한 팀</div>
+                                <div className="mt-2 text-lg font-semibold text-slate-900">{insights.teamSummary[0]?.team ?? '대기 중'}</div>
                                 <div className="mt-1 text-sm text-sky-700">
-                                    {insights.teamSummary[0] ? `${insights.teamSummary[0].score} total points` : 'No team data yet'}
+                                    {insights.teamSummary[0] ? `총 ${insights.teamSummary[0].score}점` : '팀 데이터가 없습니다'}
                                 </div>
                             </div>
                         </div>
                     </div>
 
                     <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-                        <div className="font-semibold text-slate-900">Top teams</div>
-                        <div className="mt-1 text-sm text-slate-500">A quick glance before opening the full stats page.</div>
+                        <div className="font-semibold text-slate-900">상위 팀</div>
+                        <div className="mt-1 text-sm text-slate-500">전체 통계 페이지를 열기 전에 빠르게 확인할 수 있습니다.</div>
                         <div className="mt-5 space-y-3">
                             {insights.teamSummary.slice(0, 4).map((team, index) => (
                                 <div key={team.team} className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white px-4 py-3">
@@ -325,13 +326,13 @@ export const HomeTab: React.FC<HomeTabProps> = ({ onNavigate }) => {
                                         <div className="font-medium text-slate-900">{team.team}</div>
                                     </div>
                                     <div className="text-right">
-                                        <div className="font-semibold text-indigo-600">{team.score}pt</div>
-                                        <div className="text-sm text-slate-500">{team.count} members</div>
+                                        <div className="font-semibold text-indigo-600">{team.score}점</div>
+                                        <div className="text-sm text-slate-500">{team.count}명</div>
                                     </div>
                                 </div>
                             ))}
                             {insights.teamSummary.length === 0 && (
-                                <div className="text-sm text-slate-500">No team summary available yet.</div>
+                                <div className="text-sm text-slate-500">아직 팀 요약 데이터가 없습니다.</div>
                             )}
                         </div>
                     </div>

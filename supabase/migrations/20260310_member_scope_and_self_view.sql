@@ -1,132 +1,5 @@
-create extension if not exists pgcrypto;
-
-do $$
-begin
-    create type public.member_status as enum ('active', 'dormant', 'inactive');
-exception
-    when duplicate_object then null;
-end
-$$;
-
-do $$
-begin
-    create type public.team_type as enum ('core', 'study', 'project');
-exception
-    when duplicate_object then null;
-end
-$$;
-
-do $$
-begin
-    create type public.season_status as enum ('planned', 'active', 'closed');
-exception
-    when duplicate_object then null;
-end
-$$;
-
-create table if not exists public.roles (
-    id uuid primary key default gen_random_uuid(),
-    name text not null unique,
-    permission_scope text not null,
-    rank_order integer not null default 100,
-    created_at timestamptz not null default now()
-);
-
-create table if not exists public.teams (
-    id uuid primary key default gen_random_uuid(),
-    name text not null unique,
-    type public.team_type not null default 'core',
-    is_active boolean not null default true,
-    created_at timestamptz not null default now()
-);
-
-create table if not exists public.seasons (
-    id uuid primary key default gen_random_uuid(),
-    name text not null unique,
-    start_date date not null,
-    end_date date,
-    status public.season_status not null default 'planned',
-    created_at timestamptz not null default now()
-);
-
-create table if not exists public.members (
-    id uuid primary key default gen_random_uuid(),
-    name text not null,
-    role_id uuid references public.roles(id) on delete set null,
-    team_id uuid references public.teams(id) on delete set null,
-    status public.member_status not null default 'active',
-    joined_at date not null default current_date,
-    avatar_key text,
-    is_visible boolean not null default true,
-    is_approved boolean not null default true,
-    created_at timestamptz not null default now()
-);
-
-create table if not exists public.activity_types (
-    id uuid primary key default gen_random_uuid(),
-    code text not null unique,
-    name text not null,
-    group_name text not null default 'general',
-    created_at timestamptz not null default now()
-);
-
-create table if not exists public.point_rules (
-    id uuid primary key default gen_random_uuid(),
-    activity_type_id uuid not null references public.activity_types(id) on delete restrict,
-    base_point integer not null,
-    penalty_point integer not null default 0,
-    condition_json jsonb not null default '{}'::jsonb,
-    is_active boolean not null default true,
-    version integer not null default 1,
-    created_at timestamptz not null default now()
-);
-
-create table if not exists public.activity_records (
-    id uuid primary key default gen_random_uuid(),
-    member_id uuid not null references public.members(id) on delete cascade,
-    season_id uuid references public.seasons(id) on delete set null,
-    activity_type_id uuid not null references public.activity_types(id) on delete restrict,
-    occurred_at timestamptz not null default now(),
-    status text not null default 'confirmed',
-    note text,
-    created_by uuid references public.members(id) on delete set null,
-    created_at timestamptz not null default now()
-);
-
-create table if not exists public.point_ledgers (
-    id uuid primary key default gen_random_uuid(),
-    record_id uuid not null references public.activity_records(id) on delete cascade,
-    member_id uuid not null references public.members(id) on delete cascade,
-    point_rule_id uuid not null references public.point_rules(id) on delete restrict,
-    delta integer not null,
-    reason text,
-    created_by uuid references public.members(id) on delete set null,
-    reversal_of uuid references public.point_ledgers(id) on delete set null,
-    created_at timestamptz not null default now()
-);
-
-create table if not exists public.audit_logs (
-    id uuid primary key default gen_random_uuid(),
-    actor_id uuid references public.members(id) on delete set null,
-    entity_type text not null,
-    entity_id uuid not null,
-    action text not null,
-    diff_json jsonb not null default '{}'::jsonb,
-    created_at timestamptz not null default now()
-);
-
-create or replace function public.current_actor_member_id()
-returns uuid
-language sql
-stable
-security definer
-set search_path = public
-as $$
-    select user_profiles.member_id
-    from public.user_profiles
-    where user_profiles.id = auth.uid()
-    limit 1;
-$$;
+-- Incremental migration for member self-view scope and role-aware read/write restrictions.
+-- Safe to run after the base schema/policies files and the audit log migration.
 
 create or replace function public.current_app_role()
 returns text
@@ -213,43 +86,6 @@ begin
     end if;
 
     return false;
-end;
-$$;
-
-create or replace function public.create_audit_log(
-    p_entity_type text,
-    p_entity_id uuid,
-    p_action text,
-    p_diff_json jsonb default '{}'::jsonb
-)
-returns uuid
-language plpgsql
-security definer
-set search_path = public
-as $$
-declare
-    v_audit_log_id uuid;
-    v_actor_member_id uuid;
-begin
-    v_actor_member_id := public.current_actor_member_id();
-
-    insert into public.audit_logs (
-        actor_id,
-        entity_type,
-        entity_id,
-        action,
-        diff_json
-    )
-    values (
-        v_actor_member_id,
-        p_entity_type,
-        p_entity_id,
-        p_action,
-        coalesce(p_diff_json, '{}'::jsonb)
-    )
-    returning id into v_audit_log_id;
-
-    return v_audit_log_id;
 end;
 $$;
 
@@ -371,42 +207,6 @@ begin
     );
 
     return v_record_id;
-end;
-$$;
-
-create or replace function public.create_batch_activity_entries(
-    p_member_ids uuid[],
-    p_point_rule_id uuid,
-    p_note text default null,
-    p_reason text default null,
-    p_occurred_at timestamptz default now()
-)
-returns uuid[]
-language plpgsql
-security definer
-set search_path = public
-as $$
-declare
-    v_member_id uuid;
-    v_record_id uuid;
-    v_record_ids uuid[] := '{}';
-begin
-    if coalesce(array_length(p_member_ids, 1), 0) = 0 then
-        return v_record_ids;
-    end if;
-
-    foreach v_member_id in array p_member_ids loop
-        v_record_id := public.create_activity_entry(
-            v_member_id,
-            p_point_rule_id,
-            p_note,
-            p_reason,
-            p_occurred_at
-        );
-        v_record_ids := array_append(v_record_ids, v_record_id);
-    end loop;
-
-    return v_record_ids;
 end;
 $$;
 
@@ -600,13 +400,6 @@ begin
 end;
 $$;
 
-create index if not exists idx_members_visible on public.members (is_visible, status);
-create index if not exists idx_activity_records_member on public.activity_records (member_id, occurred_at desc);
-create index if not exists idx_point_ledgers_member on public.point_ledgers (member_id, created_at desc);
-create index if not exists idx_point_rules_activity_type on public.point_rules (activity_type_id, is_active);
-create index if not exists idx_audit_logs_entity on public.audit_logs (entity_type, entity_id, created_at desc);
-create index if not exists idx_audit_logs_created_at on public.audit_logs (created_at desc);
-
 create or replace view public.member_score_summary
 with (security_invoker = true) as
 select
@@ -619,17 +412,6 @@ left join public.point_ledgers pl on pl.member_id = m.id
 where m.is_visible = true
 group by m.id, m.name, m.is_approved;
 
-create or replace view public.point_rule_catalog as
-select
-    pr.id,
-    pr.activity_type_id,
-    at.name as category_name,
-    pr.base_point as point_value,
-    pr.is_active,
-    pr.version
-from public.point_rules pr
-join public.activity_types at on at.id = pr.activity_type_id;
-
 create or replace view public.activity_log_feed
 with (security_invoker = true) as
 select
@@ -640,3 +422,50 @@ select
     pl.delta as point_delta,
     pl.reason
 from public.point_ledgers pl;
+
+grant execute on function public.create_activity_entry(uuid, uuid, text, text, timestamptz) to authenticated;
+grant execute on function public.create_batch_activity_entries(uuid[], uuid, text, text, timestamptz) to authenticated;
+grant execute on function public.get_my_activity_logs() to authenticated;
+grant execute on function public.get_my_member_overview() to authenticated;
+grant execute on function public.reverse_activity_entry(uuid, text) to authenticated;
+
+drop policy if exists roles_insert_all on public.roles;
+create policy roles_insert_all on public.roles for insert to authenticated with check (public.can_manage_admin_tables());
+drop policy if exists roles_update_all on public.roles;
+create policy roles_update_all on public.roles for update to authenticated using (public.can_manage_admin_tables()) with check (public.can_manage_admin_tables());
+
+drop policy if exists teams_insert_all on public.teams;
+create policy teams_insert_all on public.teams for insert to authenticated with check (public.can_manage_admin_tables());
+drop policy if exists teams_update_all on public.teams;
+create policy teams_update_all on public.teams for update to authenticated using (public.can_manage_admin_tables()) with check (public.can_manage_admin_tables());
+
+drop policy if exists seasons_insert_all on public.seasons;
+create policy seasons_insert_all on public.seasons for insert to authenticated with check (public.can_manage_admin_tables());
+drop policy if exists seasons_update_all on public.seasons;
+create policy seasons_update_all on public.seasons for update to authenticated using (public.can_manage_admin_tables()) with check (public.can_manage_admin_tables());
+
+drop policy if exists members_select_all on public.members;
+create policy members_select_all on public.members for select to authenticated using (public.can_access_member(id));
+drop policy if exists members_insert_all on public.members;
+create policy members_insert_all on public.members for insert to authenticated with check (public.can_manage_admin_tables());
+drop policy if exists members_update_all on public.members;
+create policy members_update_all on public.members for update to authenticated using (public.can_manage_admin_tables()) with check (public.can_manage_admin_tables());
+
+drop policy if exists activity_types_insert_all on public.activity_types;
+create policy activity_types_insert_all on public.activity_types for insert to authenticated with check (public.can_manage_admin_tables());
+drop policy if exists activity_types_update_all on public.activity_types;
+create policy activity_types_update_all on public.activity_types for update to authenticated using (public.can_manage_admin_tables()) with check (public.can_manage_admin_tables());
+
+drop policy if exists point_rules_insert_all on public.point_rules;
+create policy point_rules_insert_all on public.point_rules for insert to authenticated with check (public.can_manage_admin_tables());
+drop policy if exists point_rules_update_all on public.point_rules;
+create policy point_rules_update_all on public.point_rules for update to authenticated using (public.can_manage_admin_tables()) with check (public.can_manage_admin_tables());
+
+drop policy if exists activity_records_select_all on public.activity_records;
+create policy activity_records_select_all on public.activity_records for select to authenticated using (public.can_access_member(member_id));
+
+drop policy if exists point_ledgers_select_all on public.point_ledgers;
+create policy point_ledgers_select_all on public.point_ledgers for select to authenticated using (public.can_access_member(member_id));
+
+drop policy if exists audit_logs_select_authenticated on public.audit_logs;
+create policy audit_logs_select_authenticated on public.audit_logs for select to authenticated using (public.can_manage_activities());

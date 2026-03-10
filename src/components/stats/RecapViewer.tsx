@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { X, ChevronRight, ChevronLeft, Award, Zap, CalendarDays, Maximize2 } from 'lucide-react';
 import type { ActivityLog, Category, Member } from '../../types';
 
@@ -11,10 +11,14 @@ interface RecapViewerProps {
 
 export const RecapViewer: React.FC<RecapViewerProps> = ({ members, categories, logs, onClose }) => {
     const [currentSlide, setCurrentSlide] = useState(0);
+    const effectiveLogs = useMemo(
+        () => logs.filter((log) => !log.isReversal && log.recordStatus !== 'reversed'),
+        [logs],
+    );
 
-    const totalActivities = logs.length;
+    const totalActivities = effectiveLogs.length;
 
-    const attendanceLogs = logs.filter((log) => log.pointDelta === 10);
+    const attendanceLogs = effectiveLogs.filter((log) => log.pointDelta === 10);
     const memberLogCounts: Record<string, number> = {};
     attendanceLogs.forEach((log) => {
         memberLogCounts[log.memberId] = (memberLogCounts[log.memberId] || 0) + 1;
@@ -24,7 +28,7 @@ export const RecapViewer: React.FC<RecapViewerProps> = ({ members, categories, l
     const topAttender = members.find((member) => member.id === topAttenderId);
 
     const monthCounts: Record<string, number> = {};
-    logs.forEach((log) => {
+    effectiveLogs.forEach((log) => {
         const month = new Date(log.timestamp).getMonth() + 1;
         monthCounts[month] = (monthCounts[month] || 0) + 1;
     });
@@ -34,7 +38,7 @@ export const RecapViewer: React.FC<RecapViewerProps> = ({ members, categories, l
     const topCategory = [...categories]
         .map((category) => ({
             name: category.categoryName,
-            count: logs.filter((log) => log.categoryId === category.id).length,
+            count: effectiveLogs.filter((log) => log.categoryId === category.id).length,
         }))
         .sort((a, b) => b.count - a.count)[0];
 
@@ -43,19 +47,19 @@ export const RecapViewer: React.FC<RecapViewerProps> = ({ members, categories, l
             id: 'intro',
             color: 'from-sky-600 via-indigo-700 to-slate-900',
             icon: <Zap size={80} className="text-yellow-400 mb-8" />,
-            title: '2026 Banollim Recap',
-            body: <p>Take a fast look at the current season.</p>,
+            title: '2026 반올림 리캡',
+            body: <p>현재 시즌을 빠르게 돌아봅니다.</p>,
         },
         {
             id: 'activities',
             color: 'from-rose-500 via-pink-600 to-purple-700',
             icon: <CalendarDays size={80} className="text-white mb-8" />,
-            title: 'Activity volume',
+            title: '활동량',
             body: (
                 <p>
-                    We already captured
+                    지금까지
                     <span className="bg-white text-pink-600 px-3 py-1 rounded-xl font-black text-4xl mx-2 shadow-lg">{totalActivities}</span>
-                    activity logs.
+                    건의 활동이 기록되었습니다.
                 </p>
             ),
         },
@@ -63,11 +67,11 @@ export const RecapViewer: React.FC<RecapViewerProps> = ({ members, categories, l
             id: 'month',
             color: 'from-amber-400 via-orange-500 to-red-600',
             icon: <Maximize2 size={80} className="text-white mb-8" />,
-            title: 'Busiest month',
+            title: '가장 활발한 달',
             body: (
                 <p>
-                    The busiest point so far was
-                    <span className="text-6xl font-black text-yellow-200 block mt-6">{topMonth ? `Month ${topMonth}` : 'Pending'}</span>
+                    가장 활발했던 시기는
+                    <span className="text-6xl font-black text-yellow-200 block mt-6">{topMonth ? `${topMonth}월` : '대기 중'}</span>
                 </p>
             ),
         },
@@ -75,48 +79,48 @@ export const RecapViewer: React.FC<RecapViewerProps> = ({ members, categories, l
             id: 'attendance',
             color: 'from-emerald-400 via-teal-600 to-cyan-700',
             icon: <Award size={80} className="text-yellow-300 mb-8" />,
-            title: 'Attendance highlight',
+            title: '출석 하이라이트',
             body: topAttender ? (
                 <div>
                     <span className="text-5xl font-black text-white px-4 py-2 bg-black/20 rounded-2xl block mt-4">
                         {topAttender.name}
                     </span>
-                    <span className="text-2xl mt-4 block text-emerald-100">Most consistent attendance so far.</span>
+                    <span className="text-2xl mt-4 block text-emerald-100">현재까지 가장 꾸준한 출석을 기록했습니다.</span>
                 </div>
             ) : (
-                <p>No attendance highlight yet.</p>
+                <p>아직 출석 하이라이트가 없습니다.</p>
             ),
         },
         {
             id: 'category',
             color: 'from-fuchsia-600 via-purple-700 to-indigo-800',
             icon: <Rocket size={80} className="text-pink-300 mb-8" />,
-            title: 'Most used rule',
+            title: '가장 많이 사용한 규칙',
             body: topCategory ? (
                 <div>
                     <span className="text-5xl font-black text-white px-4 py-2 bg-white/20 rounded-2xl block mt-4">
                         {topCategory.name}
                     </span>
-                    <span className="text-2xl mt-4 block text-fuchsia-200">{topCategory.count} logs used this rule.</span>
+                    <span className="text-2xl mt-4 block text-fuchsia-200">이 규칙으로 {topCategory.count}건이 기록되었습니다.</span>
                 </div>
             ) : (
-                <p>Not enough data yet.</p>
+                <p>아직 데이터가 충분하지 않습니다.</p>
             ),
         },
         {
             id: 'growth',
             color: 'from-indigo-700 via-slate-900 to-cyan-800',
             icon: <Rocket size={80} className="text-sky-300 mb-8" />,
-            title: 'Current leader',
+            title: '현재 선두',
             body: topScorer ? (
                 <div>
                     <span className="text-5xl font-black text-white px-4 py-2 bg-white/20 rounded-2xl block mt-4">
                         {topScorer.name}
                     </span>
-                    <span className="text-2xl mt-4 block text-sky-200">Highest current score in the board.</span>
+                    <span className="text-2xl mt-4 block text-sky-200">현재 보드에서 가장 높은 점수를 기록 중입니다.</span>
                 </div>
             ) : (
-                <p>No member data yet.</p>
+                <p>아직 멤버 데이터가 없습니다.</p>
             ),
         },
     ];

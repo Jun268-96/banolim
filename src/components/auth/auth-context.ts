@@ -1,0 +1,30 @@
+import { createContext, useContext } from 'react';
+import type { Session, User } from '@supabase/supabase-js';
+import type { AppRole, UserProfile } from '../../types';
+import type { AppPermissions } from '../../lib/permissions';
+
+export interface AuthContextValue {
+    isLoading: boolean;
+    isAuthenticated: boolean;
+    authError: string | null;
+    user: User | null;
+    session: Session | null;
+    profile: UserProfile | null;
+    role: AppRole;
+    permissions: AppPermissions;
+    signInWithMagicLink: (email: string) => Promise<{ error?: string }>;
+    refreshProfile: () => Promise<void>;
+    signOut: () => Promise<void>;
+}
+
+export const AuthContext = createContext<AuthContextValue | null>(null);
+
+export const useAuth = () => {
+    const value = useContext(AuthContext);
+
+    if (!value) {
+        throw new Error('useAuth must be used within AuthProvider.');
+    }
+
+    return value;
+};
