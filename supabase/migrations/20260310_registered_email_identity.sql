@@ -1,35 +1,20 @@
-create table if not exists public.user_profiles (
-    id uuid primary key references auth.users(id) on delete cascade,
-    email text not null unique,
-    member_id uuid references public.members(id) on delete set null,
-    app_role text not null default 'member',
-    display_name text,
-    is_active boolean not null default true,
-    created_at timestamptz not null default now(),
-    updated_at timestamptz not null default now()
-);
+-- Incremental migration for registered-email identity matching.
+-- Operators pre-register a member's login_email, and only matched members can access the app.
 
-create index if not exists idx_user_profiles_email on public.user_profiles (email);
-create index if not exists idx_user_profiles_member_id on public.user_profiles (member_id);
+alter table public.members
+add column if not exists login_email text;
+
+update public.members
+set login_email = null
+where login_email is not null
+  and btrim(login_email) = '';
+
+create unique index if not exists idx_members_login_email_unique
+on public.members (lower(login_email))
+where login_email is not null;
 
 grant select on public.user_profiles to authenticated;
 revoke insert, update on public.user_profiles from authenticated;
-
-create or replace function public.set_user_profiles_updated_at()
-returns trigger
-language plpgsql
-as $$
-begin
-    new.updated_at = now();
-    return new;
-end;
-$$;
-
-drop trigger if exists trg_user_profiles_updated_at on public.user_profiles;
-create trigger trg_user_profiles_updated_at
-before update on public.user_profiles
-for each row
-execute function public.set_user_profiles_updated_at();
 
 create or replace function public.member_role_scope(p_role_id uuid)
 returns text
@@ -214,18 +199,26 @@ after insert on auth.users
 for each row
 execute function public.handle_new_user_profile();
 
-alter table public.user_profiles enable row level security;
-
-drop policy if exists user_profiles_select_own on public.user_profiles;
-create policy user_profiles_select_own
-on public.user_profiles
-for select
-to authenticated
-using (auth.uid() = id);
-
 drop policy if exists user_profiles_update_own on public.user_profiles;
 drop policy if exists user_profiles_insert_own on public.user_profiles;
 
--- Example bootstrap:
--- 1) 운영진이 members.login_email에 실제 로그인 이메일을 미리 등록한다.
--- 2) 사용자가 해당 이메일로 로그인하면 member_id / app_role이 자동 연결된다.
+do $$
+declare
+    v_auth_user record;
+begin
+    for v_auth_user in
+        select
+            auth.users.id,
+            coalesce(auth.users.email, concat(auth.users.id::text, '@banollim.app')) as email,
+            coalesce(auth.users.raw_user_meta_data ->> 'full_name', auth.users.email, '반올림 회원') as display_name
+        from auth.users
+    loop
+        perform *
+        from public.upsert_user_profile_from_identity(
+            v_auth_user.id,
+            v_auth_user.email,
+            v_auth_user.display_name
+        );
+    end loop;
+end;
+$$;

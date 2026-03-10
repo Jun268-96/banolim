@@ -1,4 +1,4 @@
-import type { ActivityLog, AuditLogEntry, Category, Member, RoleSummary, SeasonSummary, TeamSummary, TeamType, SeasonStatus } from '../types';
+import type { ActivityLog, AuditLogEntry, Category, CorrectionRequest, CorrectionRequestStatus, Member, RoleSummary, SeasonSummary, TeamSummary, TeamType, SeasonStatus } from '../types';
 import { isSupabaseConfigured, supabase } from './supabase';
 import type { Database, Json } from '../types/database';
 
@@ -9,18 +9,24 @@ type SeasonRow = Database['public']['Tables']['seasons']['Row'];
 type ActivityRecordRow = Database['public']['Tables']['activity_records']['Row'];
 type PointLedgerRow = Database['public']['Tables']['point_ledgers']['Row'];
 type AuditLogRow = Database['public']['Tables']['audit_logs']['Row'];
+type CorrectionRequestRow = Database['public']['Tables']['correction_requests']['Row'];
 type MemberScoreSummaryRow = Database['public']['Views']['member_score_summary']['Row'];
 type PointRuleCatalogRow = Database['public']['Views']['point_rule_catalog']['Row'];
 type MyMemberOverviewRow = Database['public']['Functions']['get_my_member_overview']['Returns'][number];
 type MyActivityLogRow = Database['public']['Functions']['get_my_activity_logs']['Returns'][number];
 
 const createLocalId = (prefix: string) => `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
+const normalizeLoginEmail = (value?: string | null) => {
+    const normalized = value?.trim().toLowerCase() ?? '';
+    return normalized.length > 0 ? normalized : null;
+};
 
 let localMembers: Member[] = [
     {
         id: 'm1',
         name: '이동섭',
         score: 180,
+        loginEmail: 'leader@banollim.app',
         isApproved: true,
         roleId: 'r1',
         roleName: '회장',
@@ -34,6 +40,7 @@ let localMembers: Member[] = [
         id: 'm2',
         name: '김주영',
         score: 135,
+        loginEmail: 'vice@banollim.app',
         isApproved: true,
         roleId: 'r2',
         roleName: '부회장',
@@ -47,6 +54,7 @@ let localMembers: Member[] = [
         id: 'm3',
         name: '김세현',
         score: 95,
+        loginEmail: 'plan@banollim.app',
         isApproved: true,
         roleId: 'r3',
         roleName: '기획팀장',
@@ -60,6 +68,7 @@ let localMembers: Member[] = [
         id: 'm4',
         name: '이민희',
         score: 40,
+        loginEmail: null,
         isApproved: false,
         roleId: null,
         roleName: '홍보팀장',
@@ -143,6 +152,26 @@ const localAuditLogs: AuditLogEntry[] = [
     },
 ];
 
+const localCorrectionRequests: CorrectionRequest[] = [
+    {
+        id: 'correction_1',
+        requesterMemberId: 'm1',
+        requesterName: '이동섭',
+        activityRecordId: 'record_l1',
+        status: 'pending',
+        reason: '주간 정기모임이 아니라 월간 전체모임 출석으로 기록되어 메모 수정이 필요합니다.',
+        reviewNote: null,
+        reviewedBy: null,
+        reviewedByName: null,
+        reviewedAt: null,
+        createdAt: new Date(Date.now() - 1000 * 60 * 60 * 18).toISOString(),
+        updatedAt: new Date(Date.now() - 1000 * 60 * 60 * 18).toISOString(),
+        activitySummary: '정기모임 출석',
+        activityOccurredAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 2).toISOString(),
+        activityPointDelta: 10,
+    },
+];
+
 const localRoles: RoleSummary[] = [
     { id: 'r1', name: '회장', permissionScope: 'super_admin', rankOrder: 10 },
     { id: 'r2', name: '부회장', permissionScope: 'operator', rankOrder: 20 },
@@ -214,6 +243,9 @@ const getLocalSelfLogs = (memberId?: string | null) => {
 const sortAuditLogs = (auditLogs: AuditLogEntry[]) =>
     [...auditLogs].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 
+const sortCorrectionRequests = (requests: CorrectionRequest[]) =>
+    [...requests].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+
 const logLocalAuditEntry = (entry: Omit<AuditLogEntry, 'id' | 'createdAt'> & { createdAt?: string }) => {
     localAuditLogs.push({
         id: createLocalId('audit'),
@@ -221,6 +253,13 @@ const logLocalAuditEntry = (entry: Omit<AuditLogEntry, 'id' | 'createdAt'> & { c
         ...entry,
     });
 };
+
+const getLocalCorrectionRequests = (requesterMemberId?: string | null) =>
+    sortCorrectionRequests(
+        localCorrectionRequests
+            .filter((request) => !requesterMemberId || request.requesterMemberId === requesterMemberId)
+            .map((request) => ({ ...request })),
+    );
 
 const parseJsonObject = (value: Json): Record<string, unknown> | null => {
     if (!value || Array.isArray(value) || typeof value !== 'object') {
@@ -253,19 +292,32 @@ interface ActivityEntryOptions {
     reason?: string;
 }
 
-export const getMembers = async (): Promise<Member[]> => {
+export const getMembers = async (options?: { includeLoginEmail?: boolean }): Promise<Member[]> => {
+    const includeLoginEmail = options?.includeLoginEmail ?? false;
+
     if (!isSupabaseConfigured) {
-        return sortMembers(localMembers);
+        return sortMembers(
+            localMembers.map((member) => ({
+                ...member,
+                loginEmail: includeLoginEmail ? member.loginEmail ?? null : null,
+            })),
+        );
     }
 
     try {
         const client = getSupabaseClient();
-        const [summaryResult, memberResult, roleResult, teamResult] = await Promise.all([
-            client.from('member_score_summary').select('id, name, is_approved, score'),
-            client
+        const memberQuery = includeLoginEmail
+            ? client
+                .from('members')
+                .select('id, name, login_email, role_id, team_id, status, joined_at, is_approved, is_visible')
+                .eq('is_visible', true)
+            : client
                 .from('members')
                 .select('id, name, role_id, team_id, status, joined_at, is_approved, is_visible')
-                .eq('is_visible', true),
+                .eq('is_visible', true);
+        const [summaryResult, memberResult, roleResult, teamResult] = await Promise.all([
+            client.from('member_score_summary').select('id, name, is_approved, score'),
+            memberQuery,
             client.from('roles').select('id, name'),
             client.from('teams').select('id, name'),
         ]);
@@ -276,7 +328,11 @@ export const getMembers = async (): Promise<Member[]> => {
         if (teamResult.error) throw teamResult.error;
 
         const summaryRows = (summaryResult.data ?? []) as MemberScoreSummaryRow[];
-        const memberRows = (memberResult.data ?? []) as MemberRow[];
+        const memberRows = (memberResult.data ?? []) as Array<
+            Pick<MemberRow, 'id' | 'name' | 'role_id' | 'team_id' | 'status' | 'joined_at' | 'is_approved' | 'is_visible'> & {
+                login_email?: string | null;
+            }
+        >;
         const roleRows = (roleResult.data ?? []) as RoleRow[];
         const teamRows = (teamResult.data ?? []) as TeamRow[];
 
@@ -292,6 +348,7 @@ export const getMembers = async (): Promise<Member[]> => {
                     id: member.id,
                     name: member.name,
                     score: summary?.score ?? 0,
+                    loginEmail: includeLoginEmail ? member.login_email ?? null : null,
                     isApproved: member.is_approved,
                     roleId: member.role_id,
                     roleName: member.role_id ? roleMap.get(member.role_id) ?? null : null,
@@ -304,7 +361,17 @@ export const getMembers = async (): Promise<Member[]> => {
             }),
         );
     } catch (error) {
-        return fallback('getMembers', () => sortMembers(localMembers), error);
+        return fallback(
+            'getMembers',
+            () =>
+                sortMembers(
+                    localMembers.map((member) => ({
+                        ...member,
+                        loginEmail: includeLoginEmail ? member.loginEmail ?? null : null,
+                    })),
+                ),
+            error,
+        );
     }
 };
 
@@ -415,6 +482,34 @@ const mapMyActivityLogRow = (row: MyActivityLogRow): ActivityLog => ({
     recordStatus: row.record_status,
 });
 
+const mapCorrectionRequestRow = (
+    row: CorrectionRequestRow,
+    logs: ActivityLog[],
+    members: Member[],
+): CorrectionRequest => {
+    const relatedLog = logs.find((log) => log.recordId === row.activity_record_id && !log.isReversal) ?? null;
+    const requester = members.find((member) => member.id === row.requester_member_id) ?? null;
+    const reviewer = row.reviewed_by ? members.find((member) => member.id === row.reviewed_by) ?? null : null;
+
+    return {
+        id: row.id,
+        requesterMemberId: row.requester_member_id,
+        requesterName: requester?.name ?? relatedLog?.memberName ?? '알 수 없는 회원',
+        activityRecordId: row.activity_record_id,
+        status: row.status as CorrectionRequestStatus,
+        reason: row.reason,
+        reviewNote: row.review_note,
+        reviewedBy: row.reviewed_by,
+        reviewedByName: reviewer?.name ?? null,
+        reviewedAt: row.reviewed_at,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        activitySummary: relatedLog?.categoryName ?? relatedLog?.reason ?? '활동 기록',
+        activityOccurredAt: relatedLog?.timestamp ?? null,
+        activityPointDelta: relatedLog?.pointDelta ?? null,
+    };
+};
+
 export const getMyMemberOverview = async (memberId?: string | null): Promise<Member | null> => {
     if (!isSupabaseConfigured) {
         return getLocalSelfMember(memberId);
@@ -504,12 +599,49 @@ export const getAuditLogs = async (): Promise<AuditLogEntry[]> => {
     }
 };
 
-export const addMember = async (name: string): Promise<Member> => {
+export const getCorrectionRequests = async (options?: { requesterMemberId?: string | null }): Promise<CorrectionRequest[]> => {
+    const requesterMemberId = options?.requesterMemberId ?? null;
+
+    if (!isSupabaseConfigured) {
+        return getLocalCorrectionRequests(requesterMemberId);
+    }
+
+    try {
+        const client = getSupabaseClient();
+        const requestQuery = client
+            .from('correction_requests')
+            .select('id, requester_member_id, activity_record_id, status, reason, review_note, reviewed_by, reviewed_at, created_at, updated_at')
+            .order('created_at', { ascending: false });
+
+        const filteredQuery = requesterMemberId
+            ? requestQuery.eq('requester_member_id', requesterMemberId)
+            : requestQuery;
+
+        const [requestResult, logs, members] = await Promise.all([
+            filteredQuery,
+            getLogs(),
+            getMembers({ includeLoginEmail: false }),
+        ]);
+
+        if (requestResult.error) {
+            throw requestResult.error;
+        }
+
+        return ((requestResult.data ?? []) as CorrectionRequestRow[]).map((row) => mapCorrectionRequestRow(row, logs, members));
+    } catch (error) {
+        return fallback('getCorrectionRequests', () => getLocalCorrectionRequests(requesterMemberId), error);
+    }
+};
+
+export const addMember = async (name: string, loginEmail?: string | null): Promise<Member> => {
+    const normalizedLoginEmail = normalizeLoginEmail(loginEmail);
+
     if (!isSupabaseConfigured) {
         const newMember: Member = {
             id: createLocalId('member'),
             name,
             score: 0,
+            loginEmail: normalizedLoginEmail,
             isApproved: false,
             roleName: null,
             teamName: null,
@@ -526,10 +658,11 @@ export const addMember = async (name: string): Promise<Member> => {
             .from('members')
             .insert({
                 name,
+                login_email: normalizedLoginEmail,
                 is_approved: false,
                 status: 'active',
             })
-            .select('id, name, is_approved, status, joined_at')
+            .select('id, name, login_email, is_approved, status, joined_at')
             .single();
 
         if (error) {
@@ -540,6 +673,7 @@ export const addMember = async (name: string): Promise<Member> => {
             id: data.id,
             name: data.name,
             score: 0,
+            loginEmail: data.login_email,
             isApproved: data.is_approved,
             roleId: null,
             roleName: null,
@@ -554,6 +688,7 @@ export const addMember = async (name: string): Promise<Member> => {
             id: createLocalId('member'),
             name,
             score: 0,
+            loginEmail: normalizedLoginEmail,
             isApproved: false,
             roleId: null,
             roleName: null,
@@ -861,7 +996,7 @@ export const deleteMember = async (id: string): Promise<void> => {
 
 export const updateMember = async (
     id: string,
-    updates: Partial<Pick<Member, 'name' | 'roleId' | 'teamId' | 'status' | 'isApproved' | 'isVisible'>>,
+    updates: Partial<Pick<Member, 'name' | 'loginEmail' | 'roleId' | 'teamId' | 'status' | 'isApproved' | 'isVisible'>>,
 ): Promise<void> => {
     if (!isSupabaseConfigured) {
         localMembers = localMembers.map((member) => {
@@ -875,6 +1010,7 @@ export const updateMember = async (
             return {
                 ...member,
                 name: updates.name ?? member.name,
+                loginEmail: updates.loginEmail !== undefined ? normalizeLoginEmail(updates.loginEmail) : member.loginEmail ?? null,
                 roleId: nextRoleId,
                 roleName: nextRoleId ? localRoles.find((role) => role.id === nextRoleId)?.name ?? null : null,
                 teamId: nextTeamId,
@@ -892,6 +1028,7 @@ export const updateMember = async (
         const payload: Database['public']['Tables']['members']['Update'] = {};
 
         if (updates.name !== undefined) payload.name = updates.name;
+        if (updates.loginEmail !== undefined) payload.login_email = normalizeLoginEmail(updates.loginEmail);
         if (updates.roleId !== undefined) payload.role_id = updates.roleId;
         if (updates.teamId !== undefined) payload.team_id = updates.teamId;
         if (updates.status !== undefined) payload.status = updates.status;
@@ -1215,5 +1352,119 @@ export const reverseActivityEntry = async (recordId: string, note?: string): Pro
     } catch (error) {
         applyLocalReversal();
         fallback('reverseActivityEntry', () => undefined, error);
+    }
+};
+
+export const submitCorrectionRequest = async (recordId: string, reason: string): Promise<void> => {
+    const trimmedReason = reason.trim();
+    if (!trimmedReason) {
+        throw new Error('정정 요청 사유를 입력해 주세요.');
+    }
+
+    const applyLocalSubmit = () => {
+        const relatedLog = enrichLocalLogs().find((log) => log.recordId === recordId && !log.isReversal);
+        const requester = relatedLog
+            ? localMembers.find((member) => member.id === relatedLog.memberId) ?? null
+            : getLocalSelfMember();
+
+        if (!relatedLog || !requester) {
+            throw new Error('정정 요청 대상을 찾지 못했습니다.');
+        }
+
+        const hasOpenRequest = localCorrectionRequests.some(
+            (request) =>
+                request.requesterMemberId === requester.id &&
+                request.activityRecordId === recordId &&
+                (request.status === 'pending' || request.status === 'reviewing'),
+        );
+
+        if (hasOpenRequest) {
+            throw new Error('이미 처리 중인 정정 요청이 있습니다.');
+        }
+
+        const createdAt = new Date().toISOString();
+        localCorrectionRequests.push({
+            id: createLocalId('correction'),
+            requesterMemberId: requester.id,
+            requesterName: requester.name,
+            activityRecordId: recordId,
+            status: 'pending',
+            reason: trimmedReason,
+            reviewNote: null,
+            reviewedBy: null,
+            reviewedByName: null,
+            reviewedAt: null,
+            createdAt,
+            updatedAt: createdAt,
+            activitySummary: relatedLog.categoryName ?? relatedLog.reason ?? '활동 기록',
+            activityOccurredAt: relatedLog.timestamp,
+            activityPointDelta: relatedLog.pointDelta,
+        });
+    };
+
+    if (!isSupabaseConfigured) {
+        applyLocalSubmit();
+        return;
+    }
+
+    try {
+        const client = getSupabaseClient();
+        const { error } = await client.rpc('submit_correction_request', {
+            p_record_id: recordId,
+            p_reason: trimmedReason,
+        });
+
+        if (error) {
+            throw error;
+        }
+    } catch (error) {
+        applyLocalSubmit();
+        fallback('submitCorrectionRequest', () => undefined, error);
+    }
+};
+
+export const updateCorrectionRequestStatus = async (
+    requestId: string,
+    status: CorrectionRequestStatus,
+    reviewNote?: string,
+): Promise<void> => {
+    const trimmedReviewNote = reviewNote?.trim() || null;
+
+    const applyLocalUpdate = () => {
+        const reviewer = getLocalSelfMember();
+        const request = localCorrectionRequests.find((item) => item.id === requestId);
+
+        if (!request) {
+            throw new Error('정정 요청을 찾지 못했습니다.');
+        }
+
+        const updatedAt = new Date().toISOString();
+        request.status = status;
+        request.reviewNote = trimmedReviewNote;
+        request.reviewedBy = reviewer?.id ?? null;
+        request.reviewedByName = reviewer?.name ?? '로컬 운영자';
+        request.reviewedAt = updatedAt;
+        request.updatedAt = updatedAt;
+    };
+
+    if (!isSupabaseConfigured) {
+        applyLocalUpdate();
+        return;
+    }
+
+    try {
+        const client = getSupabaseClient();
+        const { error } = await client.rpc('update_correction_request_status', {
+            p_request_id: requestId,
+            p_status: status,
+            p_review_note: trimmedReviewNote,
+        });
+
+        if (error) {
+            throw error;
+        }
+    } catch (error) {
+        applyLocalUpdate();
+        fallback('updateCorrectionRequestStatus', () => undefined, error);
     }
 };

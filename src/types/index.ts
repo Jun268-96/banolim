@@ -2,6 +2,7 @@ export type MemberStatus = 'active' | 'dormant' | 'inactive';
 export type TeamType = 'core' | 'study' | 'project';
 export type SeasonStatus = 'planned' | 'active' | 'closed';
 export type AppRole = 'super_admin' | 'operator' | 'team_lead' | 'member';
+export type CorrectionRequestStatus = 'pending' | 'reviewing' | 'resolved' | 'rejected';
 
 export interface SeasonSummary {
     id: string;
@@ -38,6 +39,7 @@ export interface Member {
     id: string;
     name: string;
     score: number;
+    loginEmail?: string | null;
     isApproved: boolean;
     roleId?: string | null;
     roleName?: string | null;
@@ -80,4 +82,22 @@ export interface AuditLogEntry {
     summary: string;
     createdAt: string;
     diff?: Record<string, unknown> | null;
+}
+
+export interface CorrectionRequest {
+    id: string;
+    requesterMemberId: string;
+    requesterName?: string | null;
+    activityRecordId?: string | null;
+    status: CorrectionRequestStatus;
+    reason: string;
+    reviewNote?: string | null;
+    reviewedBy?: string | null;
+    reviewedByName?: string | null;
+    reviewedAt?: string | null;
+    createdAt: string;
+    updatedAt: string;
+    activitySummary?: string | null;
+    activityOccurredAt?: string | null;
+    activityPointDelta?: number | null;
 }

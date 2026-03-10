@@ -88,6 +88,7 @@ export interface Database {
                 Row: {
                     id: string;
                     name: string;
+                    login_email: string | null;
                     role_id: string | null;
                     team_id: string | null;
                     status: Database['public']['Enums']['member_status'];
@@ -100,6 +101,7 @@ export interface Database {
                 Insert: {
                     id?: string;
                     name: string;
+                    login_email?: string | null;
                     role_id?: string | null;
                     team_id?: string | null;
                     status?: Database['public']['Enums']['member_status'];
@@ -112,6 +114,7 @@ export interface Database {
                 Update: {
                     id?: string;
                     name?: string;
+                    login_email?: string | null;
                     role_id?: string | null;
                     team_id?: string | null;
                     status?: Database['public']['Enums']['member_status'];
@@ -282,6 +285,45 @@ export interface Database {
                 };
                 Relationships: [];
             };
+            correction_requests: {
+                Row: {
+                    id: string;
+                    requester_member_id: string;
+                    activity_record_id: string;
+                    status: Database['public']['Enums']['correction_request_status'];
+                    reason: string;
+                    review_note: string | null;
+                    reviewed_by: string | null;
+                    reviewed_at: string | null;
+                    created_at: string;
+                    updated_at: string;
+                };
+                Insert: {
+                    id?: string;
+                    requester_member_id: string;
+                    activity_record_id: string;
+                    status?: Database['public']['Enums']['correction_request_status'];
+                    reason: string;
+                    review_note?: string | null;
+                    reviewed_by?: string | null;
+                    reviewed_at?: string | null;
+                    created_at?: string;
+                    updated_at?: string;
+                };
+                Update: {
+                    id?: string;
+                    requester_member_id?: string;
+                    activity_record_id?: string;
+                    status?: Database['public']['Enums']['correction_request_status'];
+                    reason?: string;
+                    review_note?: string | null;
+                    reviewed_by?: string | null;
+                    reviewed_at?: string | null;
+                    created_at?: string;
+                    updated_at?: string;
+                };
+                Relationships: [];
+            };
             user_profiles: {
                 Row: {
                     id: string;
@@ -411,8 +453,35 @@ export interface Database {
                 };
                 Returns: string;
             };
+            submit_correction_request: {
+                Args: {
+                    p_reason: string;
+                    p_record_id: string;
+                };
+                Returns: string;
+            };
+            sync_my_profile: {
+                Args: Record<string, never>;
+                Returns: {
+                    app_role: string;
+                    display_name: string | null;
+                    email: string;
+                    id: string;
+                    is_active: boolean;
+                    member_id: string | null;
+                }[];
+            };
+            update_correction_request_status: {
+                Args: {
+                    p_request_id: string;
+                    p_review_note?: string | null;
+                    p_status: Database['public']['Enums']['correction_request_status'];
+                };
+                Returns: string;
+            };
         };
         Enums: {
+            correction_request_status: 'pending' | 'reviewing' | 'resolved' | 'rejected';
             member_status: 'active' | 'dormant' | 'inactive';
             team_type: 'core' | 'study' | 'project';
             season_status: 'planned' | 'active' | 'closed';

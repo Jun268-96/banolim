@@ -12,7 +12,8 @@ export interface AuthContextValue {
     profile: UserProfile | null;
     role: AppRole;
     permissions: AppPermissions;
-    signInWithMagicLink: (email: string) => Promise<{ error?: string }>;
+    signInWithEmailOtp: (email: string) => Promise<{ error?: string }>;
+    verifyEmailOtp: (email: string, token: string) => Promise<{ error?: string }>;
     refreshProfile: () => Promise<void>;
     signOut: () => Promise<void>;
 }

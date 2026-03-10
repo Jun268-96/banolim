@@ -1,27 +1,31 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+    BadgeCheck,
     CalendarClock,
     CheckCircle2,
     CircleSlash,
     ClipboardList,
     Clock3,
     History,
+    MessageSquareWarning,
     PlusCircle,
     RotateCcw,
     Sparkles,
     TriangleAlert,
     Users2,
 } from 'lucide-react';
-import type { ActivityLog, AuditLogEntry, Category, Member, SeasonSummary } from '../../types';
+import type { ActivityLog, AuditLogEntry, Category, CorrectionRequest, CorrectionRequestStatus, Member, SeasonSummary } from '../../types';
 import {
     createActivityEntry,
     createBatchActivityEntries,
+    getCorrectionRequests,
     getCategories,
     getAuditLogs,
     getCurrentSeason,
     getLogs,
     getMembers,
     reverseActivityEntry,
+    updateCorrectionRequestStatus,
 } from '../../lib/db';
 
 type EntryMode = 'attendance' | 'single';
@@ -47,6 +51,20 @@ const attendanceStatusButtonStyles: Record<AttendanceStatus, string> = {
     present: 'border-emerald-200 text-emerald-700 hover:bg-emerald-50',
     late: 'border-amber-200 text-amber-700 hover:bg-amber-50',
     absent: 'border-slate-300 text-slate-700 hover:bg-slate-100',
+};
+
+const correctionRequestStatusLabels: Record<CorrectionRequestStatus, string> = {
+    pending: '접수됨',
+    reviewing: '검토 중',
+    resolved: '해결 완료',
+    rejected: '반려',
+};
+
+const correctionRequestStatusClasses: Record<CorrectionRequestStatus, string> = {
+    pending: 'border-amber-200 bg-amber-50 text-amber-700',
+    reviewing: 'border-sky-200 bg-sky-50 text-sky-700',
+    resolved: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+    rejected: 'border-rose-200 bg-rose-50 text-rose-700',
 };
 const attendanceStatusIcons = {
     present: CheckCircle2,
@@ -118,6 +136,7 @@ export const ActivitiesTab: React.FC = () => {
     const [categories, setCategories] = useState<Category[]>([]);
     const [logs, setLogs] = useState<ActivityLog[]>([]);
     const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
+    const [correctionRequests, setCorrectionRequests] = useState<CorrectionRequest[]>([]);
     const [entryMode, setEntryMode] = useState<EntryMode>('attendance');
 
     const [selectedMemberId, setSelectedMemberId] = useState('');
@@ -133,15 +152,18 @@ export const ActivitiesTab: React.FC = () => {
     const [isLoading, setIsLoading] = useState(true);
     const [isSaving, setIsSaving] = useState(false);
     const [reversingRecordId, setReversingRecordId] = useState<string | null>(null);
+    const [updatingCorrectionRequestId, setUpdatingCorrectionRequestId] = useState<string | null>(null);
+    const [reviewNotes, setReviewNotes] = useState<Record<string, string>>({});
 
     const refreshData = async () => {
         setIsLoading(true);
-        const [seasonData, membersData, categoriesData, logsData, auditLogsData] = await Promise.all([
+        const [seasonData, membersData, categoriesData, logsData, auditLogsData, correctionRequestData] = await Promise.all([
             getCurrentSeason(),
             getMembers(),
             getCategories(),
             getLogs(),
             getAuditLogs(),
+            getCorrectionRequests(),
         ]);
         const firstActiveMemberId = membersData.find((member) => member.status !== 'inactive')?.id ?? '';
         setSeason(seasonData);
@@ -149,6 +171,7 @@ export const ActivitiesTab: React.FC = () => {
         setCategories(categoriesData);
         setLogs(logsData);
         setAuditLogs(auditLogsData);
+        setCorrectionRequests(correctionRequestData);
         setSelectedMemberId((current) => current || firstActiveMemberId);
         setSelectedCategoryId((current) => current || categoriesData[0]?.id || '');
         setIsLoading(false);
@@ -158,12 +181,13 @@ export const ActivitiesTab: React.FC = () => {
         let isMounted = true;
 
         const initialize = async () => {
-            const [seasonData, membersData, categoriesData, logsData, auditLogsData] = await Promise.all([
+            const [seasonData, membersData, categoriesData, logsData, auditLogsData, correctionRequestData] = await Promise.all([
                 getCurrentSeason(),
                 getMembers(),
                 getCategories(),
                 getLogs(),
                 getAuditLogs(),
+                getCorrectionRequests(),
             ]);
             const firstActiveMemberId = membersData.find((member) => member.status !== 'inactive')?.id ?? '';
 
@@ -176,6 +200,7 @@ export const ActivitiesTab: React.FC = () => {
             setCategories(categoriesData);
             setLogs(logsData);
             setAuditLogs(auditLogsData);
+            setCorrectionRequests(correctionRequestData);
             setSelectedMemberId((current) => current || firstActiveMemberId);
             setSelectedCategoryId((current) => current || categoriesData[0]?.id || '');
             setIsLoading(false);
@@ -278,6 +303,20 @@ export const ActivitiesTab: React.FC = () => {
     const expectedAttendanceDelta = attendancePreviewRows.reduce(
         (sum, row) => sum + (row.category?.pointValue ?? 0),
         0,
+    );
+
+    const correctionRequestCounts = useMemo(
+        () =>
+            correctionRequests.reduce<Record<CorrectionRequestStatus, number>>((acc, request) => {
+                acc[request.status] += 1;
+                return acc;
+            }, {
+                pending: 0,
+                reviewing: 0,
+                resolved: 0,
+                rejected: 0,
+            }),
+        [correctionRequests],
     );
 
     const handleAttendanceStatusChange = (memberId: string, status: AttendanceStatus) => {
@@ -388,6 +427,16 @@ export const ActivitiesTab: React.FC = () => {
     const handleTeamFilterChange = (value: string) => {
         setSelectedTeamFilter(value);
         setAttendanceDraft({});
+    };
+
+    const handleCorrectionRequestStatusUpdate = async (
+        request: CorrectionRequest,
+        status: CorrectionRequestStatus,
+    ) => {
+        setUpdatingCorrectionRequestId(request.id);
+        await updateCorrectionRequestStatus(request.id, status, reviewNotes[request.id]);
+        await refreshData();
+        setUpdatingCorrectionRequestId(null);
     };
 
     if (isLoading) {
@@ -879,6 +928,126 @@ export const ActivitiesTab: React.FC = () => {
                                     )}
                                 </tbody>
                             </table>
+                        </div>
+                    </div>
+
+                    <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                        <div className="flex flex-col gap-4 border-b border-slate-100 px-6 py-4 md:flex-row md:items-center md:justify-between">
+                            <div className="flex items-center gap-2 text-slate-900 font-semibold">
+                                <MessageSquareWarning size={18} className="text-indigo-600" />
+                                정정 요청 검토
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                                {(['pending', 'reviewing', 'resolved', 'rejected'] as CorrectionRequestStatus[]).map((status) => (
+                                    <span key={status} className={`inline-flex rounded-full border px-3 py-1 text-xs font-semibold ${correctionRequestStatusClasses[status]}`}>
+                                        {correctionRequestStatusLabels[status]} {correctionRequestCounts[status]}건
+                                    </span>
+                                ))}
+                            </div>
+                        </div>
+                        <div className="divide-y divide-slate-100">
+                            {correctionRequests.slice(0, 8).map((request) => {
+                                const isUpdating = updatingCorrectionRequestId === request.id;
+                                const canReview = request.status === 'pending' || request.status === 'reviewing';
+
+                                return (
+                                    <div key={request.id} className="space-y-4 px-6 py-5">
+                                        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                                            <div>
+                                                <div className="flex flex-wrap items-center gap-2">
+                                                    <div className="font-medium text-slate-900">{request.requesterName ?? '알 수 없는 회원'}</div>
+                                                    <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${correctionRequestStatusClasses[request.status]}`}>
+                                                        {correctionRequestStatusLabels[request.status]}
+                                                    </span>
+                                                </div>
+                                                <div className="mt-1 text-sm text-slate-500">
+                                                    {request.activitySummary ?? '활동 기록'}
+                                                    {request.activityOccurredAt ? (
+                                                        <>
+                                                            <span className="text-slate-300"> · </span>
+                                                            {formatDateTime(request.activityOccurredAt)}
+                                                        </>
+                                                    ) : null}
+                                                    {typeof request.activityPointDelta === 'number' ? (
+                                                        <>
+                                                            <span className="text-slate-300"> · </span>
+                                                            {request.activityPointDelta > 0 ? '+' : ''}
+                                                            {request.activityPointDelta}점
+                                                        </>
+                                                    ) : null}
+                                                </div>
+                                            </div>
+                                            <div className="text-sm text-slate-500">{formatDateTime(request.createdAt)}</div>
+                                        </div>
+
+                                        <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-700">
+                                            {request.reason}
+                                        </div>
+
+                                        <textarea
+                                            value={reviewNotes[request.id] ?? request.reviewNote ?? ''}
+                                            onChange={(event) =>
+                                                setReviewNotes((current) => ({
+                                                    ...current,
+                                                    [request.id]: event.target.value,
+                                                }))
+                                            }
+                                            rows={3}
+                                            placeholder="운영진 메모 또는 처리 결과를 남겨 주세요."
+                                            className="w-full resize-none rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                                        />
+
+                                        <div className="flex flex-wrap items-center justify-between gap-3">
+                                            <div className="text-sm text-slate-500">
+                                                {request.reviewedAt
+                                                    ? `${request.reviewedByName ?? '운영진'} · ${formatDateTime(request.reviewedAt)}`
+                                                    : '아직 검토 전입니다.'}
+                                            </div>
+                                            <div className="flex flex-wrap gap-2">
+                                                {canReview && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => void handleCorrectionRequestStatusUpdate(request, 'reviewing')}
+                                                        disabled={isUpdating}
+                                                        className="inline-flex items-center gap-2 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-sm font-medium text-sky-700 transition-colors hover:bg-sky-100 disabled:opacity-50"
+                                                    >
+                                                        <Clock3 size={15} />
+                                                        검토 시작
+                                                    </button>
+                                                )}
+                                                {canReview && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => void handleCorrectionRequestStatusUpdate(request, 'resolved')}
+                                                        disabled={isUpdating}
+                                                        className="inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-700 transition-colors hover:bg-emerald-100 disabled:opacity-50"
+                                                    >
+                                                        <BadgeCheck size={15} />
+                                                        해결 완료
+                                                    </button>
+                                                )}
+                                                {canReview && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => void handleCorrectionRequestStatusUpdate(request, 'rejected')}
+                                                        disabled={isUpdating}
+                                                        className="inline-flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700 transition-colors hover:bg-rose-100 disabled:opacity-50"
+                                                    >
+                                                        <CircleSlash size={15} />
+                                                        반려
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+
+                            {correctionRequests.length === 0 && (
+                                <div className="px-6 py-12 text-center text-slate-500">
+                                    아직 접수된 정정 요청이 없습니다.
+                                </div>
+                            )}
                         </div>
                     </div>
 

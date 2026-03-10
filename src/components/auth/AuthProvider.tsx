@@ -2,19 +2,30 @@ import React, { useEffect, useMemo, useState } from 'react';
 import type { AuthChangeEvent, Session, User } from '@supabase/supabase-js';
 import type { AppRole, UserProfile } from '../../types';
 import { buildPermissions } from '../../lib/permissions';
-import { isSupabaseConfigured, supabase } from '../../lib/supabase';
+import { isAuthBypassed, isSupabaseConfigured, supabase } from '../../lib/supabase';
+import type { Database } from '../../types/database';
 import { AuthContext, type AuthContextValue } from './auth-context';
 
 const defaultDemoProfile: UserProfile = {
     id: 'demo-user',
     email: 'local-demo@banollim.app',
-    memberId: null,
+    memberId: 'demo-member',
     appRole: 'operator',
     displayName: '로컬 데모',
     isActive: true,
 };
 
+const defaultBypassProfile: UserProfile = {
+    id: 'bypass-super-admin',
+    email: import.meta.env.VITE_BYPASS_AUTH_EMAIL?.trim() || 'admin@banollim.app',
+    memberId: 'bypass-super-admin-member',
+    appRole: 'super_admin',
+    displayName: import.meta.env.VITE_BYPASS_AUTH_NAME?.trim() || '개발 최고 관리자',
+    isActive: true,
+};
+
 const validRoles: AppRole[] = ['super_admin', 'operator', 'team_lead', 'member'];
+type SyncedProfileRow = Database['public']['Functions']['sync_my_profile']['Returns'][number];
 
 const normalizeAppRole = (value: string | null | undefined): AppRole | null =>
     validRoles.includes(value as AppRole) ? (value as AppRole) : null;
@@ -43,56 +54,24 @@ const mapProfileRow = (data: {
     };
 };
 
-const createProfileSeed = (user: User) => ({
-    id: user.id,
-    email: user.email ?? 'unknown@banollim.app',
-    display_name: (user.user_metadata?.full_name as string | undefined) ?? user.email ?? '반올림 회원',
-});
-
-const ensureProfile = async (user: User): Promise<UserProfile | null> => {
-    if (!supabase) {
-        return defaultDemoProfile;
-    }
-
-    const seed = createProfileSeed(user);
-    const { data, error } = await supabase
-        .from('user_profiles')
-        .upsert(seed, { onConflict: 'id' })
-        .select('id, email, member_id, app_role, display_name, is_active')
-        .single();
-
-    if (error || !data) {
-        return null;
-    }
-
-    return mapProfileRow(data);
-};
-
 const fetchProfile = async (user: User): Promise<UserProfile> => {
     if (!supabase) {
         return defaultDemoProfile;
     }
 
-    const { data, error } = await supabase
-        .from('user_profiles')
-        .select('id, email, member_id, app_role, display_name, is_active')
-        .eq('id', user.id)
-        .maybeSingle();
+    const { data, error } = await supabase.rpc('sync_my_profile');
 
     if (error) {
-        throw new Error('권한 프로필을 조회하지 못했습니다.');
+        throw new Error('권한 프로필을 동기화하지 못했습니다.');
     }
 
-    if (!data) {
-        const createdProfile = await ensureProfile(user);
-        if (!createdProfile) {
-            throw new Error('권한 프로필이 없어서 새로 만들려고 했지만 실패했습니다.');
-        }
-
-        return createdProfile;
+    const rows = (data ?? []) as SyncedProfileRow[];
+    const profileRow = rows[0];
+    if (!profileRow) {
+        throw new Error(`권한 프로필을 찾지 못했습니다. (${user.id})`);
     }
 
-    return mapProfileRow(data);
+    return mapProfileRow(profileRow);
 };
 
 const getProfileErrorMessage = (error: unknown) => {
@@ -103,7 +82,19 @@ const getProfileErrorMessage = (error: unknown) => {
     return '로그인은 되었지만 권한 프로필을 확인하지 못했습니다. 다시 로그인하거나 권한 다시 확인을 눌러 주세요.';
 };
 
-const getMagicLinkErrorMessage = (error: unknown) => {
+const getProfileAccessMessage = (profile: UserProfile) => {
+    if (!profile.memberId) {
+        return '등록된 로그인 이메일과 일치하는 회원 정보를 찾지 못했습니다. 운영진에게 본인 회원 레코드에 로그인 이메일을 등록해 달라고 요청해 주세요.';
+    }
+
+    if (!profile.isActive) {
+        return '회원 정보는 확인되었지만 아직 승인되지 않았거나 비활성화되어 있습니다. 운영진에게 승인 상태를 확인해 주세요.';
+    }
+
+    return null;
+};
+
+const getEmailOtpRequestErrorMessage = (error: unknown) => {
     const status =
         typeof error === 'object' && error !== null && 'status' in error
             ? Number((error as { status?: number }).status)
@@ -117,20 +108,44 @@ const getMagicLinkErrorMessage = (error: unknown) => {
         return error.message;
     }
 
-    return '로그인 링크를 보내지 못했습니다. 잠시 후 다시 시도해 주세요.';
+    return '인증 코드를 보내지 못했습니다. 잠시 후 다시 시도해 주세요.';
+};
+
+const getEmailOtpVerifyErrorMessage = (error: unknown) => {
+    const status =
+        typeof error === 'object' && error !== null && 'status' in error
+            ? Number((error as { status?: number }).status)
+            : null;
+
+    if (status === 429) {
+        return '인증 시도가 너무 많습니다. 잠시 후 다시 시도해 주세요.';
+    }
+
+    if (error instanceof Error && error.message) {
+        const normalizedMessage = error.message.toLowerCase();
+        if (normalizedMessage.includes('expired') || normalizedMessage.includes('invalid')) {
+            return '인증 코드가 올바르지 않거나 만료되었습니다. 새 코드를 받아 다시 시도해 주세요.';
+        }
+
+        return error.message;
+    }
+
+    return '인증 코드를 확인하지 못했습니다. 새 코드를 받아 다시 시도해 주세요.';
 };
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const [session, setSession] = useState<Session | null>(null);
     const [user, setUser] = useState<User | null>(null);
-    const [profile, setProfile] = useState<UserProfile | null>(isSupabaseConfigured ? null : defaultDemoProfile);
-    const [isLoading, setIsLoading] = useState(isSupabaseConfigured);
+    const [profile, setProfile] = useState<UserProfile | null>(
+        isAuthBypassed ? defaultBypassProfile : isSupabaseConfigured ? null : defaultDemoProfile,
+    );
+    const [isLoading, setIsLoading] = useState(isSupabaseConfigured && !isAuthBypassed);
     const [authError, setAuthError] = useState<string | null>(null);
 
     useEffect(() => {
         const client = supabase;
 
-        if (!isSupabaseConfigured || !client) {
+        if (isAuthBypassed || !isSupabaseConfigured || !client) {
             return;
         }
 
@@ -149,7 +164,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 const resolvedProfile = await fetchProfile(nextUser);
                 if (isMounted) {
                     setProfile(resolvedProfile);
-                    setAuthError(null);
+                    setAuthError(getProfileAccessMessage(resolvedProfile));
                 }
             } catch (error) {
                 console.error('[auth] failed to resolve user profile', error);
@@ -199,34 +214,44 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         };
     }, []);
 
-    const role: AppRole = profile?.appRole ?? (isSupabaseConfigured ? 'member' : 'operator');
+    const role: AppRole = profile?.appRole ?? (isSupabaseConfigured && !isAuthBypassed ? 'member' : 'operator');
     const permissions = useMemo(() => buildPermissions(role), [role]);
 
     const value = useMemo<AuthContextValue>(
         () => ({
             isLoading,
-            isAuthenticated: Boolean(profile && profile.isActive),
+            isAuthenticated: Boolean(profile && profile.isActive && profile.memberId),
             authError,
             user,
             session,
             profile,
             role,
             permissions,
-            signInWithMagicLink: async (email: string) => {
+            signInWithEmailOtp: async (email: string) => {
                 if (!supabase) {
                     return {};
                 }
 
                 setAuthError(null);
 
-                const { error } = await supabase.auth.signInWithOtp({
+                const { error } = await supabase.auth.signInWithOtp({ email });
+
+                return error ? { error: getEmailOtpRequestErrorMessage(error) } : {};
+            },
+            verifyEmailOtp: async (email: string, token: string) => {
+                if (!supabase) {
+                    return {};
+                }
+
+                setAuthError(null);
+
+                const { error } = await supabase.auth.verifyOtp({
                     email,
-                    options: {
-                        emailRedirectTo: window.location.origin,
-                    },
+                    token,
+                    type: 'email',
                 });
 
-                return error ? { error: getMagicLinkErrorMessage(error) } : {};
+                return error ? { error: getEmailOtpVerifyErrorMessage(error) } : {};
             },
             refreshProfile: async () => {
                 if (!supabase || !user) return;
@@ -236,7 +261,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 try {
                     const resolvedProfile = await fetchProfile(user);
                     setProfile(resolvedProfile);
-                    setAuthError(null);
+                    setAuthError(getProfileAccessMessage(resolvedProfile));
                 } catch (error) {
                     console.error('[auth] failed to refresh user profile', error);
                     setProfile(null);
@@ -246,7 +271,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 }
             },
             signOut: async () => {
-                if (!supabase) return;
+                if (isAuthBypassed || !supabase) return;
                 setAuthError(null);
                 await supabase.auth.signOut();
             },

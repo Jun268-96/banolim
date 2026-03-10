@@ -50,6 +50,11 @@ const formatDate = (value?: string | null) => {
     }).format(new Date(value)).replace(/\s/g, '');
 };
 
+const normalizeLoginEmail = (value: string) => {
+    const normalized = value.trim().toLowerCase();
+    return normalized.length > 0 ? normalized : null;
+};
+
 export const DashboardTab: React.FC = () => {
     const { permissions } = useAuth();
     const [members, setMembers] = useState<Member[]>([]);
@@ -57,6 +62,7 @@ export const DashboardTab: React.FC = () => {
     const [roles, setRoles] = useState<RoleSummary[]>([]);
     const [teams, setTeams] = useState<TeamSummary[]>([]);
     const [newMemberName, setNewMemberName] = useState('');
+    const [newMemberLoginEmail, setNewMemberLoginEmail] = useState('');
     const [searchQuery, setSearchQuery] = useState('');
     const [isLoading, setIsLoading] = useState(true);
     const [savingMemberId, setSavingMemberId] = useState<string | null>(null);
@@ -64,7 +70,7 @@ export const DashboardTab: React.FC = () => {
     const refreshData = async () => {
         setIsLoading(true);
         const [membersData, categoriesData, rolesData, teamsData] = await Promise.all([
-            getMembers(),
+            getMembers({ includeLoginEmail: permissions.canManageMembers }),
             getCategories(),
             getRoles(),
             getTeams(),
@@ -81,7 +87,7 @@ export const DashboardTab: React.FC = () => {
 
         const initialize = async () => {
             const [membersData, categoriesData, rolesData, teamsData] = await Promise.all([
-                getMembers(),
+                getMembers({ includeLoginEmail: permissions.canManageMembers }),
                 getCategories(),
                 getRoles(),
                 getTeams(),
@@ -103,14 +109,14 @@ export const DashboardTab: React.FC = () => {
         return () => {
             isMounted = false;
         };
-    }, []);
+    }, [permissions.canManageMembers]);
 
     const filteredMembers = useMemo(() => {
         const query = searchQuery.trim().toLowerCase();
         if (!query) return members;
 
         return members.filter((member) =>
-            [member.name, member.roleName ?? '', member.teamName ?? '', member.status ?? '']
+            [member.name, member.loginEmail ?? '', member.roleName ?? '', member.teamName ?? '', member.status ?? '']
                 .join(' ')
                 .toLowerCase()
                 .includes(query),
@@ -121,8 +127,9 @@ export const DashboardTab: React.FC = () => {
         event.preventDefault();
         if (!newMemberName.trim()) return;
 
-        await addMember(newMemberName.trim());
+        await addMember(newMemberName.trim(), normalizeLoginEmail(newMemberLoginEmail));
         setNewMemberName('');
+        setNewMemberLoginEmail('');
         await refreshData();
     };
 
@@ -140,12 +147,15 @@ export const DashboardTab: React.FC = () => {
 
     const handleMemberUpdate = async (
         memberId: string,
-        updates: Partial<Pick<Member, 'roleId' | 'teamId' | 'status' | 'isApproved'>>,
+        updates: Partial<Pick<Member, 'loginEmail' | 'roleId' | 'teamId' | 'status' | 'isApproved'>>,
     ) => {
         setSavingMemberId(memberId);
-        await updateMember(memberId, updates);
-        await refreshData();
-        setSavingMemberId(null);
+        try {
+            await updateMember(memberId, updates);
+            await refreshData();
+        } finally {
+            setSavingMemberId(null);
+        }
     };
 
     if (isLoading) {
@@ -167,7 +177,7 @@ export const DashboardTab: React.FC = () => {
                         <Users className="text-indigo-600" />
                         멤버 관리
                     </h2>
-                    <p className="text-slate-500 mt-1">역할, 팀, 상태, 승인 여부, 점수를 한 화면에서 관리합니다.</p>
+                    <p className="text-slate-500 mt-1">역할, 팀, 상태, 승인 여부, 로그인 이메일, 점수를 한 화면에서 관리합니다.</p>
                 </div>
 
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -190,6 +200,13 @@ export const DashboardTab: React.FC = () => {
                                 value={newMemberName}
                                 onChange={(event) => setNewMemberName(event.target.value)}
                                 className="px-3 py-1.5 outline-none text-sm w-48 bg-transparent"
+                            />
+                            <input
+                                type="email"
+                                placeholder="로그인 이메일(선택)"
+                                value={newMemberLoginEmail}
+                                onChange={(event) => setNewMemberLoginEmail(event.target.value)}
+                                className="px-3 py-1.5 outline-none text-sm w-56 bg-transparent border-l border-slate-200"
                             />
                             <button
                                 type="submit"
@@ -224,14 +241,17 @@ export const DashboardTab: React.FC = () => {
 
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
                 <div className="border-b border-slate-100 px-6 py-3 text-sm text-slate-500">
-                    화면 폭이 좁으면 표를 좌우로 스크롤해 전체 정보를 확인할 수 있습니다.
+                    화면 폭이 좁으면 표를 좌우로 스크롤해 전체 정보를 확인할 수 있습니다. 로그인 이메일이 등록된 회원만 실제 서비스에 로그인할 수 있습니다.
                 </div>
                 <div className="overflow-x-auto pb-2">
-                    <table className="min-w-[1480px] w-max text-left border-collapse">
+                    <table className={`${permissions.canManageMembers ? 'min-w-[1720px]' : 'min-w-[1480px]'} w-max text-left border-collapse`}>
                         <thead>
                             <tr className="bg-slate-50 border-b border-slate-200 text-sm font-semibold text-slate-600">
                                 <th className="py-4 px-6 min-w-[92px] whitespace-nowrap">레벨</th>
                                 <th className="py-4 px-6 min-w-[180px] whitespace-nowrap">이름</th>
+                                {permissions.canManageMembers && (
+                                    <th className="py-4 px-6 min-w-[240px] whitespace-nowrap">로그인 이메일</th>
+                                )}
                                 <th className="py-4 px-6 min-w-[180px] whitespace-nowrap">역할</th>
                                 <th className="py-4 px-6 min-w-[180px] whitespace-nowrap">팀</th>
                                 <th className="py-4 px-6 min-w-[140px] whitespace-nowrap">상태</th>
@@ -265,6 +285,33 @@ export const DashboardTab: React.FC = () => {
                                                 <span className="text-xs text-slate-500 font-mono">{member.id.slice(0, 8)}</span>
                                             </div>
                                         </td>
+                                        {permissions.canManageMembers && (
+                                            <td className="py-4 px-6 align-middle whitespace-nowrap">
+                                                <input
+                                                    key={`${member.id}-${member.loginEmail ?? ''}`}
+                                                    type="email"
+                                                    defaultValue={member.loginEmail ?? ''}
+                                                    placeholder="example@school.kr"
+                                                    disabled={isSavingRow}
+                                                    onBlur={(event) => {
+                                                        const nextValue = normalizeLoginEmail(event.target.value);
+                                                        if ((member.loginEmail ?? null) === nextValue) {
+                                                            event.target.value = member.loginEmail ?? '';
+                                                            return;
+                                                        }
+                                                        event.target.value = nextValue ?? '';
+                                                        void handleMemberUpdate(member.id, { loginEmail: nextValue });
+                                                    }}
+                                                    onKeyDown={(event) => {
+                                                        if (event.key === 'Enter') {
+                                                            event.preventDefault();
+                                                            event.currentTarget.blur();
+                                                        }
+                                                    }}
+                                                    className="min-w-[220px] rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                                                />
+                                            </td>
+                                        )}
                                         <td className="py-4 px-6 align-middle whitespace-nowrap">
                                             {permissions.canManageMembers ? (
                                                 <select
@@ -404,7 +451,7 @@ export const DashboardTab: React.FC = () => {
 
                             {filteredMembers.length === 0 && (
                                 <tr>
-                                    <td colSpan={10} className="py-12 text-center text-slate-500">
+                                    <td colSpan={permissions.canManageMembers ? 11 : 10} className="py-12 text-center text-slate-500">
                                         검색 조건에 맞는 멤버가 없습니다.
                                     </td>
                                 </tr>
