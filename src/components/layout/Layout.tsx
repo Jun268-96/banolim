@@ -1,5 +1,7 @@
 import React from 'react';
 import { Sidebar, type TabType } from './Sidebar';
+import { useAuth } from '../auth/AuthProvider';
+import { roleLabels } from '../../lib/permissions';
 
 interface LayoutProps {
     activeTab: TabType;
@@ -8,11 +10,26 @@ interface LayoutProps {
 }
 
 export const Layout: React.FC<LayoutProps> = ({ activeTab, setActiveTab, children }) => {
+    const { profile, role, signOut } = useAuth();
+
     return (
         <div className="flex bg-slate-50 text-slate-900 font-sans min-h-screen">
             <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} />
             <main className="flex-1 overflow-auto relative">
-                <div className="p-8 max-w-6xl mx-auto min-h-full">
+                <div className="min-h-full w-full px-5 py-6 lg:px-6 xl:px-8">
+                    <div className="mb-5 flex items-center justify-end gap-3">
+                        <div className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-right shadow-sm">
+                            <div className="text-sm font-semibold text-slate-900">{profile?.displayName || profile?.email || 'Signed in user'}</div>
+                            <div className="text-xs text-slate-500">{roleLabels[role]}</div>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={() => void signOut()}
+                            className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
+                        >
+                            Sign out
+                        </button>
+                    </div>
                     {children}
                 </div>
             </main>
