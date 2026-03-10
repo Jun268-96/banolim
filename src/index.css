@@ -1,0 +1,8 @@
+@import "tailwindcss";
+
+@layer base {
+  html, body {
+    height: 100%;
+    @apply bg-slate-50 text-slate-900;
+  }
+}
