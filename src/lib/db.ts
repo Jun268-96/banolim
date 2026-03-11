@@ -21,7 +21,7 @@ import type {
     TeamType,
     SeasonStatus,
 } from '../types';
-import { isSupabaseConfigured, supabase } from './supabase';
+import { isSupabaseConfigured, supabase, supabaseAnonKey, supabaseUrl } from './supabase';
 import type { Database, Json } from '../types/database';
 
 type MemberRow = Database['public']['Tables']['members']['Row'];
@@ -898,32 +898,34 @@ export const provisionMemberPasswordAuth = async (memberId: string): Promise<{
         throw new Error('로그인 세션이 만료되었습니다. 다시 로그인한 뒤 계정을 발급해 주세요.');
     }
 
-    const { data, error } = await client.functions.invoke('provision-member-auth', {
-        body: { memberId },
+    if (!supabaseUrl || !supabaseAnonKey) {
+        throw new Error('Supabase 함수 엔드포인트 설정이 비어 있습니다.');
+    }
+
+    const response = await fetch(`${supabaseUrl}/functions/v1/provision-member-auth`, {
+        method: 'POST',
         headers: {
+            'Content-Type': 'application/json',
+            apikey: supabaseAnonKey,
             Authorization: `Bearer ${session.access_token}`,
         },
+        body: JSON.stringify({ memberId }),
     });
 
-    if (error) {
-        const response = (error as { context?: Response }).context;
+    const payload = await response
+        .json()
+        .catch(async () => ({ error: await response.text().catch(() => '') }));
 
-        if (response instanceof Response) {
-            const payload = await response
-                .json()
-                .catch(async () => ({ error: await response.text().catch(() => '') }));
-            const functionMessage =
-                payload && typeof payload === 'object' && 'error' in payload && typeof payload.error === 'string'
-                    ? payload.error
-                    : null;
+    if (!response.ok) {
+        const functionMessage =
+            payload && typeof payload === 'object' && 'error' in payload && typeof payload.error === 'string'
+                ? payload.error
+                : null;
 
-            if (functionMessage) {
-                throw new Error(functionMessage);
-            }
-        }
-
-        throw new Error(error.message || '계정을 발급하지 못했습니다.');
+        throw new Error(functionMessage || '계정을 발급하지 못했습니다.');
     }
+
+    const data = payload as Record<string, unknown>;
 
     return {
         email: String(data?.email ?? ''),
