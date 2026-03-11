@@ -495,6 +495,132 @@ export interface Database {
                 };
                 Relationships: [];
             };
+            recap_snapshots: {
+                Row: {
+                    id: string;
+                    snapshot_scope: string;
+                    period_type: string;
+                    title: string;
+                    subtitle: string;
+                    summary: string;
+                    badge_label: string;
+                    note: string;
+                    starts_at: string;
+                    ends_at: string;
+                    member_id: string | null;
+                    member_name: string | null;
+                    season_id: string | null;
+                    payload: Json;
+                    created_by: string | null;
+                    created_at: string;
+                };
+                Insert: {
+                    id?: string;
+                    snapshot_scope: string;
+                    period_type: string;
+                    title: string;
+                    subtitle: string;
+                    summary: string;
+                    badge_label: string;
+                    note: string;
+                    starts_at: string;
+                    ends_at: string;
+                    member_id?: string | null;
+                    member_name?: string | null;
+                    season_id?: string | null;
+                    payload?: Json;
+                    created_by?: string | null;
+                    created_at?: string;
+                };
+                Update: {
+                    id?: string;
+                    snapshot_scope?: string;
+                    period_type?: string;
+                    title?: string;
+                    subtitle?: string;
+                    summary?: string;
+                    badge_label?: string;
+                    note?: string;
+                    starts_at?: string;
+                    ends_at?: string;
+                    member_id?: string | null;
+                    member_name?: string | null;
+                    season_id?: string | null;
+                    payload?: Json;
+                    created_by?: string | null;
+                    created_at?: string;
+                };
+                Relationships: [];
+            };
+            attendance_sessions: {
+                Row: {
+                    id: string;
+                    title: string;
+                    session_code: string;
+                    point_rule_id: string;
+                    season_id: string | null;
+                    starts_at: string;
+                    ends_at: string | null;
+                    note: string | null;
+                    is_active: boolean;
+                    created_by: string | null;
+                    created_at: string;
+                };
+                Insert: {
+                    id?: string;
+                    title: string;
+                    session_code: string;
+                    point_rule_id: string;
+                    season_id?: string | null;
+                    starts_at: string;
+                    ends_at?: string | null;
+                    note?: string | null;
+                    is_active?: boolean;
+                    created_by?: string | null;
+                    created_at?: string;
+                };
+                Update: {
+                    id?: string;
+                    title?: string;
+                    session_code?: string;
+                    point_rule_id?: string;
+                    season_id?: string | null;
+                    starts_at?: string;
+                    ends_at?: string | null;
+                    note?: string | null;
+                    is_active?: boolean;
+                    created_by?: string | null;
+                    created_at?: string;
+                };
+                Relationships: [];
+            };
+            attendance_checkins: {
+                Row: {
+                    id: string;
+                    session_id: string;
+                    member_id: string;
+                    activity_record_id: string;
+                    point_ledger_id: string;
+                    checked_in_at: string;
+                };
+                Insert: {
+                    id?: string;
+                    session_id: string;
+                    member_id: string;
+                    activity_record_id: string;
+                    point_ledger_id: string;
+                    checked_in_at?: string;
+                };
+                Update: {
+                    id?: string;
+                    session_id?: string;
+                    member_id?: string;
+                    activity_record_id?: string;
+                    point_ledger_id?: string;
+                    checked_in_at?: string;
+                };
+                Relationships: [];
+            };
         };
         Views: {
             member_score_summary: {
@@ -554,6 +680,16 @@ export interface Database {
                     p_reason?: string | null;
                 };
                 Returns: string[];
+            };
+            create_attendance_session: {
+                Args: {
+                    p_ends_at?: string | null;
+                    p_note?: string | null;
+                    p_point_rule_id: string;
+                    p_starts_at: string;
+                    p_title: string;
+                };
+                Returns: string;
             };
             create_point_rule_version: {
                 Args: {
@@ -625,6 +761,12 @@ export interface Database {
                 Args: {
                     p_reason: string;
                     p_record_id: string;
+                };
+                Returns: string;
+            };
+            submit_attendance_checkin: {
+                Args: {
+                    p_session_code: string;
                 };
                 Returns: string;
             };

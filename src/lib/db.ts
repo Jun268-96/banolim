@@ -1,5 +1,6 @@
 import type {
     ActivityLog,
+    AttendanceSession,
     AnnouncementItem,
     AuditLogEntry,
     Badge,
@@ -9,6 +10,10 @@ import type {
     CorrectionRequestStatus,
     Member,
     MemberBadge,
+    RecapSnapshot,
+    RecapSnapshotDraft,
+    RecapSnapshotPeriod,
+    RecapSnapshotScope,
     RoleSummary,
     ScheduleEventItem,
     SeasonSummary,
@@ -27,6 +32,9 @@ type ActivityRecordRow = Database['public']['Tables']['activity_records']['Row']
 type PointLedgerRow = Database['public']['Tables']['point_ledgers']['Row'];
 type AuditLogRow = Database['public']['Tables']['audit_logs']['Row'];
 type CorrectionRequestRow = Database['public']['Tables']['correction_requests']['Row'];
+type RecapSnapshotRow = Database['public']['Tables']['recap_snapshots']['Row'];
+type AttendanceSessionRow = Database['public']['Tables']['attendance_sessions']['Row'];
+type AttendanceCheckinRow = Database['public']['Tables']['attendance_checkins']['Row'];
 type MemberScoreSummaryRow = Database['public']['Views']['member_score_summary']['Row'];
 type PointRuleCatalogRow = Database['public']['Views']['point_rule_catalog']['Row'];
 type MyMemberOverviewRow = Database['public']['Functions']['get_my_member_overview']['Returns'][number];
@@ -39,6 +47,7 @@ type GetAuditLogsOptions = {
 };
 
 const createLocalId = (prefix: string) => `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
+const createAttendanceCode = () => Math.random().toString(36).replace(/[^a-z0-9]/gi, '').toUpperCase().slice(0, 8);
 const normalizeLoginEmail = (value?: string | null) => {
     const normalized = value?.trim().toLowerCase() ?? '';
     return normalized.length > 0 ? normalized : null;
@@ -415,11 +424,30 @@ let localScheduleEvents: ScheduleEventItem[] = [
     },
 ];
 
+let localRecapSnapshots: RecapSnapshot[] = [];
+let localAttendanceSessions: AttendanceSession[] = [];
+const localAttendanceCheckins: Array<{
+    id: string;
+    sessionId: string;
+    memberId: string;
+    activityRecordId: string;
+    pointLedgerId: string;
+    checkedInAt: string;
+}> = [];
+
 const sortMembers = (members: Member[]) => [...members].sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
 const sortAnnouncements = (items: AnnouncementItem[]) =>
     [...items].sort((a, b) => Number(b.isPinned) - Number(a.isPinned) || (b.startAt ?? b.createdAt).localeCompare(a.startAt ?? a.createdAt));
 const sortScheduleEvents = (items: ScheduleEventItem[]) =>
     [...items].sort((a, b) => a.startAt.localeCompare(b.startAt));
+const sortAttendanceSessions = (items: AttendanceSession[]) =>
+    [...items].sort((a, b) => {
+        if (a.isActive !== b.isActive) {
+            return Number(b.isActive) - Number(a.isActive);
+        }
+
+        return b.startsAt.localeCompare(a.startsAt);
+    });
 
 const enrichLocalLogs = () => {
     const memberMap = new Map(localMembers.map((member) => [member.id, member]));
@@ -567,6 +595,92 @@ const parseJsonObject = (value: Json): Record<string, unknown> | null => {
 
     return value as Record<string, unknown>;
 };
+
+const isRecapSnapshotScope = (value: unknown): value is RecapSnapshotScope =>
+    value === 'member' || value === 'overall';
+
+const isRecapSnapshotPeriod = (value: unknown): value is RecapSnapshotPeriod =>
+    value === 'month' || value === 'season';
+
+const mapRecapSnapshot = (
+    row: Pick<
+        RecapSnapshotRow,
+        'id' | 'snapshot_scope' | 'period_type' | 'title' | 'subtitle' | 'summary' | 'badge_label' | 'note' | 'starts_at' | 'ends_at' | 'member_id' | 'member_name' | 'season_id' | 'payload' | 'created_at'
+    >,
+    creatorName?: string | null,
+): RecapSnapshot | null => {
+    const payload = parseJsonObject(row.payload);
+    if (!payload || !isRecapSnapshotScope(row.snapshot_scope) || !isRecapSnapshotPeriod(row.period_type)) {
+        return null;
+    }
+
+    const theme = payload.theme === 'overall' ? 'overall' : 'member';
+    const mascotKey = payload.mascotKey === 'didi' ? 'didi' : 'bandi';
+    const stats = Array.isArray(payload.stats)
+        ? payload.stats
+            .map((item) => (item && typeof item === 'object' && !Array.isArray(item)
+                ? {
+                    label: typeof item.label === 'string' ? item.label : '',
+                    value: typeof item.value === 'string' ? item.value : '',
+                }
+                : null))
+            .filter((item): item is { label: string; value: string } => Boolean(item && item.label && item.value))
+        : [];
+    const highlights = Array.isArray(payload.highlights)
+        ? payload.highlights
+            .map((item) => (item && typeof item === 'object' && !Array.isArray(item)
+                ? {
+                    label: typeof item.label === 'string' ? item.label : '',
+                    value: typeof item.value === 'string' ? item.value : '',
+                    description: typeof item.description === 'string' ? item.description : '',
+                }
+                : null))
+            .filter((item): item is { label: string; value: string; description: string } => Boolean(item && item.label && item.value))
+        : [];
+
+    return {
+        id: row.id,
+        scope: row.snapshot_scope,
+        periodType: row.period_type,
+        title: row.title,
+        subtitle: row.subtitle,
+        summary: row.summary,
+        badgeLabel: row.badge_label,
+        note: row.note,
+        startsAt: row.starts_at,
+        endsAt: row.ends_at,
+        memberId: row.member_id,
+        memberName: row.member_name,
+        seasonId: row.season_id,
+        payload: {
+            theme,
+            mascotKey,
+            stats,
+            highlights,
+        },
+        createdAt: row.created_at,
+        createdByName: creatorName ?? null,
+    };
+};
+
+const mapAttendanceSession = (
+    row: Pick<AttendanceSessionRow, 'id' | 'title' | 'session_code' | 'point_rule_id' | 'season_id' | 'starts_at' | 'ends_at' | 'note' | 'is_active' | 'created_at'>,
+    pointRuleName?: string | null,
+    checkInCount?: number,
+): AttendanceSession => ({
+    id: row.id,
+    title: row.title,
+    sessionCode: row.session_code,
+    pointRuleId: row.point_rule_id,
+    pointRuleName: pointRuleName ?? null,
+    seasonId: row.season_id,
+    startsAt: row.starts_at,
+    endsAt: row.ends_at,
+    note: row.note,
+    isActive: row.is_active,
+    createdAt: row.created_at,
+    checkInCount: checkInCount ?? 0,
+});
 
 const fallback = <T>(task: string, getLocalValue: () => T, error?: unknown): T => {
     if (error) {
@@ -976,6 +1090,140 @@ export const getMemberBadges = async (): Promise<MemberBadge[]> => {
         });
     } catch (error) {
         return fallback('getMemberBadges', () => getAllLocalMemberBadges(), error);
+    }
+};
+
+export const getRecapSnapshots = async (options?: {
+    scope?: RecapSnapshotScope;
+    memberId?: string | null;
+    periodType?: RecapSnapshotPeriod;
+    limit?: number;
+}): Promise<RecapSnapshot[]> => {
+    const scope = options?.scope ?? null;
+    const memberId = options?.memberId ?? null;
+    const periodType = options?.periodType ?? null;
+    const limit = options?.limit ?? 8;
+
+    if (!isSupabaseConfigured) {
+        return [...localRecapSnapshots]
+            .filter((snapshot) => (!scope || snapshot.scope === scope) && (!memberId || snapshot.memberId === memberId) && (!periodType || snapshot.periodType === periodType))
+            .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+            .slice(0, limit);
+    }
+
+    try {
+        const client = getSupabaseClient();
+        let query = client
+            .from('recap_snapshots')
+            .select('id, snapshot_scope, period_type, title, subtitle, summary, badge_label, note, starts_at, ends_at, member_id, member_name, season_id, payload, created_by, created_at')
+            .order('created_at', { ascending: false })
+            .limit(limit);
+
+        if (scope) {
+            query = query.eq('snapshot_scope', scope);
+        }
+
+        if (memberId) {
+            query = query.eq('member_id', memberId);
+        }
+
+        if (periodType) {
+            query = query.eq('period_type', periodType);
+        }
+
+        const [snapshotResult, memberResult] = await Promise.all([
+            query,
+            client.from('members').select('id, name'),
+        ]);
+
+        if (snapshotResult.error) throw snapshotResult.error;
+        if (memberResult.error) throw memberResult.error;
+
+        const creatorMap = new Map(((memberResult.data ?? []) as Pick<MemberRow, 'id' | 'name'>[]).map((member) => [member.id, member.name]));
+
+        return ((snapshotResult.data ?? []) as Array<
+            Pick<
+                RecapSnapshotRow,
+                'id' | 'snapshot_scope' | 'period_type' | 'title' | 'subtitle' | 'summary' | 'badge_label' | 'note' | 'starts_at' | 'ends_at' | 'member_id' | 'member_name' | 'season_id' | 'payload' | 'created_by' | 'created_at'
+            >
+        >)
+            .map((row) => mapRecapSnapshot(row, row.created_by ? creatorMap.get(row.created_by) ?? null : null))
+            .filter((snapshot): snapshot is RecapSnapshot => Boolean(snapshot));
+    } catch (error) {
+        return fallback(
+            'getRecapSnapshots',
+            () =>
+                [...localRecapSnapshots]
+                    .filter((snapshot) => (!scope || snapshot.scope === scope) && (!memberId || snapshot.memberId === memberId) && (!periodType || snapshot.periodType === periodType))
+                    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+                    .slice(0, limit),
+            error,
+        );
+    }
+};
+
+export const createRecapSnapshots = async (drafts: RecapSnapshotDraft[]): Promise<RecapSnapshot[]> => {
+    if (drafts.length === 0) {
+        return [];
+    }
+
+    if (!isSupabaseConfigured) {
+        const createdAt = new Date().toISOString();
+        const snapshots = drafts.map((draft) => ({
+            ...draft,
+            id: createLocalId('recap'),
+            createdAt,
+            createdByName: '로컬 운영자',
+        }));
+        localRecapSnapshots = [...snapshots, ...localRecapSnapshots].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+        return snapshots;
+    }
+
+    try {
+        const client = getSupabaseClient();
+        const insertPayload: Database['public']['Tables']['recap_snapshots']['Insert'][] = drafts.map((draft) => ({
+            snapshot_scope: draft.scope,
+            period_type: draft.periodType,
+            title: draft.title,
+            subtitle: draft.subtitle,
+            summary: draft.summary,
+            badge_label: draft.badgeLabel,
+            note: draft.note,
+            starts_at: draft.startsAt,
+            ends_at: draft.endsAt,
+            member_id: draft.memberId ?? null,
+            member_name: draft.memberName ?? null,
+            season_id: draft.seasonId ?? null,
+            payload: draft.payload as unknown as Json,
+        }));
+
+        const { data, error } = await client
+            .from('recap_snapshots')
+            .insert(insertPayload)
+            .select('id, snapshot_scope, period_type, title, subtitle, summary, badge_label, note, starts_at, ends_at, member_id, member_name, season_id, payload, created_at');
+
+        if (error) {
+            throw error;
+        }
+
+        return ((data ?? []) as Array<
+            Pick<
+                RecapSnapshotRow,
+                'id' | 'snapshot_scope' | 'period_type' | 'title' | 'subtitle' | 'summary' | 'badge_label' | 'note' | 'starts_at' | 'ends_at' | 'member_id' | 'member_name' | 'season_id' | 'payload' | 'created_at'
+            >
+        >)
+            .map((row) => mapRecapSnapshot(row))
+            .filter((snapshot): snapshot is RecapSnapshot => Boolean(snapshot));
+    } catch (error) {
+        const createdAt = new Date().toISOString();
+        const snapshots = drafts.map((draft) => ({
+            ...draft,
+            id: createLocalId('recap'),
+            createdAt,
+            createdByName: '로컬 운영자',
+        }));
+        localRecapSnapshots = [...snapshots, ...localRecapSnapshots].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+        return fallback('createRecapSnapshots', () => snapshots, error);
     }
 };
 
@@ -1481,6 +1729,250 @@ export const getScheduleEvents = async (): Promise<ScheduleEventItem[]> => {
         }));
     } catch (error) {
         return fallback('getScheduleEvents', () => sortScheduleEvents(localScheduleEvents.filter((item) => item.isActive)), error);
+    }
+};
+
+export const getAttendanceSessions = async (): Promise<AttendanceSession[]> => {
+    if (!isSupabaseConfigured) {
+        return sortAttendanceSessions(
+            localAttendanceSessions.map((session) => ({
+                ...session,
+                checkInCount: localAttendanceCheckins.filter((checkin) => checkin.sessionId === session.id).length,
+            })),
+        );
+    }
+
+    try {
+        const client = getSupabaseClient();
+        const [sessionResult, checkinResult, categoryResult] = await Promise.all([
+            client
+                .from('attendance_sessions')
+                .select('id, title, session_code, point_rule_id, season_id, starts_at, ends_at, note, is_active, created_at')
+                .order('starts_at', { ascending: false }),
+            client.from('attendance_checkins').select('id, session_id, member_id, activity_record_id, point_ledger_id, checked_in_at'),
+            getCategories(),
+        ]);
+
+        if (sessionResult.error) {
+            throw sessionResult.error;
+        }
+
+        if (checkinResult.error) {
+            throw checkinResult.error;
+        }
+
+        const sessions = (sessionResult.data ?? []) as Pick<
+            AttendanceSessionRow,
+            'id' | 'title' | 'session_code' | 'point_rule_id' | 'season_id' | 'starts_at' | 'ends_at' | 'note' | 'is_active' | 'created_at'
+        >[];
+        const checkins = (checkinResult.data ?? []) as Pick<
+            AttendanceCheckinRow,
+            'id' | 'session_id' | 'member_id' | 'activity_record_id' | 'point_ledger_id' | 'checked_in_at'
+        >[];
+        const categoryMap = new Map(categoryResult.map((category) => [category.id, category.categoryName]));
+
+        return sortAttendanceSessions(
+            sessions.map((session) => mapAttendanceSession(
+                session,
+                categoryMap.get(session.point_rule_id) ?? null,
+                checkins.filter((checkin) => checkin.session_id === session.id).length,
+            )),
+        );
+    } catch (error) {
+        return fallback(
+            'getAttendanceSessions',
+            () =>
+                sortAttendanceSessions(
+                    localAttendanceSessions.map((session) => ({
+                        ...session,
+                        checkInCount: localAttendanceCheckins.filter((checkin) => checkin.sessionId === session.id).length,
+                    })),
+                ),
+            error,
+        );
+    }
+};
+
+export const createAttendanceSession = async (input: {
+    title: string;
+    pointRuleId: string;
+    startsAt: string;
+    endsAt?: string | null;
+    note?: string;
+}): Promise<AttendanceSession> => {
+    const title = input.title.trim();
+    const note = input.note?.trim() || null;
+    const endsAt = input.endsAt?.trim() || null;
+
+    if (!title) {
+        throw new Error('출석 세션 제목을 입력해 주세요.');
+    }
+
+    if (!isSupabaseConfigured) {
+        const category = localCategories.find((item) => item.id === input.pointRuleId);
+        const session: AttendanceSession = {
+            id: createLocalId('attendance_session'),
+            title,
+            sessionCode: createAttendanceCode(),
+            pointRuleId: input.pointRuleId,
+            pointRuleName: category?.categoryName ?? null,
+            seasonId: localCurrentSeason.id,
+            startsAt: input.startsAt,
+            endsAt,
+            note,
+            isActive: true,
+            createdAt: new Date().toISOString(),
+            checkInCount: 0,
+        };
+        localAttendanceSessions.push(session);
+        return session;
+    }
+
+    try {
+        const client = getSupabaseClient();
+        const { data, error } = await client.rpc('create_attendance_session', {
+            p_title: title,
+            p_point_rule_id: input.pointRuleId,
+            p_starts_at: input.startsAt,
+            p_ends_at: endsAt,
+            p_note: note,
+        });
+
+        if (error) {
+            throw error;
+        }
+
+        const createdId = data as string;
+        const sessions = await getAttendanceSessions();
+        const created = sessions.find((session) => session.id === createdId);
+        if (!created) {
+            throw new Error('생성된 출석 세션을 다시 불러오지 못했습니다.');
+        }
+
+        return created;
+    } catch (error) {
+        const category = localCategories.find((item) => item.id === input.pointRuleId);
+        const session: AttendanceSession = {
+            id: createLocalId('attendance_session'),
+            title,
+            sessionCode: createAttendanceCode(),
+            pointRuleId: input.pointRuleId,
+            pointRuleName: category?.categoryName ?? null,
+            seasonId: localCurrentSeason.id,
+            startsAt: input.startsAt,
+            endsAt,
+            note,
+            isActive: true,
+            createdAt: new Date().toISOString(),
+            checkInCount: 0,
+        };
+        localAttendanceSessions.push(session);
+        return fallback('createAttendanceSession', () => session, error);
+    }
+};
+
+export const closeAttendanceSession = async (id: string): Promise<void> => {
+    if (!isSupabaseConfigured) {
+        localAttendanceSessions = localAttendanceSessions.map((session) =>
+            session.id === id
+                ? { ...session, isActive: false }
+                : session,
+        );
+        return;
+    }
+
+    try {
+        const client = getSupabaseClient();
+        const { error } = await client.from('attendance_sessions').update({ is_active: false }).eq('id', id);
+        if (error) {
+            throw error;
+        }
+    } catch (error) {
+        localAttendanceSessions = localAttendanceSessions.map((session) =>
+            session.id === id
+                ? { ...session, isActive: false }
+                : session,
+        );
+        fallback('closeAttendanceSession', () => undefined, error);
+    }
+};
+
+export const submitAttendanceCheckin = async (sessionCode: string): Promise<void> => {
+    const trimmedCode = sessionCode.trim().toUpperCase();
+
+    if (!trimmedCode) {
+        throw new Error('출석 코드를 입력해 주세요.');
+    }
+
+    const applyLocalCheckin = () => {
+        const session = localAttendanceSessions.find((item) => item.sessionCode === trimmedCode && item.isActive);
+        const member = getLocalSelfMember();
+
+        if (!session || !member) {
+            throw new Error('사용 가능한 출석 코드가 아닙니다.');
+        }
+
+        const now = new Date();
+        if (now < new Date(session.startsAt)) {
+            throw new Error('아직 시작 전인 출석 세션입니다.');
+        }
+        if (session.endsAt && now > new Date(session.endsAt)) {
+            throw new Error('이미 종료된 출석 세션입니다.');
+        }
+        if (localAttendanceCheckins.some((checkin) => checkin.sessionId === session.id && checkin.memberId === member.id)) {
+            throw new Error('이미 체크인한 출석 세션입니다.');
+        }
+
+        const category = localCategories.find((item) => item.id === session.pointRuleId);
+        if (!category) {
+            throw new Error('이 출석 세션의 점수 규칙을 찾지 못했습니다.');
+        }
+
+        const recordId = createLocalId('record');
+        const ledgerId = createLocalId('ledger');
+        member.score += category.pointValue;
+        localLogs.push({
+            id: ledgerId,
+            recordId,
+            timestamp: now.toISOString(),
+            memberId: member.id,
+            categoryId: category.id,
+            pointDelta: category.pointValue,
+            reason: `${session.title} 출석 체크`,
+            note: session.note ?? `${session.title} 셀프 체크인`,
+            evidenceUrl: null,
+            memberName: member.name,
+            categoryName: category.categoryName,
+            recordStatus: 'confirmed',
+        });
+        localAttendanceCheckins.push({
+            id: createLocalId('checkin'),
+            sessionId: session.id,
+            memberId: member.id,
+            activityRecordId: recordId,
+            pointLedgerId: ledgerId,
+            checkedInAt: now.toISOString(),
+        });
+        syncLocalMemberBadges(member.id);
+    };
+
+    if (!isSupabaseConfigured) {
+        applyLocalCheckin();
+        return;
+    }
+
+    try {
+        const client = getSupabaseClient();
+        const { error } = await client.rpc('submit_attendance_checkin', {
+            p_session_code: trimmedCode,
+        });
+
+        if (error) {
+            throw error;
+        }
+    } catch (error) {
+        applyLocalCheckin();
+        fallback('submitAttendanceCheckin', () => undefined, error);
     }
 };
 

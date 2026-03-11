@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+    ArrowUpRight,
     BadgeCheck,
     CalendarClock,
     CheckCircle2,
@@ -15,11 +16,14 @@ import {
     TriangleAlert,
     Users2,
 } from 'lucide-react';
-import type { ActivityLog, AuditLogEntry, Category, CorrectionRequest, CorrectionRequestStatus, Member, SeasonSummary } from '../../types';
+import type { ActivityLog, AttendanceSession, AuditLogEntry, Category, CorrectionRequest, CorrectionRequestStatus, Member, SeasonSummary } from '../../types';
 import {
+    closeAttendanceSession,
     createActivityEntry,
     createBatchActivityEntries,
+    createAttendanceSession,
     getCorrectionRequests,
+    getAttendanceSessions,
     getCategories,
     getAuditLogs,
     getCurrentSeason,
@@ -29,7 +33,7 @@ import {
     updateCorrectionRequestStatus,
 } from '../../lib/db';
 
-type EntryMode = 'attendance' | 'single' | 'mixed';
+type EntryMode = 'attendance' | 'session' | 'single' | 'mixed';
 type AttendanceStatus = 'present' | 'late' | 'absent';
 type MixedDraftRow = {
     selected: boolean;
@@ -98,6 +102,19 @@ const formatDate = (value?: string | null) =>
 const toOccurredAt = (dateValue: string) =>
     dateValue ? new Date(`${dateValue}T12:00:00`).toISOString() : new Date().toISOString();
 
+const toDateTimeInputValue = (value?: string | null) => {
+    const source = value ? new Date(value) : new Date();
+    const year = source.getFullYear();
+    const month = `${source.getMonth() + 1}`.padStart(2, '0');
+    const day = `${source.getDate()}`.padStart(2, '0');
+    const hours = `${source.getHours()}`.padStart(2, '0');
+    const minutes = `${source.getMinutes()}`.padStart(2, '0');
+    return `${year}-${month}-${day}T${hours}:${minutes}`;
+};
+
+const toIsoFromLocalDateTime = (value: string) =>
+    value ? new Date(value).toISOString() : new Date().toISOString();
+
 const getAttendanceRule = (categories: Category[], status: AttendanceStatus) =>
     categories.find((category) => {
         if (!attendanceRuleMatchers[status].test(category.categoryName)) {
@@ -141,6 +158,7 @@ export const ActivitiesTab: React.FC = () => {
     const [members, setMembers] = useState<Member[]>([]);
     const [categories, setCategories] = useState<Category[]>([]);
     const [logs, setLogs] = useState<ActivityLog[]>([]);
+    const [attendanceSessions, setAttendanceSessions] = useState<AttendanceSession[]>([]);
     const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
     const [correctionRequests, setCorrectionRequests] = useState<CorrectionRequest[]>([]);
     const [entryMode, setEntryMode] = useState<EntryMode>('attendance');
@@ -165,32 +183,44 @@ export const ActivitiesTab: React.FC = () => {
     const [mixedBulkCategoryId, setMixedBulkCategoryId] = useState('');
     const [mixedDraft, setMixedDraft] = useState<Record<string, MixedDraftRow>>({});
 
+    const [sessionTitle, setSessionTitle] = useState('정기모임 링크 출석');
+    const [sessionCategoryId, setSessionCategoryId] = useState('');
+    const [sessionStartsAt, setSessionStartsAt] = useState(() => toDateTimeInputValue());
+    const [sessionEndsAt, setSessionEndsAt] = useState('');
+    const [sessionNote, setSessionNote] = useState('');
+
     const [isLoading, setIsLoading] = useState(true);
     const [isSaving, setIsSaving] = useState(false);
     const [reversingRecordId, setReversingRecordId] = useState<string | null>(null);
     const [updatingCorrectionRequestId, setUpdatingCorrectionRequestId] = useState<string | null>(null);
+    const [closingSessionId, setClosingSessionId] = useState<string | null>(null);
+    const [copiedSessionValue, setCopiedSessionValue] = useState<string | null>(null);
     const [reviewNotes, setReviewNotes] = useState<Record<string, string>>({});
 
     const refreshData = async () => {
         setIsLoading(true);
-        const [seasonData, membersData, categoriesData, logsData, auditLogsData, correctionRequestData] = await Promise.all([
+        const [seasonData, membersData, categoriesData, logsData, attendanceSessionsData, auditLogsData, correctionRequestData] = await Promise.all([
             getCurrentSeason(),
             getMembers(),
             getCategories(),
             getLogs(),
+            getAttendanceSessions(),
             getAuditLogs(),
             getCorrectionRequests(),
         ]);
         const firstActiveMemberId = membersData.find((member) => member.status !== 'inactive')?.id ?? '';
+        const defaultAttendanceRuleId = getAttendanceRule(categoriesData, 'present')?.id ?? categoriesData[0]?.id ?? '';
         setSeason(seasonData);
         setMembers(membersData);
         setCategories(categoriesData);
         setLogs(logsData);
+        setAttendanceSessions(attendanceSessionsData);
         setAuditLogs(auditLogsData);
         setCorrectionRequests(correctionRequestData);
         setSelectedMemberId((current) => current || firstActiveMemberId);
         setSelectedCategoryId((current) => current || categoriesData[0]?.id || '');
         setMixedBulkCategoryId((current) => current || categoriesData[0]?.id || '');
+        setSessionCategoryId((current) => current || defaultAttendanceRuleId);
         setIsLoading(false);
     };
 
@@ -198,15 +228,17 @@ export const ActivitiesTab: React.FC = () => {
         let isMounted = true;
 
         const initialize = async () => {
-            const [seasonData, membersData, categoriesData, logsData, auditLogsData, correctionRequestData] = await Promise.all([
+            const [seasonData, membersData, categoriesData, logsData, attendanceSessionsData, auditLogsData, correctionRequestData] = await Promise.all([
                 getCurrentSeason(),
                 getMembers(),
                 getCategories(),
                 getLogs(),
+                getAttendanceSessions(),
                 getAuditLogs(),
                 getCorrectionRequests(),
             ]);
             const firstActiveMemberId = membersData.find((member) => member.status !== 'inactive')?.id ?? '';
+            const defaultAttendanceRuleId = getAttendanceRule(categoriesData, 'present')?.id ?? categoriesData[0]?.id ?? '';
 
             if (!isMounted) {
                 return;
@@ -216,11 +248,13 @@ export const ActivitiesTab: React.FC = () => {
             setMembers(membersData);
             setCategories(categoriesData);
             setLogs(logsData);
+            setAttendanceSessions(attendanceSessionsData);
             setAuditLogs(auditLogsData);
             setCorrectionRequests(correctionRequestData);
             setSelectedMemberId((current) => current || firstActiveMemberId);
             setSelectedCategoryId((current) => current || categoriesData[0]?.id || '');
             setMixedBulkCategoryId((current) => current || categoriesData[0]?.id || '');
+            setSessionCategoryId((current) => current || defaultAttendanceRuleId);
             setIsLoading(false);
         };
 
@@ -230,6 +264,18 @@ export const ActivitiesTab: React.FC = () => {
             isMounted = false;
         };
     }, []);
+
+    useEffect(() => {
+        if (!copiedSessionValue) {
+            return undefined;
+        }
+
+        const timeoutId = window.setTimeout(() => {
+            setCopiedSessionValue(null);
+        }, 1800);
+
+        return () => window.clearTimeout(timeoutId);
+    }, [copiedSessionValue]);
 
     const activeMembers = useMemo(
         () => members.filter((member) => member.status !== 'inactive'),
@@ -304,6 +350,35 @@ export const ActivitiesTab: React.FC = () => {
         () => categories.find((category) => category.id === selectedCategoryId) ?? null,
         [categories, selectedCategoryId],
     );
+
+    const selectedSessionCategory = useMemo(
+        () => categories.find((category) => category.id === sessionCategoryId) ?? null,
+        [categories, sessionCategoryId],
+    );
+
+    const activeAttendanceSessions = useMemo(
+        () => attendanceSessions.filter((session) => session.isActive),
+        [attendanceSessions],
+    );
+
+    const totalAttendanceCheckIns = useMemo(
+        () => attendanceSessions.reduce((sum, session) => sum + (session.checkInCount ?? 0), 0),
+        [attendanceSessions],
+    );
+
+    const recommendedSessionRules = useMemo(() => {
+        const preferredIds = new Set(
+            [attendanceRules.present?.id, attendanceRules.late?.id, attendanceRules.absent?.id].filter((value): value is string => Boolean(value)),
+        );
+
+        if (preferredIds.size === 0) {
+            return categories;
+        }
+
+        const preferred = categories.filter((category) => preferredIds.has(category.id));
+        const others = categories.filter((category) => !preferredIds.has(category.id));
+        return [...preferred, ...others];
+    }, [attendanceRules.absent?.id, attendanceRules.late?.id, attendanceRules.present?.id, categories]);
 
     const mixedPreviewRows = useMemo(
         () =>
@@ -652,6 +727,51 @@ export const ActivitiesTab: React.FC = () => {
         setUpdatingCorrectionRequestId(null);
     };
 
+    const handleCreateAttendanceSession = async (event: React.FormEvent) => {
+        event.preventDefault();
+        if (!sessionCategoryId || !sessionTitle.trim()) {
+            return;
+        }
+
+        setIsSaving(true);
+
+        try {
+            await createAttendanceSession({
+                title: sessionTitle,
+                pointRuleId: sessionCategoryId,
+                startsAt: toIsoFromLocalDateTime(sessionStartsAt),
+                endsAt: sessionEndsAt ? toIsoFromLocalDateTime(sessionEndsAt) : null,
+                note: sessionNote,
+            });
+
+            setSessionTitle('정기모임 링크 출석');
+            setSessionStartsAt(toDateTimeInputValue());
+            setSessionEndsAt('');
+            setSessionNote('');
+            await refreshData();
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
+    const handleCloseAttendanceSession = async (sessionId: string) => {
+        setClosingSessionId(sessionId);
+        try {
+            await closeAttendanceSession(sessionId);
+            await refreshData();
+        } finally {
+            setClosingSessionId(null);
+        }
+    };
+
+    const handleCopySessionValue = async (value: string) => {
+        await navigator.clipboard.writeText(value);
+        setCopiedSessionValue(value);
+    };
+
+    const getAttendanceLink = (sessionCode: string) =>
+        `${window.location.origin}/?attendance=${encodeURIComponent(sessionCode)}#`;
+
     if (isLoading) {
         return (
             <div className="flex items-center justify-center h-64">
@@ -685,6 +805,17 @@ export const ActivitiesTab: React.FC = () => {
                         }`}
                     >
                         정기모임 출석
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => setEntryMode('session')}
+                        className={`rounded-xl px-4 py-2 text-sm font-semibold transition-colors ${
+                            entryMode === 'session'
+                                ? 'bg-indigo-600 text-white'
+                                : 'text-slate-600 hover:bg-slate-50'
+                        }`}
+                    >
+                        링크 출석
                     </button>
                     <button
                         type="button"
@@ -911,6 +1042,119 @@ export const ActivitiesTab: React.FC = () => {
                                     className="w-full rounded-2xl bg-indigo-600 px-4 py-3 font-semibold text-white transition-colors hover:bg-indigo-700 disabled:opacity-50"
                                 >
                                     {isSaving ? '출석 저장 중...' : '출석 일괄 저장'}
+                                </button>
+                            </form>
+                        </div>
+                    ) : entryMode === 'session' ? (
+                        <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
+                            <div className="border-b border-slate-200 bg-gradient-to-br from-indigo-50 via-white to-sky-50 p-6">
+                                <div className="inline-flex items-center gap-2 rounded-full border border-indigo-200 bg-white/90 px-3 py-1 text-xs font-semibold text-indigo-700">
+                                    <Link2 size={14} />
+                                    링크/코드 출석
+                                </div>
+                                <h3 className="mt-4 text-xl font-bold text-slate-950">셀프 체크인 세션 생성</h3>
+                                <p className="mt-2 text-sm text-slate-600">
+                                    운영진이 출석 세션을 열면 회원은 링크를 누르거나 코드를 입력해서 직접 체크인할 수 있습니다. 중복 체크인은 자동으로 막습니다.
+                                </p>
+
+                                <div className="mt-5 rounded-2xl border border-indigo-200 bg-white/90 p-4">
+                                    <div className="text-xs font-semibold tracking-wide text-indigo-700">운영 팁</div>
+                                    <div className="mt-2 text-sm leading-6 text-slate-600">
+                                        정기모임 시작 전에 세션을 만들고 공지에 링크를 공유하면, 별도 수기 입력 없이 회원이 직접 출석을 완료할 수 있습니다.
+                                    </div>
+                                </div>
+                            </div>
+
+                            <form className="space-y-5 p-6" onSubmit={handleCreateAttendanceSession}>
+                                <label className="space-y-1.5">
+                                    <span className="text-xs font-medium text-slate-600">세션 제목</span>
+                                    <input
+                                        type="text"
+                                        value={sessionTitle}
+                                        onChange={(event) => setSessionTitle(event.target.value)}
+                                        placeholder="예: 3월 둘째 주 정기모임 셀프 체크인"
+                                        className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                                    />
+                                </label>
+
+                                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                                    <label className="space-y-1.5">
+                                        <span className="text-xs font-medium text-slate-600">출석 처리 규칙</span>
+                                        <select
+                                            value={sessionCategoryId}
+                                            onChange={(event) => setSessionCategoryId(event.target.value)}
+                                            className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                                        >
+                                            <option value="">규칙 선택</option>
+                                            {recommendedSessionRules.map((category) => (
+                                                <option key={category.id} value={category.id}>
+                                                    {category.categoryName} ({category.pointValue > 0 ? '+' : ''}
+                                                    {category.pointValue})
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </label>
+                                    <label className="space-y-1.5">
+                                        <span className="text-xs font-medium text-slate-600">시작 시각</span>
+                                        <input
+                                            type="datetime-local"
+                                            value={sessionStartsAt}
+                                            onChange={(event) => setSessionStartsAt(event.target.value)}
+                                            className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                                        />
+                                    </label>
+                                </div>
+
+                                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                                    <label className="space-y-1.5">
+                                        <span className="text-xs font-medium text-slate-600">종료 시각</span>
+                                        <input
+                                            type="datetime-local"
+                                            value={sessionEndsAt}
+                                            onChange={(event) => setSessionEndsAt(event.target.value)}
+                                            className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                                        />
+                                    </label>
+                                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                                        <div className="text-xs font-medium text-slate-500">현재 적용 규칙</div>
+                                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                                            <span className="rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700">
+                                                {selectedSessionCategory ? `v${selectedSessionCategory.version ?? 1}` : '규칙 미선택'}
+                                            </span>
+                                            {selectedSessionCategory && (
+                                                <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${
+                                                    selectedSessionCategory.pointValue >= 0
+                                                        ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                                        : 'border-rose-200 bg-rose-50 text-rose-700'
+                                                }`}>
+                                                    {selectedSessionCategory.pointValue > 0 ? '+' : ''}
+                                                    {selectedSessionCategory.pointValue}점
+                                                </span>
+                                            )}
+                                        </div>
+                                        <div className="mt-2 text-sm text-slate-600">
+                                            {selectedSessionCategory?.conditionSummary ?? '선택한 규칙의 설명이 여기에 표시됩니다.'}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <label className="space-y-1.5">
+                                    <span className="text-xs font-medium text-slate-600">세션 메모</span>
+                                    <textarea
+                                        value={sessionNote}
+                                        onChange={(event) => setSessionNote(event.target.value)}
+                                        rows={3}
+                                        placeholder="예: OT 공지 후 10분간 셀프 체크인 허용"
+                                        className="w-full resize-none rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                                    />
+                                </label>
+
+                                <button
+                                    type="submit"
+                                    disabled={!sessionTitle.trim() || !sessionCategoryId || isSaving}
+                                    className="w-full rounded-2xl bg-indigo-600 px-4 py-3 font-semibold text-white transition-colors hover:bg-indigo-700 disabled:opacity-50"
+                                >
+                                    {isSaving ? '세션 생성 중...' : '출석 세션 생성'}
                                 </button>
                             </form>
                         </div>
@@ -1350,6 +1594,152 @@ export const ActivitiesTab: React.FC = () => {
                                             )}
                                         </div>
                                     </div>
+                                </div>
+                            </div>
+                        </>
+                    ) : entryMode === 'session' ? (
+                        <>
+                            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                                <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+                                    <div className="text-sm text-slate-500">운영 중 세션</div>
+                                    <div className="mt-2 text-3xl font-bold text-slate-900">{activeAttendanceSessions.length}</div>
+                                </div>
+                                <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+                                    <div className="text-sm text-slate-500">누적 체크인</div>
+                                    <div className="mt-2 text-3xl font-bold text-slate-900">{totalAttendanceCheckIns}</div>
+                                </div>
+                                <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+                                    <div className="text-sm text-slate-500">전체 세션</div>
+                                    <div className="mt-2 text-3xl font-bold text-slate-900">{attendanceSessions.length}</div>
+                                </div>
+                            </div>
+
+                            <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
+                                <div className="border-b border-slate-100 px-6 py-5">
+                                    <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                                        <div>
+                                            <div className="flex items-center gap-2 font-semibold text-slate-900">
+                                                <Link2 size={18} className="text-indigo-600" />
+                                                출석 세션 관리
+                                            </div>
+                                            <div className="mt-1 text-sm text-slate-500">생성된 코드와 링크를 복사하고, 종료 시에는 세션을 닫아 중복 체크인을 막습니다.</div>
+                                        </div>
+                                        {copiedSessionValue && (
+                                            <div className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
+                                                복사 완료
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+
+                                <div className="space-y-4 p-6">
+                                    {attendanceSessions.map((session) => {
+                                        const isClosing = closingSessionId === session.id;
+                                        const sessionLink = getAttendanceLink(session.sessionCode);
+
+                                        return (
+                                            <div key={session.id} className="rounded-[24px] border border-slate-200 bg-gradient-to-r from-white via-white to-slate-50 p-5">
+                                                <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                                                    <div className="space-y-3">
+                                                        <div className="flex flex-wrap items-center gap-2">
+                                                            <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${
+                                                                session.isActive
+                                                                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                                                    : 'border-slate-200 bg-slate-100 text-slate-700'
+                                                            }`}>
+                                                                {session.isActive ? '운영 중' : '종료됨'}
+                                                            </span>
+                                                            <span className="rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700">
+                                                                {session.pointRuleName ?? '규칙 미확인'}
+                                                            </span>
+                                                        </div>
+
+                                                        <div>
+                                                            <div className="text-lg font-bold text-slate-950">{session.title}</div>
+                                                            <div className="mt-1 text-sm text-slate-500">
+                                                                시작 {formatDateTime(session.startsAt)}
+                                                                {session.endsAt ? ` · 종료 ${formatDateTime(session.endsAt)}` : ' · 종료 시각 미설정'}
+                                                            </div>
+                                                        </div>
+
+                                                        <div className="rounded-2xl border border-slate-200 bg-slate-950 px-4 py-3 text-white">
+                                                            <div className="text-xs uppercase tracking-[0.16em] text-slate-400">출석 코드</div>
+                                                            <div className="mt-2 text-2xl font-bold tracking-[0.28em]">{session.sessionCode}</div>
+                                                            <div className="mt-2 text-xs text-slate-400">
+                                                                링크를 열면 회원 홈에서 코드가 자동 입력됩니다.
+                                                            </div>
+                                                        </div>
+
+                                                        {session.note && (
+                                                            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-600">
+                                                                {session.note}
+                                                            </div>
+                                                        )}
+                                                    </div>
+
+                                                    <div className="space-y-3 xl:w-[280px]">
+                                                        <div className="grid grid-cols-2 gap-3">
+                                                            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                                                                <div className="text-xs font-medium uppercase tracking-[0.16em] text-slate-500">체크인</div>
+                                                                <div className="mt-2 text-xl font-bold text-slate-950">{session.checkInCount ?? 0}명</div>
+                                                            </div>
+                                                            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                                                                <div className="text-xs font-medium uppercase tracking-[0.16em] text-slate-500">생성일</div>
+                                                                <div className="mt-2 text-sm font-semibold text-slate-900">{formatDateTime(session.createdAt)}</div>
+                                                            </div>
+                                                        </div>
+
+                                                        <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600 break-all">
+                                                            {sessionLink}
+                                                        </div>
+
+                                                        <div className="flex flex-wrap gap-2">
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => void handleCopySessionValue(session.sessionCode)}
+                                                                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
+                                                            >
+                                                                코드 복사
+                                                            </button>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => void handleCopySessionValue(sessionLink)}
+                                                                className="inline-flex items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm font-medium text-indigo-700 transition-colors hover:bg-indigo-100"
+                                                            >
+                                                                링크 복사
+                                                            </button>
+                                                            <a
+                                                                href={sessionLink}
+                                                                target="_blank"
+                                                                rel="noreferrer"
+                                                                className="inline-flex items-center gap-2 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-sm font-medium text-sky-700 transition-colors hover:bg-sky-100"
+                                                            >
+                                                                <ArrowUpRight size={15} />
+                                                                링크 열기
+                                                            </a>
+                                                            {session.isActive && (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => void handleCloseAttendanceSession(session.id)}
+                                                                    disabled={isClosing}
+                                                                    className="inline-flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700 transition-colors hover:bg-rose-100 disabled:opacity-50"
+                                                                >
+                                                                    <CircleSlash size={15} />
+                                                                    {isClosing ? '종료 중...' : '세션 종료'}
+                                                                </button>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+
+                                    {attendanceSessions.length === 0 && (
+                                        <div className="rounded-[24px] border border-dashed border-slate-200 bg-slate-50 px-6 py-12 text-center text-sm text-slate-500">
+                                            아직 생성된 출석 세션이 없습니다. 왼쪽에서 첫 링크 출석 세션을 열어 주세요.
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                         </>

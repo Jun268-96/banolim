@@ -4,6 +4,10 @@ export type SeasonStatus = 'planned' | 'active' | 'closed';
 export type AppRole = 'super_admin' | 'operator' | 'team_lead' | 'member';
 export type CorrectionRequestStatus = 'pending' | 'reviewing' | 'resolved' | 'rejected';
 export type BadgeTone = 'gold' | 'sky' | 'emerald' | 'rose';
+export type RecapSnapshotScope = 'member' | 'overall';
+export type RecapSnapshotPeriod = 'month' | 'season';
+export type RecapSnapshotTheme = 'member' | 'overall';
+export type RecapSnapshotMascot = 'bandi' | 'didi';
 
 export interface SeasonSummary {
     id: string;
@@ -48,6 +52,21 @@ export interface ScheduleEventItem {
     seasonId?: string | null;
     isActive: boolean;
     createdAt: string;
+}
+
+export interface AttendanceSession {
+    id: string;
+    title: string;
+    sessionCode: string;
+    pointRuleId: string;
+    pointRuleName?: string | null;
+    seasonId?: string | null;
+    startsAt: string;
+    endsAt?: string | null;
+    note?: string | null;
+    isActive: boolean;
+    createdAt: string;
+    checkInCount?: number;
 }
 
 export interface UserProfile {
@@ -156,4 +175,44 @@ export interface CorrectionRequest {
     activitySummary?: string | null;
     activityOccurredAt?: string | null;
     activityPointDelta?: number | null;
+}
+
+export interface RecapSnapshotStat {
+    label: string;
+    value: string;
+}
+
+export interface RecapSnapshotHighlight {
+    label: string;
+    value: string;
+    description: string;
+}
+
+export interface RecapSnapshotPayload {
+    theme: RecapSnapshotTheme;
+    mascotKey: RecapSnapshotMascot;
+    stats: RecapSnapshotStat[];
+    highlights: RecapSnapshotHighlight[];
+}
+
+export interface RecapSnapshotDraft {
+    scope: RecapSnapshotScope;
+    periodType: RecapSnapshotPeriod;
+    title: string;
+    subtitle: string;
+    summary: string;
+    badgeLabel: string;
+    note: string;
+    startsAt: string;
+    endsAt: string;
+    memberId?: string | null;
+    memberName?: string | null;
+    seasonId?: string | null;
+    payload: RecapSnapshotPayload;
+}
+
+export interface RecapSnapshot extends RecapSnapshotDraft {
+    id: string;
+    createdAt: string;
+    createdByName?: string | null;
 }
