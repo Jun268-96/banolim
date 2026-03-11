@@ -149,8 +149,8 @@ export const HomeTab: React.FC<HomeTabProps> = ({ onNavigate }) => {
         permissions.canManageMembers
             ? {
                   id: 'dashboard' as const,
-                  label: '승인 대기 검토',
-                  description: '로그인 이메일과 승인 상태를 빠르게 처리합니다.',
+                  label: '접근 준비 검토',
+                  description: '로그인 이메일, 승인 여부, 상태를 빠르게 정리합니다.',
                   icon: ShieldCheck,
               }
             : null,
@@ -342,7 +342,7 @@ export const HomeTab: React.FC<HomeTabProps> = ({ onNavigate }) => {
                             <div className="flex items-center justify-between gap-3">
                                 <div className="flex items-center gap-2 font-semibold text-slate-900">
                                     <ShieldCheck size={18} className="text-indigo-600" />
-                                    승인 대기
+                                    접근 준비 필요
                                 </div>
                                 <button
                                     type="button"
@@ -353,7 +353,7 @@ export const HomeTab: React.FC<HomeTabProps> = ({ onNavigate }) => {
                                 </button>
                             </div>
                             <div className="mt-2 text-sm text-slate-500">
-                                로그인 이메일 누락, 승인 대기, 보류 상태를 홈에서도 바로 확인할 수 있습니다.
+                                로그인 이메일 누락, 승인 미완료, 보류 상태를 홈에서도 바로 확인할 수 있습니다.
                             </div>
 
                             <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4">
@@ -392,7 +392,7 @@ export const HomeTab: React.FC<HomeTabProps> = ({ onNavigate }) => {
                                 ))}
                                 {insights.approvalQueue.length === 0 && (
                                     <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-6 text-center text-sm font-medium text-emerald-700">
-                                        현재 승인 대기 멤버가 없습니다.
+                                        현재 접근 준비가 필요한 멤버가 없습니다.
                                     </div>
                                 )}
                             </div>

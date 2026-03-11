@@ -19,7 +19,7 @@ import {
     getSeasons,
     getTeams,
 } from '../../lib/db';
-import { roleLabels } from '../../lib/permissions';
+import { roleLabels, roleScopeDescriptions } from '../../lib/permissions';
 
 const seasonStatusOptions: SeasonStatus[] = ['planned', 'active', 'closed'];
 const teamTypeOptions: TeamType[] = ['core', 'study', 'project'];
@@ -94,6 +94,7 @@ export const SettingsTab: React.FC = () => {
         () => categories.find((category) => category.id === versionSourceRuleId) ?? null,
         [categories, versionSourceRuleId],
     );
+    const selectedRoleScopeDescription = roleScopeDescriptions[newRoleScope as AppRole] ?? '';
 
     const resetCategoryForm = () => {
         setNewCatName('');
@@ -496,6 +497,14 @@ export const SettingsTab: React.FC = () => {
                             <ShieldCheck size={18} className="text-indigo-600" />
                             역할
                         </div>
+                        <div className="mb-4 rounded-2xl border border-indigo-100 bg-indigo-50/80 p-4 text-sm text-slate-700">
+                            <div className="font-semibold text-slate-900">직책 이름과 시스템 권한은 분리됩니다.</div>
+                            <div className="mt-2">
+                                예를 들어 <span className="font-semibold">회장</span>과 <span className="font-semibold">개발 관리자</span>는 서로 다른 직책 이름이어도 같은
+                                <span className="mx-1 rounded-full bg-white px-2 py-0.5 text-xs font-semibold text-indigo-700">최고 관리자</span>
+                                권한을 공유할 수 있습니다.
+                            </div>
+                        </div>
                         <form onSubmit={handleAddRole} className="grid grid-cols-1 md:grid-cols-[1.2fr_1fr_120px_auto] gap-3 items-end">
                             <label className="space-y-1.5">
                                 <span className="text-xs font-medium text-slate-600">역할 이름</span>
@@ -536,12 +545,23 @@ export const SettingsTab: React.FC = () => {
                                 추가
                             </button>
                         </form>
+                        <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                            <span className="font-semibold text-slate-900">{roleLabels[newRoleScope as AppRole] ?? newRoleScope}</span>
+                            {' '}권한 설명: {selectedRoleScopeDescription}
+                        </div>
                         <div className="mt-5 space-y-3">
                             {roles.map((role) => (
                                 <div key={role.id} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 flex items-center justify-between gap-4">
                                     <div>
-                                        <div className="font-medium text-slate-900">{role.name}</div>
-                                        <div className="text-sm text-slate-500 mt-1">{roleLabels[role.permissionScope as AppRole] ?? role.permissionScope}</div>
+                                        <div className="flex flex-wrap items-center gap-2">
+                                            <div className="font-medium text-slate-900">{role.name}</div>
+                                            <span className="rounded-full border border-indigo-200 bg-white px-2.5 py-1 text-xs font-semibold text-indigo-700">
+                                                {roleLabels[role.permissionScope as AppRole] ?? role.permissionScope}
+                                            </span>
+                                        </div>
+                                        <div className="text-sm text-slate-500 mt-1">
+                                            {roleScopeDescriptions[role.permissionScope as AppRole] ?? '이 권한 범위 설명은 아직 등록되지 않았습니다.'}
+                                        </div>
                                     </div>
                                     <div className="text-sm font-semibold text-slate-500">#{role.rankOrder}</div>
                                 </div>

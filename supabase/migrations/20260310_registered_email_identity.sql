@@ -106,7 +106,7 @@ begin
         v_profile_display_name,
         coalesce(v_is_active, false)
     )
-    on conflict (id) do update
+    on conflict on constraint user_profiles_pkey do update
     set
         email = excluded.email,
         member_id = excluded.member_id,

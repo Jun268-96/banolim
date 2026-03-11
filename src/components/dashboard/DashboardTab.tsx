@@ -1,16 +1,18 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { CheckCircle2, Clock3, Mail, Search, ShieldCheck, Trash2, Users, XCircle, Plus } from 'lucide-react';
-import type { Category, Member, MemberStatus, RoleSummary, TeamSummary } from '../../types';
+import { CheckCircle2, Clock3, History, LayoutGrid, Mail, Network, Plus, Search, ShieldCheck, TableProperties, Trash2, Users, XCircle } from 'lucide-react';
+import type { AppRole, AuditLogEntry, Category, Member, MemberStatus, RoleSummary, TeamSummary } from '../../types';
 import {
     addMember,
     awardPoints,
     deleteMember,
+    getAuditLogs,
     getCategories,
     getMembers,
     getRoles,
     getTeams,
     updateMember,
 } from '../../lib/db';
+import { roleLabels, roleScopeDescriptions } from '../../lib/permissions';
 import { useAuth } from '../auth/auth-context';
 
 const memberStatusOptions: MemberStatus[] = ['active', 'dormant', 'inactive'];
@@ -56,6 +58,7 @@ const normalizeLoginEmail = (value: string) => {
 };
 
 type MemberViewMode = 'all' | 'pending' | 'approved' | 'inactive';
+type MemberDisplayMode = 'table' | 'cards' | 'organization';
 
 const getApprovalTags = (member: Member) => {
     const tags: Array<{ label: string; className: string }> = [];
@@ -78,31 +81,154 @@ const getApprovalTags = (member: Member) => {
 
 const isAccessReady = (member: Member) => Boolean(member.loginEmail) && member.isApproved && member.status === 'active';
 
+const formatDateTime = (value?: string | null) => {
+    if (!value) return '-';
+    return new Intl.DateTimeFormat('ko-KR', {
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+    }).format(new Date(value));
+};
+
+interface MemberSnapshotCardProps {
+    member: Member;
+    selected: boolean;
+    onSelect: () => void;
+    roleScopeLabel: string;
+    roleScopeDescription: string;
+    compact?: boolean;
+}
+
+const MemberSnapshotCard: React.FC<MemberSnapshotCardProps> = ({
+    member,
+    selected,
+    onSelect,
+    roleScopeLabel,
+    roleScopeDescription,
+    compact = false,
+}) => {
+    const levelInfo = getLevelInfo(member.score);
+    const statusInfo = getStatusInfo(member);
+    const approvalTags = getApprovalTags(member);
+
+    return (
+        <button
+            type="button"
+            onClick={onSelect}
+            className={`text-left transition-all ${
+                compact ? 'rounded-[24px] p-4' : 'rounded-[28px] p-5'
+            } border ${selected ? 'border-indigo-400 bg-indigo-50/80 shadow-lg shadow-indigo-100' : 'border-slate-200 bg-white hover:border-slate-300 hover:shadow-md'}`}
+        >
+            <div className="flex items-start justify-between gap-4">
+                <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                        <div className={`${compact ? 'text-lg' : 'text-xl'} font-bold text-slate-900`}>{member.name}</div>
+                        <span className={`inline-flex items-center justify-center rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] ${levelInfo.color}`}>
+                            lv.{levelInfo.level}
+                        </span>
+                    </div>
+                    <div className="mt-2 text-sm text-slate-500">
+                        직책 {member.roleName ?? '미지정'} · 권한 {roleScopeLabel}
+                    </div>
+                </div>
+                <span className={`inline-flex rounded-full border px-3 py-1 text-xs font-semibold ${statusInfo.className}`}>
+                    {statusInfo.label}
+                </span>
+            </div>
+
+            <div className="mt-4 flex flex-wrap gap-2">
+                {approvalTags.length > 0 ? (
+                    approvalTags.map((tag) => (
+                        <span key={`${member.id}-${tag.label}`} className={`inline-flex rounded-full border px-3 py-1 text-xs font-semibold ${tag.className}`}>
+                            {tag.label}
+                        </span>
+                    ))
+                ) : (
+                    <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
+                        접근 준비 완료
+                    </span>
+                )}
+            </div>
+
+            <div className={`mt-4 grid gap-3 ${compact ? 'grid-cols-1' : 'sm:grid-cols-2'}`}>
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">로그인 이메일</div>
+                    <div className="mt-2 break-all text-sm font-medium text-slate-700">{member.loginEmail ?? '아직 등록되지 않았습니다.'}</div>
+                </div>
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">소속</div>
+                    <div className="mt-2 text-sm font-medium text-slate-700">{member.teamName ?? '미지정'}</div>
+                </div>
+            </div>
+
+            <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-950 px-4 py-4 text-white">
+                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">시스템 권한 설명</div>
+                <div className="mt-2 text-sm leading-6 text-slate-100">{roleScopeDescription}</div>
+            </div>
+
+            <div className="mt-4 flex items-center justify-between text-sm">
+                <div className="text-slate-500">가입일 {formatDate(member.joinedAt)}</div>
+                <div className="font-bold text-indigo-600">{member.score}점</div>
+            </div>
+        </button>
+    );
+};
+
+const getEntryChanges = (entry: AuditLogEntry) => {
+    if (!entry.diff || typeof entry.diff !== 'object') {
+        return {};
+    }
+
+    const maybeChanges = (entry.diff as Record<string, unknown>).changes;
+    return maybeChanges && typeof maybeChanges === 'object' ? (maybeChanges as Record<string, unknown>) : {};
+};
+
+const getHistoryChangeBadges = (entry: AuditLogEntry) => {
+    const changes = getEntryChanges(entry);
+    const badges: string[] = [];
+
+    if (changes.role) badges.push('직책/권한');
+    if (changes.loginEmail) badges.push('로그인 이메일');
+    if (changes.team) badges.push('팀');
+    if (changes.status) badges.push('상태');
+    if (changes.approval) badges.push('승인');
+    if (changes.visibility) badges.push('노출');
+    if (changes.name) badges.push('이름');
+
+    return badges;
+};
+
 export const DashboardTab: React.FC = () => {
     const { permissions } = useAuth();
     const [members, setMembers] = useState<Member[]>([]);
     const [categories, setCategories] = useState<Category[]>([]);
     const [roles, setRoles] = useState<RoleSummary[]>([]);
     const [teams, setTeams] = useState<TeamSummary[]>([]);
+    const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
     const [newMemberName, setNewMemberName] = useState('');
     const [newMemberLoginEmail, setNewMemberLoginEmail] = useState('');
     const [searchQuery, setSearchQuery] = useState('');
     const [memberView, setMemberView] = useState<MemberViewMode>('all');
+    const [displayMode, setDisplayMode] = useState<MemberDisplayMode>('table');
+    const [historyMemberId, setHistoryMemberId] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [savingMemberId, setSavingMemberId] = useState<string | null>(null);
 
     const refreshData = async () => {
         setIsLoading(true);
-        const [membersData, categoriesData, rolesData, teamsData] = await Promise.all([
+        const [membersData, categoriesData, rolesData, teamsData, auditLogData] = await Promise.all([
             getMembers({ includeLoginEmail: permissions.canManageMembers }),
             getCategories(),
             getRoles(),
             getTeams(),
+            permissions.canManageMembers ? getAuditLogs({ entityType: 'member', limit: 80 }) : Promise.resolve([]),
         ]);
         setMembers(membersData);
         setCategories(categoriesData);
         setRoles(rolesData);
         setTeams(teamsData);
+        setAuditLogs(auditLogData);
         setIsLoading(false);
     };
 
@@ -110,11 +236,12 @@ export const DashboardTab: React.FC = () => {
         let isMounted = true;
 
         const initialize = async () => {
-            const [membersData, categoriesData, rolesData, teamsData] = await Promise.all([
+            const [membersData, categoriesData, rolesData, teamsData, auditLogData] = await Promise.all([
                 getMembers({ includeLoginEmail: permissions.canManageMembers }),
                 getCategories(),
                 getRoles(),
                 getTeams(),
+                permissions.canManageMembers ? getAuditLogs({ entityType: 'member', limit: 80 }) : Promise.resolve([]),
             ]);
 
             if (!isMounted) {
@@ -125,6 +252,7 @@ export const DashboardTab: React.FC = () => {
             setCategories(categoriesData);
             setRoles(rolesData);
             setTeams(teamsData);
+            setAuditLogs(auditLogData);
             setIsLoading(false);
         };
 
@@ -174,6 +302,80 @@ export const DashboardTab: React.FC = () => {
                 .includes(query),
         );
     }, [searchQuery, viewScopedMembers]);
+
+    const roleById = useMemo(() => new Map(roles.map((role) => [role.id, role])), [roles]);
+
+    const getRoleScopeLabel = (member: Member) => {
+        const permissionScope = roleById.get(member.roleId ?? '')?.permissionScope as AppRole | undefined;
+        return permissionScope ? roleLabels[permissionScope] ?? permissionScope : '회원';
+    };
+
+    const getRoleScopeDescription = (member: Member) => {
+        const permissionScope = roleById.get(member.roleId ?? '')?.permissionScope as AppRole | undefined;
+        return permissionScope ? roleScopeDescriptions[permissionScope] ?? permissionScope : '권한 범위가 아직 지정되지 않았습니다.';
+    };
+
+    const accessPreparation = useMemo(
+        () => ({
+            total: members.filter((member) => !isAccessReady(member)).length,
+            missingEmail: members.filter((member) => !member.loginEmail).length,
+            waitingApproval: members.filter((member) => member.loginEmail && !member.isApproved && member.status !== 'inactive').length,
+            dormantOrInactive: members.filter((member) => member.status === 'dormant' || member.status === 'inactive').length,
+        }),
+        [members],
+    );
+
+    const memberById = useMemo(() => new Map(members.map((member) => [member.id, member])), [members]);
+
+    const organizationGroups = useMemo(() => {
+        const grouped = new Map<string, { roleId: string | null; roleName: string; permissionScope: string; members: Member[]; rankOrder: number }>();
+
+        filteredMembers.forEach((member) => {
+            const role = roleById.get(member.roleId ?? '') ?? null;
+            const key = member.roleId ?? `unassigned-${member.roleName ?? '미지정'}`;
+            const existing = grouped.get(key) ?? {
+                roleId: member.roleId ?? null,
+                roleName: member.roleName ?? '미지정',
+                permissionScope: role?.permissionScope ?? 'member',
+                members: [],
+                rankOrder: role?.rankOrder ?? 999,
+            };
+
+            existing.members.push(member);
+            grouped.set(key, existing);
+        });
+
+        return [...grouped.values()]
+            .sort((a, b) => a.rankOrder - b.rankOrder || a.roleName.localeCompare(b.roleName))
+            .map((group) => ({
+                ...group,
+                members: [...group.members].sort((a, b) => b.score - a.score || a.name.localeCompare(b.name)),
+            }));
+    }, [filteredMembers, roleById]);
+
+    useEffect(() => {
+        if (!filteredMembers.length) {
+            setHistoryMemberId(null);
+            return;
+        }
+
+        if (!historyMemberId || !filteredMembers.some((member) => member.id === historyMemberId)) {
+            setHistoryMemberId(filteredMembers[0]?.id ?? null);
+        }
+    }, [filteredMembers, historyMemberId]);
+
+    const historyMember = historyMemberId ? memberById.get(historyMemberId) ?? null : null;
+
+    const memberHistoryEntries = useMemo(() => {
+        if (!historyMemberId) {
+            return [] as AuditLogEntry[];
+        }
+
+        return auditLogs
+            .filter((entry) => entry.entityId === historyMemberId)
+            .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+            .slice(0, 8);
+    }, [auditLogs, historyMemberId]);
 
     const handleAddMember = async (event: React.FormEvent) => {
         event.preventDefault();
@@ -278,8 +480,8 @@ export const DashboardTab: React.FC = () => {
                     <div className="mt-2 text-3xl font-bold text-slate-900">{members.length}</div>
                 </div>
                 <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-                    <div className="text-sm text-slate-500">승인 대기</div>
-                    <div className="mt-2 text-3xl font-bold text-slate-900">{members.filter((member) => !member.isApproved && member.status !== 'inactive').length}</div>
+                    <div className="text-sm text-slate-500">접근 준비 필요</div>
+                    <div className="mt-2 text-3xl font-bold text-slate-900">{accessPreparation.total}</div>
                 </div>
                 <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
                     <div className="text-sm text-slate-500">즉시 접근 가능</div>
@@ -292,15 +494,67 @@ export const DashboardTab: React.FC = () => {
             </div>
 
             {permissions.canManageMembers && (
+                <section className="rounded-2xl border border-slate-200 bg-gradient-to-r from-indigo-50 via-white to-sky-50 p-6 shadow-sm">
+                    <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                        <div className="max-w-3xl">
+                            <div className="inline-flex items-center gap-2 rounded-full border border-indigo-200 bg-white px-3 py-1 text-sm font-semibold text-indigo-700">
+                                <ShieldCheck size={14} />
+                                관리자 온보딩 가이드
+                            </div>
+                            <h3 className="mt-4 text-xl font-bold text-slate-900">직책 이름과 시스템 권한을 분리해서 등록하세요.</h3>
+                            <p className="mt-2 text-sm leading-6 text-slate-600">
+                                이 화면에서 관리하는 것은 단순 승인 대기가 아니라 <span className="font-semibold text-slate-900">서비스 접근 준비</span>입니다.
+                                회원이 로그인할 수 있으려면 <span className="font-semibold text-slate-900">로그인 이메일 등록</span>, <span className="font-semibold text-slate-900">직책 선택</span>,
+                                <span className="font-semibold text-slate-900">승인 완료</span>, <span className="font-semibold text-slate-900">활동 중 상태</span>가 함께 맞아야 합니다.
+                            </p>
+                            <div className="mt-4 grid gap-3 text-sm text-slate-700 md:grid-cols-2">
+                                <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                                    <div className="font-semibold text-slate-900">1. 이메일 먼저 등록</div>
+                                    <div className="mt-1">로그인에 사용할 실제 이메일을 넣어야 OTP 로그인과 회원 매칭이 됩니다.</div>
+                                </div>
+                                <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                                    <div className="font-semibold text-slate-900">2. 직책과 권한을 분리</div>
+                                    <div className="mt-1">예: 회장과 개발 관리자는 서로 다른 직책 이름이지만 같은 최고 관리자 권한을 가질 수 있습니다.</div>
+                                </div>
+                                <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                                    <div className="font-semibold text-slate-900">3. 승인 완료</div>
+                                    <div className="mt-1">이메일이 등록된 뒤 승인 체크를 켜면 바로 서비스 접근이 가능합니다.</div>
+                                </div>
+                                <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                                    <div className="font-semibold text-slate-900">4. 상태 확인</div>
+                                    <div className="mt-1">휴면 또는 비활성 상태면 로그인 이메일이 있어도 접근이 막힙니다.</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="grid min-w-[280px] gap-3 sm:grid-cols-3 xl:grid-cols-1">
+                            <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                                <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">이메일 미등록</div>
+                                <div className="mt-2 text-2xl font-bold text-slate-900">{accessPreparation.missingEmail}</div>
+                            </div>
+                            <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                                <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">승인 필요</div>
+                                <div className="mt-2 text-2xl font-bold text-slate-900">{accessPreparation.waitingApproval}</div>
+                            </div>
+                            <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                                <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">보류/비활성</div>
+                                <div className="mt-2 text-2xl font-bold text-slate-900">{accessPreparation.dormantOrInactive}</div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+            )}
+
+            {permissions.canManageMembers && (
                 <section className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
                     <div className="flex flex-col gap-3 border-b border-slate-100 bg-slate-50/70 px-6 py-5 lg:flex-row lg:items-center lg:justify-between">
                         <div>
                             <div className="flex items-center gap-2 font-semibold text-slate-900">
                                 <ShieldCheck size={18} className="text-indigo-600" />
-                                승인 대기 큐
+                                접근 준비 큐
                             </div>
                             <div className="mt-1 text-sm text-slate-500">
-                                로그인 이메일, 승인 여부, 회원 상태를 확인한 뒤 바로 승인/보류/반려할 수 있습니다.
+                                아직 로그인 준비가 끝나지 않은 회원 목록입니다. 이메일 등록, 승인 여부, 회원 상태를 확인한 뒤 접근 가능 상태로 바꿉니다.
                             </div>
                         </div>
                         <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600">
@@ -335,7 +589,10 @@ export const DashboardTab: React.FC = () => {
                                             </div>
 
                                             <div className="text-sm text-slate-500">
-                                                역할 {member.roleName ?? '미지정'} · 팀 {member.teamName ?? '미지정'} · 가입일 {formatDate(member.joinedAt)}
+                                                직책 {member.roleName ?? '미지정'} · 시스템 권한 {getRoleScopeLabel(member)} · 팀 {member.teamName ?? '미지정'} · 가입일 {formatDate(member.joinedAt)}
+                                            </div>
+                                            <div className="max-w-xl text-xs leading-5 text-slate-500">
+                                                {getRoleScopeDescription(member)}
                                             </div>
                                         </div>
 
@@ -388,7 +645,7 @@ export const DashboardTab: React.FC = () => {
 
                         {approvalQueue.length === 0 && (
                             <div className="xl:col-span-2 rounded-[24px] border border-emerald-200 bg-emerald-50 px-6 py-10 text-center">
-                                <div className="text-lg font-semibold text-emerald-800">현재 처리할 승인 대기 멤버가 없습니다.</div>
+                                <div className="text-lg font-semibold text-emerald-800">현재 처리할 접근 준비 대상이 없습니다.</div>
                                 <div className="mt-2 text-sm text-emerald-700">로그인 이메일이 등록되고 승인된 회원은 즉시 서비스에 접근할 수 있습니다.</div>
                             </div>
                         )}
@@ -398,246 +655,469 @@ export const DashboardTab: React.FC = () => {
 
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
                 <div className="border-b border-slate-100 px-6 py-3 text-sm text-slate-500">
-                    화면 폭이 좁으면 표를 좌우로 스크롤해 전체 정보를 확인할 수 있습니다. 로그인 이메일이 등록된 회원만 실제 서비스에 로그인할 수 있습니다.
+                    로그인 이메일이 등록된 회원만 실제 서비스에 로그인할 수 있습니다. 표 보기는 편집용, 카드/조직도 보기는 구조 파악용입니다.
                 </div>
-                <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 px-6 py-4">
-                    {([
-                        { id: 'all' as const, label: '전체', count: members.length },
-                        { id: 'pending' as const, label: '승인 대기', count: approvalQueue.length },
-                        { id: 'approved' as const, label: '즉시 접근 가능', count: members.filter((member) => isAccessReady(member)).length },
-                        { id: 'inactive' as const, label: '비활성', count: members.filter((member) => member.status === 'inactive').length },
-                    ]).map((option) => (
-                        <button
-                            key={option.id}
-                            type="button"
-                            onClick={() => setMemberView(option.id)}
-                            className={`rounded-full px-3 py-1.5 text-sm font-semibold transition-colors ${
-                                memberView === option.id
-                                    ? 'bg-indigo-600 text-white'
-                                    : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-                            }`}
-                        >
-                            {option.label} {option.count}
-                        </button>
-                    ))}
-                </div>
-                <div className="overflow-x-auto pb-2">
-                    <table className={`${permissions.canManageMembers ? 'min-w-[1720px]' : 'min-w-[1480px]'} w-max text-left border-collapse`}>
-                        <thead>
-                            <tr className="bg-slate-50 border-b border-slate-200 text-sm font-semibold text-slate-600">
-                                <th className="py-4 px-6 min-w-[92px] whitespace-nowrap">레벨</th>
-                                <th className="py-4 px-6 min-w-[180px] whitespace-nowrap">이름</th>
-                                {permissions.canManageMembers && (
-                                    <th className="py-4 px-6 min-w-[240px] whitespace-nowrap">로그인 이메일</th>
-                                )}
-                                <th className="py-4 px-6 min-w-[180px] whitespace-nowrap">역할</th>
-                                <th className="py-4 px-6 min-w-[180px] whitespace-nowrap">팀</th>
-                                <th className="py-4 px-6 min-w-[140px] whitespace-nowrap">상태</th>
-                                <th className="py-4 px-6 min-w-[120px] whitespace-nowrap">승인</th>
-                                <th className="py-4 px-6 min-w-[132px] whitespace-nowrap">가입일</th>
-                                <th className="py-4 px-6 min-w-[96px] whitespace-nowrap">점수</th>
-                                <th className="py-4 px-6 min-w-[380px] whitespace-nowrap">
-                                    {permissions.canManagePoints ? '빠른 작업' : '활동 권한'}
-                                </th>
-                                <th className="py-4 px-6 min-w-[88px] whitespace-nowrap text-center">
-                                    {permissions.canManageMembers ? '관리' : '조회'}
-                                </th>
-                            </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100">
-                            {filteredMembers.map((member) => {
-                                const levelInfo = getLevelInfo(member.score);
-                                const statusInfo = getStatusInfo(member);
-                                const isSavingRow = savingMemberId === member.id;
+                <div className="flex flex-col gap-4 border-b border-slate-100 px-6 py-4 xl:flex-row xl:items-center xl:justify-between">
+                    <div className="flex flex-wrap items-center gap-2">
+                        {([
+                            { id: 'all' as const, label: '전체', count: members.length },
+                            { id: 'pending' as const, label: '접근 준비 필요', count: approvalQueue.length },
+                            { id: 'approved' as const, label: '즉시 접근 가능', count: members.filter((member) => isAccessReady(member)).length },
+                            { id: 'inactive' as const, label: '비활성', count: members.filter((member) => member.status === 'inactive').length },
+                        ]).map((option) => (
+                            <button
+                                key={option.id}
+                                type="button"
+                                onClick={() => setMemberView(option.id)}
+                                className={`rounded-full px-3 py-1.5 text-sm font-semibold transition-colors ${
+                                    memberView === option.id
+                                        ? 'bg-indigo-600 text-white'
+                                        : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                                }`}
+                            >
+                                {option.label} {option.count}
+                            </button>
+                        ))}
+                    </div>
 
-                                return (
-                                    <tr key={member.id} className="hover:bg-slate-50/50 transition-colors group">
-                                        <td className="py-4 px-6 align-middle whitespace-nowrap">
-                                            <span className={`inline-flex min-w-[68px] items-center justify-center rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] ${levelInfo.color}`}>
-                                                lv.{levelInfo.level}
-                                            </span>
-                                        </td>
-                                        <td className="py-4 px-6 align-middle whitespace-nowrap">
-                                            <div className="flex items-center gap-3 whitespace-nowrap">
-                                                <span className="font-medium text-slate-900">{member.name}</span>
-                                                <span className="text-xs text-slate-500 font-mono">{member.id.slice(0, 8)}</span>
-                                            </div>
-                                        </td>
-                                        {permissions.canManageMembers && (
+                    <div className="inline-flex rounded-full border border-slate-200 bg-slate-50 p-1">
+                        {([
+                            { id: 'table' as const, label: '표 보기', icon: TableProperties },
+                            { id: 'cards' as const, label: '카드 보기', icon: LayoutGrid },
+                            { id: 'organization' as const, label: '조직도 보기', icon: Network },
+                        ]).map((mode) => {
+                            const Icon = mode.icon;
+                            return (
+                                <button
+                                    key={mode.id}
+                                    type="button"
+                                    onClick={() => setDisplayMode(mode.id)}
+                                    className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition-colors ${
+                                        displayMode === mode.id
+                                            ? 'bg-slate-900 text-white shadow-sm'
+                                            : 'text-slate-600 hover:bg-white'
+                                    }`}
+                                >
+                                    <Icon size={16} />
+                                    {mode.label}
+                                </button>
+                            );
+                        })}
+                    </div>
+                </div>
+
+                {displayMode === 'table' && (
+                    <div className="overflow-x-auto pb-2">
+                        <table className={`${permissions.canManageMembers ? 'min-w-[1720px]' : 'min-w-[1480px]'} w-max text-left border-collapse`}>
+                            <thead>
+                                <tr className="bg-slate-50 border-b border-slate-200 text-sm font-semibold text-slate-600">
+                                    <th className="py-4 px-6 min-w-[92px] whitespace-nowrap">레벨</th>
+                                    <th className="py-4 px-6 min-w-[180px] whitespace-nowrap">이름</th>
+                                    {permissions.canManageMembers && (
+                                        <th className="py-4 px-6 min-w-[240px] whitespace-nowrap">로그인 이메일</th>
+                                    )}
+                                    <th className="py-4 px-6 min-w-[220px] whitespace-nowrap">직책 / 시스템 권한</th>
+                                    <th className="py-4 px-6 min-w-[180px] whitespace-nowrap">팀</th>
+                                    <th className="py-4 px-6 min-w-[140px] whitespace-nowrap">상태</th>
+                                    <th className="py-4 px-6 min-w-[120px] whitespace-nowrap">승인</th>
+                                    <th className="py-4 px-6 min-w-[132px] whitespace-nowrap">가입일</th>
+                                    <th className="py-4 px-6 min-w-[96px] whitespace-nowrap">점수</th>
+                                    <th className="py-4 px-6 min-w-[380px] whitespace-nowrap">
+                                        {permissions.canManagePoints ? '빠른 작업' : '활동 권한'}
+                                    </th>
+                                    <th className="py-4 px-6 min-w-[88px] whitespace-nowrap text-center">
+                                        {permissions.canManageMembers ? '관리' : '조회'}
+                                    </th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100">
+                                {filteredMembers.map((member) => {
+                                    const levelInfo = getLevelInfo(member.score);
+                                    const statusInfo = getStatusInfo(member);
+                                    const isSavingRow = savingMemberId === member.id;
+
+                                    return (
+                                        <tr
+                                            key={member.id}
+                                            className={`transition-colors group ${historyMemberId === member.id ? 'bg-indigo-50/70' : 'hover:bg-slate-50/50'}`}
+                                            onClick={() => setHistoryMemberId(member.id)}
+                                        >
                                             <td className="py-4 px-6 align-middle whitespace-nowrap">
-                                                <input
-                                                    key={`${member.id}-${member.loginEmail ?? ''}`}
-                                                    type="email"
-                                                    defaultValue={member.loginEmail ?? ''}
-                                                    placeholder="example@school.kr"
-                                                    disabled={isSavingRow}
-                                                    onBlur={(event) => {
-                                                        const nextValue = normalizeLoginEmail(event.target.value);
-                                                        if ((member.loginEmail ?? null) === nextValue) {
-                                                            event.target.value = member.loginEmail ?? '';
-                                                            return;
-                                                        }
-                                                        event.target.value = nextValue ?? '';
-                                                        void handleMemberUpdate(member.id, { loginEmail: nextValue });
-                                                    }}
-                                                    onKeyDown={(event) => {
-                                                        if (event.key === 'Enter') {
-                                                            event.preventDefault();
-                                                            event.currentTarget.blur();
-                                                        }
-                                                    }}
-                                                    className="min-w-[220px] rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                                                />
+                                                <span className={`inline-flex min-w-[68px] items-center justify-center rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] ${levelInfo.color}`}>
+                                                    lv.{levelInfo.level}
+                                                </span>
                                             </td>
-                                        )}
-                                        <td className="py-4 px-6 align-middle whitespace-nowrap">
-                                            {permissions.canManageMembers ? (
-                                                <select
-                                                    value={member.roleId ?? ''}
-                                                    disabled={isSavingRow}
-                                                    onChange={(event) => {
-                                                        const value = event.target.value || null;
-                                                        void handleMemberUpdate(member.id, { roleId: value });
-                                                    }}
-                                                    className="min-w-[160px] rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                                                >
-                                                    <option value="">미지정</option>
-                                                    {roles.map((role) => (
-                                                        <option key={role.id} value={role.id}>
-                                                            {role.name}
-                                                        </option>
-                                                    ))}
-                                                </select>
-                                            ) : (
-                                                <div className="text-slate-700 whitespace-nowrap">{member.roleName || '미지정'}</div>
-                                            )}
-                                        </td>
-                                        <td className="py-4 px-6 align-middle whitespace-nowrap">
-                                            {permissions.canManageMembers ? (
-                                                <select
-                                                    value={member.teamId ?? ''}
-                                                    disabled={isSavingRow}
-                                                    onChange={(event) => {
-                                                        const value = event.target.value || null;
-                                                        void handleMemberUpdate(member.id, { teamId: value });
-                                                    }}
-                                                    className="min-w-[160px] rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                                                >
-                                                    <option value="">미지정</option>
-                                                    {teams.map((team) => (
-                                                        <option key={team.id} value={team.id}>
-                                                            {team.name}
-                                                        </option>
-                                                    ))}
-                                                </select>
-                                            ) : (
-                                                <div className="text-slate-700 whitespace-nowrap">{member.teamName || '미지정'}</div>
-                                            )}
-                                        </td>
-                                        <td className="py-4 px-6 align-middle whitespace-nowrap">
-                                            {permissions.canManageMembers ? (
-                                                <select
-                                                    value={member.status ?? 'active'}
-                                                    disabled={isSavingRow}
-                                                    onChange={(event) => {
-                                                        const value = event.target.value as MemberStatus;
-                                                        void handleMemberUpdate(member.id, { status: value });
-                                                    }}
-                                                    className="min-w-[128px] rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                                                >
-                                                    {memberStatusOptions.map((status) => (
-                                                        <option key={status} value={status}>
-                                                            {memberStatusLabels[status]}
-                                                        </option>
-                                                    ))}
-                                                </select>
-                                            ) : (
-                                                <span className={`inline-flex whitespace-nowrap px-2.5 py-1 rounded-full text-xs font-semibold border ${statusInfo.className}`}>
-                                                    {statusInfo.label}
-                                                </span>
-                                            )}
-                                        </td>
-                                        <td className="py-4 px-6 align-middle whitespace-nowrap">
-                                            {permissions.canManageMembers ? (
-                                                <label className="inline-flex items-center gap-2 whitespace-nowrap text-sm text-slate-700">
-                                                    <input
-                                                        type="checkbox"
-                                                        checked={member.isApproved}
-                                                        disabled={isSavingRow}
-                                                        onChange={(event) => {
-                                                            void handleMemberUpdate(member.id, { isApproved: event.target.checked });
-                                                        }}
-                                                        className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                                                    />
-                                                    승인
-                                                </label>
-                                            ) : (
-                                                <span className={`inline-flex whitespace-nowrap px-2.5 py-1 rounded-full text-xs font-semibold border ${
-                                                    member.isApproved
-                                                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                                                        : 'bg-amber-50 text-amber-700 border-amber-200'
-                                                }`}>
-                                                    {member.isApproved ? '승인됨' : '승인 대기'}
-                                                </span>
-                                            )}
-                                        </td>
-                                        <td className="py-4 px-6 align-middle whitespace-nowrap text-sm text-slate-600">{formatDate(member.joinedAt)}</td>
-                                        <td className="py-4 px-6 align-middle whitespace-nowrap">
-                                            <div className="font-bold text-lg text-indigo-600">{member.score}점</div>
-                                        </td>
-                                        <td className="py-4 px-6 align-middle">
-                                            {permissions.canManagePoints ? (
-                                                <div className="flex min-w-[360px] flex-wrap gap-2">
-                                                    {categories.map((category) => (
-                                                        <button
-                                                            key={category.id}
-                                                            onClick={() => handleAward(member.id, category.id)}
-                                                            className={`whitespace-nowrap px-3 py-1.5 text-xs font-medium rounded-lg border transition-all active:scale-95 flex items-center gap-1 ${
-                                                                category.pointValue > 0
-                                                                    ? 'border-indigo-200 text-indigo-700 bg-indigo-50 hover:bg-indigo-100 hover:border-indigo-300'
-                                                                    : 'border-rose-200 text-rose-700 bg-rose-50 hover:bg-rose-100 hover:border-rose-300'
-                                                            }`}
-                                                        >
-                                                            <span>{category.categoryName}</span>
-                                                            <span className="font-bold">
-                                                                {category.pointValue > 0 ? '+' : ''}
-                                                                {category.pointValue}
-                                                            </span>
-                                                        </button>
-                                                    ))}
+                                            <td className="py-4 px-6 align-middle whitespace-nowrap">
+                                                <div className="flex items-center gap-3 whitespace-nowrap">
+                                                    <span className="font-medium text-slate-900">{member.name}</span>
+                                                    <span className="text-xs text-slate-500 font-mono">{member.id.slice(0, 8)}</span>
                                                 </div>
-                                            ) : (
-                                                <div className="whitespace-nowrap text-sm text-slate-500">이 역할은 조회만 가능합니다.</div>
+                                            </td>
+                                            {permissions.canManageMembers && (
+                                                <td className="py-4 px-6 align-middle whitespace-nowrap">
+                                                    <input
+                                                        key={`${member.id}-${member.loginEmail ?? ''}`}
+                                                        type="email"
+                                                        defaultValue={member.loginEmail ?? ''}
+                                                        placeholder="example@school.kr"
+                                                        disabled={isSavingRow}
+                                                        onClick={(event) => event.stopPropagation()}
+                                                        onBlur={(event) => {
+                                                            const nextValue = normalizeLoginEmail(event.target.value);
+                                                            if ((member.loginEmail ?? null) === nextValue) {
+                                                                event.target.value = member.loginEmail ?? '';
+                                                                return;
+                                                            }
+                                                            event.target.value = nextValue ?? '';
+                                                            void handleMemberUpdate(member.id, { loginEmail: nextValue });
+                                                        }}
+                                                        onKeyDown={(event) => {
+                                                            if (event.key === 'Enter') {
+                                                                event.preventDefault();
+                                                                event.currentTarget.blur();
+                                                            }
+                                                        }}
+                                                        className="min-w-[220px] rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                                                    />
+                                                </td>
                                             )}
-                                        </td>
-                                        <td className="py-4 px-6 align-middle whitespace-nowrap text-center">
-                                            {permissions.canManageMembers ? (
-                                                <button
-                                                    onClick={() => handleDeleteMember(member.id)}
-                                                    className="p-2 text-slate-400 hover:bg-rose-50 hover:text-rose-600 rounded-lg transition-colors opacity-0 group-hover:opacity-100"
-                                                    title="멤버 숨기기"
-                                                >
-                                                    <Trash2 size={16} />
-                                                </button>
-                                            ) : (
-                                                <span className="text-xs text-slate-400">-</span>
-                                            )}
+                                            <td className="py-4 px-6 align-middle whitespace-nowrap">
+                                                {permissions.canManageMembers ? (
+                                                    <div onClick={(event) => event.stopPropagation()}>
+                                                        <select
+                                                            value={member.roleId ?? ''}
+                                                            disabled={isSavingRow}
+                                                            onChange={(event) => {
+                                                                const value = event.target.value || null;
+                                                                void handleMemberUpdate(member.id, { roleId: value });
+                                                            }}
+                                                            className="min-w-[160px] rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                                                        >
+                                                            <option value="">미지정</option>
+                                                            {roles.map((role) => (
+                                                                <option key={role.id} value={role.id}>
+                                                                    {role.name} · {roleLabels[role.permissionScope as AppRole] ?? role.permissionScope}
+                                                                </option>
+                                                            ))}
+                                                        </select>
+                                                        <div className="mt-1 text-xs text-slate-500">
+                                                            현재 권한: {getRoleScopeLabel(member)}
+                                                        </div>
+                                                    </div>
+                                                ) : (
+                                                    <div className="whitespace-nowrap">
+                                                        <div className="text-slate-700">{member.roleName || '미지정'}</div>
+                                                        <div className="mt-1 text-xs text-slate-500">{getRoleScopeLabel(member)}</div>
+                                                    </div>
+                                                )}
+                                            </td>
+                                            <td className="py-4 px-6 align-middle whitespace-nowrap">
+                                                {permissions.canManageMembers ? (
+                                                    <select
+                                                        value={member.teamId ?? ''}
+                                                        disabled={isSavingRow}
+                                                        onClick={(event) => event.stopPropagation()}
+                                                        onChange={(event) => {
+                                                            const value = event.target.value || null;
+                                                            void handleMemberUpdate(member.id, { teamId: value });
+                                                        }}
+                                                        className="min-w-[160px] rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                                                    >
+                                                        <option value="">미지정</option>
+                                                        {teams.map((team) => (
+                                                            <option key={team.id} value={team.id}>
+                                                                {team.name}
+                                                            </option>
+                                                        ))}
+                                                    </select>
+                                                ) : (
+                                                    <div className="text-slate-700 whitespace-nowrap">{member.teamName || '미지정'}</div>
+                                                )}
+                                            </td>
+                                            <td className="py-4 px-6 align-middle whitespace-nowrap">
+                                                {permissions.canManageMembers ? (
+                                                    <select
+                                                        value={member.status ?? 'active'}
+                                                        disabled={isSavingRow}
+                                                        onClick={(event) => event.stopPropagation()}
+                                                        onChange={(event) => {
+                                                            const value = event.target.value as MemberStatus;
+                                                            void handleMemberUpdate(member.id, { status: value });
+                                                        }}
+                                                        className="min-w-[128px] rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                                                    >
+                                                        {memberStatusOptions.map((status) => (
+                                                            <option key={status} value={status}>
+                                                                {memberStatusLabels[status]}
+                                                            </option>
+                                                        ))}
+                                                    </select>
+                                                ) : (
+                                                    <span className={`inline-flex whitespace-nowrap px-2.5 py-1 rounded-full text-xs font-semibold border ${statusInfo.className}`}>
+                                                        {statusInfo.label}
+                                                    </span>
+                                                )}
+                                            </td>
+                                            <td className="py-4 px-6 align-middle whitespace-nowrap">
+                                                {permissions.canManageMembers ? (
+                                                    <label className="inline-flex items-center gap-2 whitespace-nowrap text-sm text-slate-700" onClick={(event) => event.stopPropagation()}>
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={member.isApproved}
+                                                            disabled={isSavingRow}
+                                                            onChange={(event) => {
+                                                                void handleMemberUpdate(member.id, { isApproved: event.target.checked });
+                                                            }}
+                                                            className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                                                        />
+                                                        승인
+                                                    </label>
+                                                ) : (
+                                                    <span className={`inline-flex whitespace-nowrap px-2.5 py-1 rounded-full text-xs font-semibold border ${
+                                                        member.isApproved
+                                                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                                            : 'bg-amber-50 text-amber-700 border-amber-200'
+                                                    }`}>
+                                                        {member.isApproved ? '승인됨' : '승인 대기'}
+                                                    </span>
+                                                )}
+                                            </td>
+                                            <td className="py-4 px-6 align-middle whitespace-nowrap text-sm text-slate-600">{formatDate(member.joinedAt)}</td>
+                                            <td className="py-4 px-6 align-middle whitespace-nowrap">
+                                                <div className="font-bold text-lg text-indigo-600">{member.score}점</div>
+                                            </td>
+                                            <td className="py-4 px-6 align-middle">
+                                                {permissions.canManagePoints ? (
+                                                    <div className="flex min-w-[360px] flex-wrap gap-2">
+                                                        {categories.map((category) => (
+                                                            <button
+                                                                key={category.id}
+                                                                onClick={(event) => {
+                                                                    event.stopPropagation();
+                                                                    void handleAward(member.id, category.id);
+                                                                }}
+                                                                className={`whitespace-nowrap px-3 py-1.5 text-xs font-medium rounded-lg border transition-all active:scale-95 flex items-center gap-1 ${
+                                                                    category.pointValue > 0
+                                                                        ? 'border-indigo-200 text-indigo-700 bg-indigo-50 hover:bg-indigo-100 hover:border-indigo-300'
+                                                                        : 'border-rose-200 text-rose-700 bg-rose-50 hover:bg-rose-100 hover:border-rose-300'
+                                                                }`}
+                                                            >
+                                                                <span>{category.categoryName}</span>
+                                                                <span className="font-bold">
+                                                                    {category.pointValue > 0 ? '+' : ''}
+                                                                    {category.pointValue}
+                                                                </span>
+                                                            </button>
+                                                        ))}
+                                                    </div>
+                                                ) : (
+                                                    <div className="whitespace-nowrap text-sm text-slate-500">이 역할은 조회만 가능합니다.</div>
+                                                )}
+                                            </td>
+                                            <td className="py-4 px-6 align-middle whitespace-nowrap text-center">
+                                                {permissions.canManageMembers ? (
+                                                    <button
+                                                        onClick={(event) => {
+                                                            event.stopPropagation();
+                                                            void handleDeleteMember(member.id);
+                                                        }}
+                                                        className="p-2 text-slate-400 hover:bg-rose-50 hover:text-rose-600 rounded-lg transition-colors opacity-0 group-hover:opacity-100"
+                                                        title="멤버 숨기기"
+                                                    >
+                                                        <Trash2 size={16} />
+                                                    </button>
+                                                ) : (
+                                                    <span className="text-xs text-slate-400">-</span>
+                                                )}
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
+
+                                {filteredMembers.length === 0 && (
+                                    <tr>
+                                        <td colSpan={permissions.canManageMembers ? 11 : 10} className="py-12 text-center text-slate-500">
+                                            검색 조건에 맞는 멤버가 없습니다.
                                         </td>
                                     </tr>
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
+                )}
+
+                {displayMode === 'cards' && (
+                    <div className="grid gap-4 p-6 md:grid-cols-2 2xl:grid-cols-3">
+                        {filteredMembers.map((member) => (
+                            <MemberSnapshotCard
+                                key={member.id}
+                                member={member}
+                                selected={historyMemberId === member.id}
+                                onSelect={() => setHistoryMemberId(member.id)}
+                                roleScopeLabel={getRoleScopeLabel(member)}
+                                roleScopeDescription={getRoleScopeDescription(member)}
+                            />
+                        ))}
+                        {filteredMembers.length === 0 && (
+                            <div className="md:col-span-2 2xl:col-span-3 rounded-[28px] border border-dashed border-slate-300 bg-slate-50 px-6 py-12 text-center text-slate-500">
+                                검색 조건에 맞는 멤버가 없습니다.
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {displayMode === 'organization' && (
+                    <div className="space-y-5 p-6">
+                        <div className="rounded-[28px] border border-slate-200 bg-slate-950 px-5 py-5 text-white">
+                            <div className="flex items-center gap-2 text-sm font-semibold text-slate-200">
+                                <Network size={16} />
+                                조직도형 보기
+                            </div>
+                            <div className="mt-2 text-sm leading-6 text-slate-300">
+                                직책 lane별로 멤버를 묶어 구조를 확인합니다. 운영 권한이 같은 다른 직책도 한눈에 비교할 수 있습니다.
+                            </div>
+                        </div>
+
+                        <div className="grid gap-4 xl:grid-cols-2 2xl:grid-cols-3">
+                            {organizationGroups.map((group) => (
+                                <section key={`${group.roleId ?? group.roleName}-lane`} className="rounded-[28px] border border-slate-200 bg-slate-50 p-4">
+                                    <div className="rounded-[24px] border border-slate-200 bg-white px-4 py-4">
+                                        <div className="flex items-center justify-between gap-3">
+                                            <div>
+                                                <div className="text-lg font-bold text-slate-900">{group.roleName}</div>
+                                                <div className="mt-1 text-sm text-slate-500">
+                                                    {roleLabels[group.permissionScope as AppRole] ?? group.permissionScope}
+                                                </div>
+                                            </div>
+                                            <span className="rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-700">
+                                                {group.members.length}명
+                                            </span>
+                                        </div>
+                                    </div>
+
+                                    <div className="mt-4 space-y-3">
+                                        {group.members.map((member) => (
+                                            <MemberSnapshotCard
+                                                key={member.id}
+                                                member={member}
+                                                selected={historyMemberId === member.id}
+                                                onSelect={() => setHistoryMemberId(member.id)}
+                                                roleScopeLabel={getRoleScopeLabel(member)}
+                                                roleScopeDescription={getRoleScopeDescription(member)}
+                                                compact
+                                            />
+                                        ))}
+                                    </div>
+                                </section>
+                            ))}
+                            {organizationGroups.length === 0 && (
+                                <div className="xl:col-span-2 2xl:col-span-3 rounded-[28px] border border-dashed border-slate-300 bg-slate-50 px-6 py-12 text-center text-slate-500">
+                                    검색 조건에 맞는 멤버가 없습니다.
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                )}
+            </div>
+
+            {permissions.canManageMembers && (
+                <section className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+                    <div className="flex flex-col gap-4 border-b border-slate-100 bg-slate-50/70 px-6 py-5 lg:flex-row lg:items-start lg:justify-between">
+                        <div>
+                            <div className="flex items-center gap-2 font-semibold text-slate-900">
+                                <History size={18} className="text-indigo-600" />
+                                직책/접근 변경 이력
+                            </div>
+                            <div className="mt-1 text-sm text-slate-500">
+                                멤버 카드와 표에서 바뀐 로그인 이메일, 직책, 승인 상태, 소속 변경을 감사 로그로 추적합니다.
+                            </div>
+                        </div>
+                        <label className="space-y-1.5 text-sm text-slate-600">
+                            <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">이력 기준 멤버</span>
+                            <select
+                                value={historyMemberId ?? ''}
+                                onChange={(event) => setHistoryMemberId(event.target.value || null)}
+                                className="min-w-[220px] rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                            >
+                                {members.map((member) => (
+                                    <option key={member.id} value={member.id}>
+                                        {member.name}
+                                    </option>
+                                ))}
+                            </select>
+                        </label>
+                    </div>
+
+                    <div className="grid gap-6 p-6 xl:grid-cols-[340px_minmax(0,1fr)]">
+                        <div className="rounded-[28px] border border-slate-200 bg-slate-950 p-5 text-white">
+                            <div className="text-sm font-semibold text-slate-300">선택한 멤버</div>
+                            {historyMember ? (
+                                <>
+                                    <div className="mt-3 text-2xl font-bold">{historyMember.name}</div>
+                                    <div className="mt-2 text-sm text-slate-300">
+                                        직책 {historyMember.roleName ?? '미지정'} · 권한 {getRoleScopeLabel(historyMember)}
+                                    </div>
+                                    <div className="mt-5 space-y-3">
+                                        <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                                            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">로그인 이메일</div>
+                                            <div className="mt-2 break-all text-sm font-medium text-white">{historyMember.loginEmail ?? '아직 없음'}</div>
+                                        </div>
+                                        <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                                            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">현재 상태</div>
+                                            <div className="mt-2 text-sm font-medium text-white">
+                                                {memberStatusLabels[historyMember.status ?? 'active']} · {historyMember.isApproved ? '승인됨' : '승인 필요'}
+                                            </div>
+                                        </div>
+                                        <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                                            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">최근 변경</div>
+                                            <div className="mt-2 text-sm leading-6 text-slate-200">
+                                                {memberHistoryEntries[0]?.summary ?? '아직 멤버 변경 이력이 없습니다. 이번 버전 이후 변경부터 누적됩니다.'}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </>
+                            ) : (
+                                <div className="mt-3 text-sm text-slate-300">먼저 멤버를 선택해 주세요.</div>
+                            )}
+                        </div>
+
+                        <div className="space-y-3">
+                            {memberHistoryEntries.map((entry) => {
+                                const changeBadges = getHistoryChangeBadges(entry);
+                                return (
+                                    <div key={entry.id} className="rounded-[24px] border border-slate-200 bg-slate-50 px-5 py-4">
+                                        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                                            <div>
+                                                <div className="font-semibold text-slate-900">{entry.summary}</div>
+                                                <div className="mt-1 text-sm text-slate-500">
+                                                    {entry.actorName ?? '시스템'} · {formatDateTime(entry.createdAt)}
+                                                </div>
+                                            </div>
+                                            <div className="flex flex-wrap gap-2">
+                                                {changeBadges.length > 0 ? changeBadges.map((badge) => (
+                                                    <span key={`${entry.id}-${badge}`} className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600">
+                                                        {badge}
+                                                    </span>
+                                                )) : (
+                                                    <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600">
+                                                        변경 기록
+                                                    </span>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
                                 );
                             })}
 
-                            {filteredMembers.length === 0 && (
-                                <tr>
-                                    <td colSpan={permissions.canManageMembers ? 11 : 10} className="py-12 text-center text-slate-500">
-                                        검색 조건에 맞는 멤버가 없습니다.
-                                    </td>
-                                </tr>
+                            {historyMember && memberHistoryEntries.length === 0 && (
+                                <div className="rounded-[24px] border border-dashed border-slate-300 bg-slate-50 px-6 py-12 text-center text-slate-500">
+                                    {historyMember.name}의 역할 변경 이력이 아직 없습니다. 이번 버전 이후부터 직책, 이메일, 승인 상태 변경이 자동으로 누적됩니다.
+                                </div>
                             )}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
+                        </div>
+                    </div>
+                </section>
+            )}
         </div>
     );
 };

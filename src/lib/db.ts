@@ -32,11 +32,32 @@ type PointRuleCatalogRow = Database['public']['Views']['point_rule_catalog']['Ro
 type MyMemberOverviewRow = Database['public']['Functions']['get_my_member_overview']['Returns'][number];
 type MyActivityLogRow = Database['public']['Functions']['get_my_activity_logs']['Returns'][number];
 type MyMemberBadgeRow = Database['public']['Functions']['get_my_member_badges']['Returns'][number];
+type GetAuditLogsOptions = {
+    entityType?: string;
+    entityId?: string;
+    limit?: number;
+};
 
 const createLocalId = (prefix: string) => `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
 const normalizeLoginEmail = (value?: string | null) => {
     const normalized = value?.trim().toLowerCase() ?? '';
     return normalized.length > 0 ? normalized : null;
+};
+
+const getLocalRoleById = (roleId?: string | null) => localRoles.find((role) => role.id === roleId) ?? null;
+const getLocalTeamById = (teamId?: string | null) => localTeams.find((team) => team.id === teamId) ?? null;
+
+const buildLocalMemberAuditSummary = (memberName: string, changes: Record<string, unknown>, action: 'created' | 'updated') => {
+    if (action === 'created') {
+        return `${memberName} 멤버 등록`;
+    }
+
+    if (changes.role) return `${memberName} · 직책/권한 변경`;
+    if (changes.loginEmail) return `${memberName} · 로그인 이메일 변경`;
+    if (changes.approval) return `${memberName} · 승인 상태 변경`;
+    if (changes.status) return `${memberName} · 회원 상태 변경`;
+    if (changes.team) return `${memberName} · 소속 팀 변경`;
+    return `${memberName} · 회원 정보 수정`;
 };
 
 let localMembers: Member[] = [
@@ -958,19 +979,35 @@ export const getMemberBadges = async (): Promise<MemberBadge[]> => {
     }
 };
 
-export const getAuditLogs = async (): Promise<AuditLogEntry[]> => {
+export const getAuditLogs = async (options?: GetAuditLogsOptions): Promise<AuditLogEntry[]> => {
+    const entityType = options?.entityType ?? null;
+    const entityId = options?.entityId ?? null;
+    const limit = options?.limit ?? 20;
+
     if (!isSupabaseConfigured) {
-        return sortAuditLogs(localAuditLogs);
+        return sortAuditLogs(
+            localAuditLogs.filter((entry) => (!entityType || entry.entityType === entityType) && (!entityId || entry.entityId === entityId)),
+        ).slice(0, limit);
     }
 
     try {
         const client = getSupabaseClient();
+        let auditQuery = client
+            .from('audit_logs')
+            .select('id, actor_id, entity_type, entity_id, action, diff_json, created_at')
+            .order('created_at', { ascending: false })
+            .limit(limit);
+
+        if (entityType) {
+            auditQuery = auditQuery.eq('entity_type', entityType);
+        }
+
+        if (entityId) {
+            auditQuery = auditQuery.eq('entity_id', entityId);
+        }
+
         const [auditResult, actorResult] = await Promise.all([
-            client
-                .from('audit_logs')
-                .select('id, actor_id, entity_type, entity_id, action, diff_json, created_at')
-                .order('created_at', { ascending: false })
-                .limit(20),
+            auditQuery,
             client.from('members').select('id, name'),
         ]);
 
@@ -1000,7 +1037,14 @@ export const getAuditLogs = async (): Promise<AuditLogEntry[]> => {
             };
         });
     } catch (error) {
-        return fallback('getAuditLogs', () => sortAuditLogs(localAuditLogs), error);
+        return fallback(
+            'getAuditLogs',
+            () =>
+                sortAuditLogs(
+                    localAuditLogs.filter((entry) => (!entityType || entry.entityType === entityType) && (!entityId || entry.entityId === entityId)),
+                ).slice(0, limit),
+            error,
+        );
     }
 };
 
@@ -1054,6 +1098,23 @@ export const addMember = async (name: string, loginEmail?: string | null): Promi
             joinedAt: new Date().toISOString().slice(0, 10),
         };
         localMembers.push(newMember);
+        logLocalAuditEntry({
+            actorId: null,
+            actorName: '로컬 운영자',
+            entityType: 'member',
+            entityId: newMember.id,
+            action: 'created',
+            summary: `${newMember.name} 멤버 등록`,
+            diff: {
+                summary: `${newMember.name} 멤버 등록`,
+                memberName: newMember.name,
+                changes: {
+                    loginEmail: { to: normalizedLoginEmail },
+                    status: { to: newMember.status },
+                    approval: { to: newMember.isApproved },
+                },
+            },
+        });
         return newMember;
     }
 
@@ -1104,6 +1165,23 @@ export const addMember = async (name: string, loginEmail?: string | null): Promi
             isVisible: true,
         };
         localMembers.push(newMember);
+        logLocalAuditEntry({
+            actorId: null,
+            actorName: '로컬 운영자',
+            entityType: 'member',
+            entityId: newMember.id,
+            action: 'created',
+            summary: `${newMember.name} 멤버 등록`,
+            diff: {
+                summary: `${newMember.name} 멤버 등록`,
+                memberName: newMember.name,
+                changes: {
+                    loginEmail: { to: normalizedLoginEmail },
+                    status: { to: newMember.status },
+                    approval: { to: newMember.isApproved },
+                },
+            },
+        });
         return fallback('addMember', () => newMember, error);
     }
 };
@@ -1636,8 +1714,35 @@ export const addSeason = async (
 
 export const deleteMember = async (id: string): Promise<void> => {
     if (!isSupabaseConfigured) {
-        localMembers = localMembers.filter((member) => member.id !== id);
-        localLogs = localLogs.filter((log) => log.memberId !== id);
+        const previousMember = localMembers.find((member) => member.id === id);
+        localMembers = localMembers.map((member) =>
+            member.id === id
+                ? {
+                    ...member,
+                    status: 'inactive',
+                    isVisible: false,
+                }
+                : member,
+        );
+        const member = localMembers.find((entry) => entry.id === id);
+        if (member && previousMember) {
+            logLocalAuditEntry({
+                actorId: null,
+                actorName: '로컬 운영자',
+                entityType: 'member',
+                entityId: id,
+                action: 'updated',
+                summary: `${member.name} · 회원 상태 변경`,
+                diff: {
+                    summary: `${member.name} · 회원 상태 변경`,
+                    memberName: member.name,
+                    changes: {
+                        status: { from: previousMember.status ?? 'active', to: 'inactive' },
+                        visibility: { from: previousMember.isVisible ?? true, to: false },
+                    },
+                },
+            });
+        }
         return;
     }
 
@@ -1666,6 +1771,8 @@ export const updateMember = async (
     updates: Partial<Pick<Member, 'name' | 'loginEmail' | 'roleId' | 'teamId' | 'status' | 'isApproved' | 'isVisible'>>,
 ): Promise<void> => {
     if (!isSupabaseConfigured) {
+        const previousMember = localMembers.find((member) => member.id === id);
+
         localMembers = localMembers.map((member) => {
             if (member.id !== id) {
                 return member;
@@ -1687,6 +1794,67 @@ export const updateMember = async (
                 isVisible: updates.isVisible ?? member.isVisible,
             };
         });
+
+        const nextMember = localMembers.find((member) => member.id === id);
+
+        if (nextMember && previousMember) {
+            const changes: Record<string, unknown> = {};
+            const nextRole = getLocalRoleById(nextMember.roleId);
+            const previousRole = getLocalRoleById(previousMember.roleId);
+            const nextTeam = getLocalTeamById(nextMember.teamId);
+            const previousTeam = getLocalTeamById(previousMember.teamId);
+
+            if (previousMember.name !== nextMember.name) {
+                changes.name = { from: previousMember.name, to: nextMember.name };
+            }
+            if ((previousMember.loginEmail ?? null) !== (nextMember.loginEmail ?? null)) {
+                changes.loginEmail = { from: previousMember.loginEmail ?? null, to: nextMember.loginEmail ?? null };
+            }
+            if ((previousMember.roleId ?? null) !== (nextMember.roleId ?? null)) {
+                changes.role = {
+                    fromId: previousMember.roleId ?? null,
+                    fromName: previousRole?.name ?? null,
+                    fromScope: previousRole?.permissionScope ?? null,
+                    toId: nextMember.roleId ?? null,
+                    toName: nextRole?.name ?? null,
+                    toScope: nextRole?.permissionScope ?? null,
+                };
+            }
+            if ((previousMember.teamId ?? null) !== (nextMember.teamId ?? null)) {
+                changes.team = {
+                    fromId: previousMember.teamId ?? null,
+                    fromName: previousTeam?.name ?? null,
+                    toId: nextMember.teamId ?? null,
+                    toName: nextTeam?.name ?? null,
+                };
+            }
+            if ((previousMember.status ?? 'active') !== (nextMember.status ?? 'active')) {
+                changes.status = { from: previousMember.status ?? 'active', to: nextMember.status ?? 'active' };
+            }
+            if (previousMember.isApproved !== nextMember.isApproved) {
+                changes.approval = { from: previousMember.isApproved, to: nextMember.isApproved };
+            }
+            if ((previousMember.isVisible ?? true) !== (nextMember.isVisible ?? true)) {
+                changes.visibility = { from: previousMember.isVisible ?? true, to: nextMember.isVisible ?? true };
+            }
+
+            if (Object.keys(changes).length > 0) {
+                const summary = buildLocalMemberAuditSummary(nextMember.name, changes, 'updated');
+                logLocalAuditEntry({
+                    actorId: null,
+                    actorName: '로컬 운영자',
+                    entityType: 'member',
+                    entityId: id,
+                    action: 'updated',
+                    summary,
+                    diff: {
+                        summary,
+                        memberName: nextMember.name,
+                        changes,
+                    },
+                });
+            }
+        }
         return;
     }
 
