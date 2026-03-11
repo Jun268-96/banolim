@@ -2,8 +2,8 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { BarChart3, TrendingUp, Users, Award, PlayCircle, Layers3 } from 'lucide-react';
 import { Chart as ChartJS, ArcElement, Tooltip, Legend, CategoryScale, LinearScale, BarElement, Title } from 'chart.js';
 import { Doughnut, Bar } from 'react-chartjs-2';
-import type { ActivityLog, Category, Member } from '../../types';
-import { getCategories, getLogs, getMembers } from '../../lib/db';
+import type { ActivityLog, Category, Member, MemberBadge, SeasonSummary } from '../../types';
+import { getCategories, getCurrentSeason, getLogs, getMemberBadges, getMembers } from '../../lib/db';
 import { RecapViewer } from './RecapViewer';
 
 ChartJS.register(ArcElement, Tooltip, Legend, CategoryScale, LinearScale, BarElement, Title);
@@ -12,20 +12,26 @@ export const StatsTab: React.FC = () => {
     const [members, setMembers] = useState<Member[]>([]);
     const [categories, setCategories] = useState<Category[]>([]);
     const [logs, setLogs] = useState<ActivityLog[]>([]);
+    const [season, setSeason] = useState<SeasonSummary | null>(null);
+    const [memberBadges, setMemberBadges] = useState<MemberBadge[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [showRecap, setShowRecap] = useState(false);
 
     useEffect(() => {
         const loadData = async () => {
-            const [membersData, categoriesData, logsData] = await Promise.all([
+            const [membersData, categoriesData, logsData, seasonData, memberBadgeData] = await Promise.all([
                 getMembers(),
                 getCategories(),
                 getLogs(),
+                getCurrentSeason(),
+                getMemberBadges(),
             ]);
 
             setMembers(membersData);
             setCategories(categoriesData);
             setLogs(logsData);
+            setSeason(seasonData);
+            setMemberBadges(memberBadgeData);
             setIsLoading(false);
         };
 
@@ -133,7 +139,10 @@ export const StatsTab: React.FC = () => {
                             <BarChart3 className="text-indigo-600" />
                             통계 및 리캡
                         </h2>
-                        <p className="text-slate-500 mt-1">회원과 팀 관점에서 플랫폼 흐름을 함께 읽어봅니다.</p>
+                        <p className="text-slate-500 mt-1">
+                            회원과 팀 관점에서 플랫폼 흐름을 함께 읽어봅니다.
+                            {season ? ` 현재 집계 기준은 ${season.name}입니다.` : ''}
+                        </p>
                     </div>
 
                     <button
@@ -243,8 +252,9 @@ export const StatsTab: React.FC = () => {
             {showRecap && (
                 <RecapViewer
                     members={members}
-                    categories={categories}
                     logs={stats.effectiveLogs}
+                    memberBadges={memberBadges}
+                    season={season}
                     onClose={() => setShowRecap(false)}
                 />
             )}

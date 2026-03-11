@@ -1,11 +1,13 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Activity, BadgeCheck, Flame, Link2, Medal, MessageSquareWarning, Send, ShieldCheck, Sparkles, TrendingUp, TriangleAlert, UserRound, Zap } from 'lucide-react';
+import { Activity, BadgeCheck, Flame, Link2, Medal, MessageSquareWarning, PlayCircle, Send, ShieldCheck, Sparkles, TrendingUp, TriangleAlert, UserRound, Zap } from 'lucide-react';
 import type { ActivityLog, CorrectionRequest, CorrectionRequestStatus, Member, MemberBadge, MemberStatus, SeasonSummary } from '../../types';
 import { getCorrectionRequests, getCurrentSeason, getMyActivityLogs, getMyMemberBadges, getMyMemberOverview, submitCorrectionRequest } from '../../lib/db';
 import { roleLabels } from '../../lib/permissions';
 import { useAuth } from '../auth/auth-context';
+import { MemberRecapViewer } from './MemberRecapViewer';
 
 type TimelineRange = '30d' | '90d' | 'all';
+type MemberRecapPeriod = 'month' | 'season';
 
 const memberStatusLabels: Record<MemberStatus, string> = {
     active: '활동 중',
@@ -85,6 +87,7 @@ export const MemberHomeTab: React.FC = () => {
     const [correctionRequests, setCorrectionRequests] = useState<CorrectionRequest[]>([]);
     const [selectedRequestLog, setSelectedRequestLog] = useState<ActivityLog | null>(null);
     const [timelineRange, setTimelineRange] = useState<TimelineRange>('90d');
+    const [selectedRecapPeriod, setSelectedRecapPeriod] = useState<MemberRecapPeriod | null>(null);
     const [requestReason, setRequestReason] = useState('');
     const [isLoading, setIsLoading] = useState(true);
     const [isSubmittingRequest, setIsSubmittingRequest] = useState(false);
@@ -353,8 +356,9 @@ export const MemberHomeTab: React.FC = () => {
     }
 
     return (
-        <div className="space-y-6 animate-in fade-in duration-500">
-            <section className="rounded-[28px] border border-slate-200 bg-gradient-to-br from-sky-50 via-white to-indigo-50 p-6 lg:p-8">
+        <>
+            <div className="space-y-6 animate-in fade-in duration-500">
+                <section className="rounded-[28px] border border-slate-200 bg-gradient-to-br from-sky-50 via-white to-indigo-50 p-6 lg:p-8">
                 <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1.25fr)_340px]">
                     <div className="space-y-5">
                         <div className="inline-flex items-center gap-2 rounded-full border border-sky-200 bg-white/90 px-3 py-1 text-sm font-medium text-sky-700">
@@ -367,6 +371,24 @@ export const MemberHomeTab: React.FC = () => {
                             <p className="mt-3 max-w-3xl text-base text-slate-600 lg:text-lg">
                                 최근 30일의 변화, 시즌 점수, 연속 활동 흐름을 한 화면에서 읽을 수 있게 정리했습니다.
                             </p>
+                            <div className="mt-4 flex flex-wrap gap-2">
+                                <button
+                                    type="button"
+                                    onClick={() => setSelectedRecapPeriod('month')}
+                                    className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50"
+                                >
+                                    <PlayCircle size={16} className="text-indigo-600" />
+                                    이번 달 리캡
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setSelectedRecapPeriod('season')}
+                                    className="inline-flex items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm font-semibold text-indigo-700 transition-colors hover:bg-indigo-100"
+                                >
+                                    <Sparkles size={16} />
+                                    현재 시즌 리캡
+                                </button>
+                            </div>
                         </div>
 
                         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -830,7 +852,20 @@ export const MemberHomeTab: React.FC = () => {
                         </div>
                     </div>
                 </div>
-            </section>
-        </div>
+                </section>
+            </div>
+
+            {selectedRecapPeriod && (
+                <MemberRecapViewer
+                    key={selectedRecapPeriod}
+                    member={member}
+                    season={season}
+                    logs={effectiveLogs}
+                    memberBadges={memberBadges}
+                    period={selectedRecapPeriod}
+                    onClose={() => setSelectedRecapPeriod(null)}
+                />
+            )}
+        </>
     );
 };

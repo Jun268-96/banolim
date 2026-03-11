@@ -464,6 +464,12 @@ const getLocalMemberBadges = (memberId?: string | null) => {
         });
 };
 
+const getAllLocalMemberBadges = () => {
+    localMembers.forEach((member) => syncLocalMemberBadges(member.id));
+
+    return [...localMemberBadges].sort((a, b) => b.awardedAt.localeCompare(a.awardedAt));
+};
+
 const parseJsonObject = (value: Json): Record<string, unknown> | null => {
     if (!value || Array.isArray(value) || typeof value !== 'object') {
         return null;
@@ -821,6 +827,65 @@ export const getMyMemberBadges = async (memberId?: string | null): Promise<Membe
         return ((data ?? []) as MyMemberBadgeRow[]).map(mapMyMemberBadgeRow);
     } catch (error) {
         return fallback('getMyMemberBadges', () => getLocalMemberBadges(memberId), error);
+    }
+};
+
+export const getMemberBadges = async (): Promise<MemberBadge[]> => {
+    if (!isSupabaseConfigured) {
+        return getAllLocalMemberBadges();
+    }
+
+    try {
+        const client = getSupabaseClient();
+        const [memberBadgeResult, badgeResult] = await Promise.all([
+            client
+                .from('member_badges')
+                .select('id, member_id, badge_id, awarded_at, season_id')
+                .order('awarded_at', { ascending: false }),
+            client
+                .from('badges')
+                .select('id, code, name, description, icon_key, tone, sort_order, is_active')
+                .eq('is_active', true),
+        ]);
+
+        if (memberBadgeResult.error) {
+            throw memberBadgeResult.error;
+        }
+
+        if (badgeResult.error) {
+            throw badgeResult.error;
+        }
+
+        const badgeRows = (badgeResult.data ?? []) as Array<
+            Pick<Database['public']['Tables']['badges']['Row'], 'id' | 'code' | 'name' | 'description' | 'icon_key' | 'tone' | 'sort_order' | 'is_active'>
+        >;
+        const memberBadgeRows = (memberBadgeResult.data ?? []) as Array<
+            Pick<Database['public']['Tables']['member_badges']['Row'], 'id' | 'member_id' | 'badge_id' | 'awarded_at' | 'season_id'>
+        >;
+
+        const badgeMap = new Map(badgeRows.map((badge) => [badge.id, badge]));
+
+        return memberBadgeRows.flatMap((entry) => {
+            const badge = badgeMap.get(entry.badge_id);
+            if (!badge) {
+                return [];
+            }
+
+            return [{
+                id: entry.id,
+                memberId: entry.member_id,
+                badgeId: entry.badge_id,
+                badgeCode: badge.code,
+                badgeName: badge.name,
+                badgeDescription: badge.description,
+                iconKey: badge.icon_key,
+                tone: (badge.tone as BadgeTone | null) ?? 'sky',
+                awardedAt: entry.awarded_at,
+                seasonId: entry.season_id,
+            }];
+        });
+    } catch (error) {
+        return fallback('getMemberBadges', () => getAllLocalMemberBadges(), error);
     }
 };
 
