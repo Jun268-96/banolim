@@ -190,7 +190,7 @@ export const SettingsTab: React.FC = () => {
     };
 
     const handleDeleteCategory = async (id: string) => {
-        if (confirm('이 규칙을 비활성화할까요? 기존 점수 이력은 유지됩니다.')) {
+        if (confirm('이 규칙을 사용 중지할까요? 기존 점수 이력은 유지되고, 앞으로 입력 목록에서만 숨겨집니다.')) {
             await deleteCategory(id);
             await refreshData();
         }
@@ -330,92 +330,114 @@ export const SettingsTab: React.FC = () => {
                             <Settings size={18} className="text-indigo-600" />
                             점수 규칙
                         </div>
-                        <form onSubmit={handleAddCategory} className="flex flex-col gap-3 md:flex-row md:items-end">
-                            <div className="flex-1 space-y-1.5">
-                                <label htmlFor="catName" className="text-xs font-medium text-slate-600">활동 이름</label>
-                                <input
-                                    id="catName"
-                                    type="text"
-                                    placeholder="예: 발표, 스터디 참여"
-                                    value={newCatName}
-                                    onChange={(event) => setNewCatName(event.target.value)}
-                                    disabled={Boolean(versionSourceCategory)}
-                                    className="w-full px-4 py-2 border border-slate-200 rounded-xl outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all text-sm"
-                                />
+                        <div className="mb-5 grid gap-3 lg:grid-cols-2">
+                            <div className="rounded-2xl border border-slate-200 bg-white px-4 py-4">
+                                <div className="text-sm font-semibold text-slate-900">버전</div>
+                                <div className="mt-2 text-sm leading-6 text-slate-600">
+                                    같은 활동의 점수 기준을 바꿀 때 올리는 번호입니다. 예를 들어 발표 점수를 +20에서 +30으로 바꾸면 새 버전을 만들고,
+                                    예전 기록은 이전 버전 기준으로 그대로 남습니다.
+                                </div>
                             </div>
-                            <div className="w-full md:w-40 space-y-1.5">
-                                <label htmlFor="catGroup" className="text-xs font-medium text-slate-600">그룹</label>
-                                <select
-                                    id="catGroup"
-                                    value={newCatGroupName}
-                                    onChange={(event) => setNewCatGroupName(event.target.value)}
-                                    disabled={Boolean(versionSourceCategory)}
-                                    className="w-full px-4 py-2 border border-slate-200 rounded-xl outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all text-sm bg-white disabled:bg-slate-100"
-                                >
-                                    {ruleGroupOptions.map((option) => (
-                                        <option key={option.value} value={option.value}>
-                                            {option.label}
-                                        </option>
-                                    ))}
-                                </select>
+                            <div className="rounded-2xl border border-slate-200 bg-white px-4 py-4">
+                                <div className="text-sm font-semibold text-slate-900">예외 차감과 규칙 설명</div>
+                                <div className="mt-2 text-sm leading-6 text-slate-600">
+                                    <span className="font-semibold text-slate-900">예외 차감</span>은 지각·불참 같은 상황에서 운영진이 참고할 수 있는 차감값이고,
+                                    <span className="font-semibold text-slate-900"> 규칙 설명</span>은 이 점수가 언제 쓰이는지 운영팀끼리 이해하기 위한 메모입니다.
+                                </div>
                             </div>
-                            <div className="w-full md:w-32 space-y-1.5">
-                                <label htmlFor="catValue" className="text-xs font-medium text-slate-600">기본 점수</label>
-                                <input
-                                    id="catValue"
-                                    type="number"
-                                    value={newCatValue}
-                                    onChange={(event) => setNewCatValue(Number(event.target.value) || 0)}
-                                    className="w-full px-4 py-2 border border-slate-200 rounded-xl outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all text-sm"
-                                />
+                        </div>
+
+                        <form onSubmit={handleAddCategory} className="rounded-[28px] border border-slate-200 bg-white p-5">
+                            <div className="grid gap-4 xl:grid-cols-[minmax(0,1.6fr)_220px_160px_160px]">
+                                <label className="space-y-1.5">
+                                    <span className="text-xs font-medium text-slate-600">활동 이름</span>
+                                    <input
+                                        id="catName"
+                                        type="text"
+                                        placeholder="예: 발표, 스터디 참여, 정기모임 지각"
+                                        value={newCatName}
+                                        onChange={(event) => setNewCatName(event.target.value)}
+                                        disabled={Boolean(versionSourceCategory)}
+                                        className="w-full px-4 py-3 border border-slate-200 rounded-xl outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all text-sm disabled:bg-slate-100"
+                                    />
+                                </label>
+                                <label className="space-y-1.5">
+                                    <span className="text-xs font-medium text-slate-600">활동 분류</span>
+                                    <select
+                                        id="catGroup"
+                                        value={newCatGroupName}
+                                        onChange={(event) => setNewCatGroupName(event.target.value)}
+                                        disabled={Boolean(versionSourceCategory)}
+                                        className="w-full px-4 py-3 border border-slate-200 rounded-xl outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all text-sm bg-white disabled:bg-slate-100"
+                                    >
+                                        {ruleGroupOptions.map((option) => (
+                                            <option key={option.value} value={option.value}>
+                                                {option.label}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </label>
+                                <label className="space-y-1.5">
+                                    <span className="text-xs font-medium text-slate-600">기본 지급 점수</span>
+                                    <input
+                                        id="catValue"
+                                        type="number"
+                                        value={newCatValue}
+                                        onChange={(event) => setNewCatValue(Number(event.target.value) || 0)}
+                                        className="w-full px-4 py-3 border border-slate-200 rounded-xl outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all text-sm"
+                                    />
+                                </label>
+                                <label className="space-y-1.5">
+                                    <span className="text-xs font-medium text-slate-600">예외 차감값</span>
+                                    <input
+                                        id="catPenalty"
+                                        type="number"
+                                        value={newCatPenaltyPoint}
+                                        onChange={(event) => setNewCatPenaltyPoint(Number(event.target.value) || 0)}
+                                        className="w-full px-4 py-3 border border-slate-200 rounded-xl outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all text-sm"
+                                    />
+                                </label>
                             </div>
-                            <div className="w-full md:w-32 space-y-1.5">
-                                <label htmlFor="catPenalty" className="text-xs font-medium text-slate-600">감점</label>
-                                <input
-                                    id="catPenalty"
-                                    type="number"
-                                    value={newCatPenaltyPoint}
-                                    onChange={(event) => setNewCatPenaltyPoint(Number(event.target.value) || 0)}
-                                    className="w-full px-4 py-2 border border-slate-200 rounded-xl outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all text-sm"
-                                />
-                            </div>
-                            <div className="flex-1 space-y-1.5">
-                                <label htmlFor="catCondition" className="text-xs font-medium text-slate-600">조건 요약</label>
-                                <input
-                                    id="catCondition"
-                                    type="text"
-                                    placeholder="예: 발표 자료 제출 시 기본 점수 지급"
-                                    value={newCatConditionSummary}
-                                    onChange={(event) => setNewCatConditionSummary(event.target.value)}
-                                    className="w-full px-4 py-2 border border-slate-200 rounded-xl outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all text-sm"
-                                />
-                            </div>
-                            <button
-                                type="submit"
-                                disabled={!newCatName.trim()}
-                                className="px-6 py-2 bg-indigo-600 text-white font-medium rounded-xl hover:bg-indigo-700 disabled:opacity-50 transition-colors flex items-center justify-center gap-2 h-10"
-                            >
-                                <Plus size={18} />
-                                {versionSourceCategory ? `v${(versionSourceCategory.version ?? 1) + 1} 생성` : '추가'}
-                            </button>
-                            {versionSourceCategory && (
+
+                            <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_auto_auto] xl:items-end">
+                                <label className="space-y-1.5">
+                                    <span className="text-xs font-medium text-slate-600">규칙 설명</span>
+                                    <textarea
+                                        id="catCondition"
+                                        placeholder="예: 발표 자료 링크를 제출한 경우 기본 점수 지급, 지각 시 예외 차감값 참고"
+                                        value={newCatConditionSummary}
+                                        onChange={(event) => setNewCatConditionSummary(event.target.value)}
+                                        rows={3}
+                                        className="w-full resize-none px-4 py-3 border border-slate-200 rounded-xl outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all text-sm"
+                                    />
+                                </label>
                                 <button
-                                    type="button"
-                                    onClick={resetCategoryForm}
-                                    className="px-4 py-2 border border-slate-200 text-slate-700 font-medium rounded-xl hover:bg-slate-50 transition-colors h-10"
+                                    type="submit"
+                                    disabled={!newCatName.trim()}
+                                    className="h-11 px-6 bg-indigo-600 text-white font-medium rounded-xl hover:bg-indigo-700 disabled:opacity-50 transition-colors inline-flex items-center justify-center gap-2"
                                 >
-                                    새 규칙으로 전환
+                                    <Plus size={18} />
+                                    {versionSourceCategory ? `v${(versionSourceCategory.version ?? 1) + 1} 생성` : '규칙 추가'}
                                 </button>
-                            )}
+                                {versionSourceCategory && (
+                                    <button
+                                        type="button"
+                                        onClick={resetCategoryForm}
+                                        className="h-11 px-4 border border-slate-200 text-slate-700 font-medium rounded-xl hover:bg-slate-50 transition-colors"
+                                    >
+                                        새 규칙으로 전환
+                                    </button>
+                                )}
+                            </div>
                         </form>
                         <div className="mt-4 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600">
                             {versionSourceCategory ? (
                                 <>
                                     <span className="font-semibold text-slate-900">{versionSourceCategory.categoryName}</span>
-                                    {' '}규칙의 새 버전을 만드는 중입니다. 기존 버전은 비활성화되고, 과거 기록은 이전 rule id를 계속 참조합니다.
+                                    {' '}규칙의 새 버전을 만드는 중입니다. 기존 버전은 자동으로 사용 중지되고, 과거 기록은 이전 버전 기준으로 그대로 유지됩니다.
                                 </>
                             ) : (
-                                '규칙을 수정할 때는 기존 항목을 덮어쓰지 않고 새 버전을 만들어 과거 기록 해석이 바뀌지 않게 유지합니다.'
+                                '점수 기준을 바꿀 때는 기존 규칙을 덮어쓰지 않고 새 버전을 만들어, 이미 적힌 과거 점수가 바뀌지 않게 유지합니다.'
                             )}
                         </div>
                     </div>
@@ -425,16 +447,16 @@ export const SettingsTab: React.FC = () => {
                             <thead>
                                 <tr className="bg-white border-b border-slate-100 text-sm font-semibold text-slate-600">
                                     <th className="py-4 px-6 min-w-[220px]">활동</th>
-                                    <th className="py-4 px-6 w-28">기본</th>
-                                    <th className="py-4 px-6 w-28">감점</th>
-                                    <th className="py-4 px-6 w-24">버전</th>
-                                    <th className="py-4 px-6 min-w-[240px]">조건</th>
-                                    <th className="py-4 px-6 w-36 text-center">관리</th>
+                                    <th className="py-4 px-6 w-32">기본 지급</th>
+                                    <th className="py-4 px-6 w-32">예외 차감</th>
+                                    <th className="py-4 px-6 w-28">규칙 버전</th>
+                                    <th className="py-4 px-6 min-w-[280px]">규칙 설명</th>
+                                    <th className="py-4 px-6 w-52 text-center">관리</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100">
                                 {categories.map((category) => (
-                                    <tr key={category.id} className="hover:bg-slate-50 transition-colors group">
+                                    <tr key={category.id} className="hover:bg-slate-50 transition-colors">
                                         <td className="py-4 px-6">
                                             <div className="font-medium text-slate-900">{category.categoryName}</div>
                                             <div className="mt-1 text-xs text-slate-500">
@@ -465,7 +487,7 @@ export const SettingsTab: React.FC = () => {
                                         </td>
                                         <td className="py-4 px-6 text-sm text-slate-600">{category.conditionSummary ?? '-'}</td>
                                         <td className="py-4 px-6 text-center">
-                                            <div className="flex items-center justify-center gap-2 opacity-0 transition-opacity group-hover:opacity-100">
+                                            <div className="flex items-center justify-center gap-2">
                                                 <button
                                                     type="button"
                                                     onClick={() => handleStartVersioning(category)}
@@ -477,10 +499,11 @@ export const SettingsTab: React.FC = () => {
                                                 </button>
                                                 <button
                                                     onClick={() => handleDeleteCategory(category.id)}
-                                                    className="p-2 text-slate-400 hover:bg-rose-50 hover:text-rose-600 rounded-lg transition-colors"
-                                                    title="규칙 비활성화"
+                                                    className="inline-flex items-center gap-1 rounded-lg border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-medium text-rose-700 transition-colors hover:bg-rose-100"
+                                                    title="사용 중지"
                                                 >
-                                                    <Trash2 size={16} />
+                                                    <Trash2 size={14} />
+                                                    사용 중지
                                                 </button>
                                             </div>
                                         </td>
