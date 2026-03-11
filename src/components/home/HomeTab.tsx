@@ -1,10 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowRight, CalendarDays, Clock3, Mail, Medal, ShieldCheck, Sparkles, TrendingUp, Users, Zap } from 'lucide-react';
+import { ArrowRight, Bell, CalendarClock, CalendarDays, Medal, Sparkles, TrendingUp, Users, Zap } from 'lucide-react';
 import type { ActivityLog, AnnouncementItem, Category, Member, ScheduleEventItem, SeasonSummary } from '../../types';
 import { getAnnouncements, getCategories, getCurrentSeason, getLogs, getMembers, getScheduleEvents } from '../../lib/db';
 import { useAuth } from '../auth/auth-context';
 import type { TabType } from '../layout/Sidebar';
-import { NoticeScheduleBoard } from '../shared/NoticeScheduleBoard';
+import { AppDialog } from '../shared/AppDialog';
 
 interface HomeTabProps {
     onNavigate: (tab: TabType) => void;
@@ -18,19 +18,6 @@ const formatDate = (value?: string | null) =>
 const formatDateTime = (value: string) =>
     new Intl.DateTimeFormat('ko-KR', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
 
-const getApprovalTags = (member: Member) => {
-    const tags: string[] = [];
-
-    if (!member.loginEmail) tags.push('이메일 미등록');
-    if (!member.isApproved) tags.push('승인 대기');
-    if (member.status === 'dormant') tags.push('보류');
-    if (member.status === 'inactive') tags.push('비활성');
-
-    return tags;
-};
-
-const isAccessReady = (member: Member) => Boolean(member.loginEmail) && member.isApproved && member.status === 'active';
-
 export const HomeTab: React.FC<HomeTabProps> = ({ onNavigate }) => {
     const { permissions } = useAuth();
     const [season, setSeason] = useState<SeasonSummary | null>(null);
@@ -39,6 +26,8 @@ export const HomeTab: React.FC<HomeTabProps> = ({ onNavigate }) => {
     const [logs, setLogs] = useState<ActivityLog[]>([]);
     const [announcements, setAnnouncements] = useState<AnnouncementItem[]>([]);
     const [scheduleEvents, setScheduleEvents] = useState<ScheduleEventItem[]>([]);
+    const [isAnnouncementDialogOpen, setIsAnnouncementDialogOpen] = useState(false);
+    const [isScheduleDialogOpen, setIsScheduleDialogOpen] = useState(false);
     const [isLoading, setIsLoading] = useState(true);
 
     useEffect(() => {
@@ -109,22 +98,12 @@ export const HomeTab: React.FC<HomeTabProps> = ({ onNavigate }) => {
             .map(([team, summary]) => ({ team, ...summary }))
             .sort((a, b) => b.score - a.score);
 
-        const approvalQueue = members
-            .filter((member) => !isAccessReady(member))
-            .map((member) => ({
-                member,
-                tags: getApprovalTags(member),
-            }))
-            .slice(0, 4);
-
         return {
             topMember,
             recentLogs,
             mostConsistent,
             hottestRule,
             teamSummary,
-            approvalQueue,
-            blockedAccessCount: members.filter((member) => !isAccessReady(member)).length,
             effectiveLogsCount: effectiveLogs.length,
         };
     }, [categories, logs, members]);
@@ -144,14 +123,6 @@ export const HomeTab: React.FC<HomeTabProps> = ({ onNavigate }) => {
                   label: '일괄 점수 반영',
                   description: '같은 규칙을 여러 회원에게 한 번에 반영합니다.',
                   icon: Users,
-              }
-            : null,
-        permissions.canManageMembers
-            ? {
-                  id: 'dashboard' as const,
-                  label: '접근 준비 검토',
-                  description: '로그인 이메일, 승인 여부, 상태를 빠르게 정리합니다.',
-                  icon: ShieldCheck,
               }
             : null,
         {
@@ -178,9 +149,32 @@ export const HomeTab: React.FC<HomeTabProps> = ({ onNavigate }) => {
             <section className="rounded-[28px] border border-slate-200 bg-gradient-to-br from-sky-50 via-white to-indigo-50 p-6 lg:p-8">
                 <div className="grid grid-cols-1 items-start gap-6 2xl:grid-cols-[minmax(0,1.35fr)_320px]">
                     <div className="space-y-5">
-                        <div className="inline-flex items-center gap-2 rounded-full border border-sky-200 bg-white/80 px-3 py-1 text-sm font-medium text-sky-700">
-                            <Sparkles size={15} />
-                            반올림 운영 허브
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                            <div className="inline-flex items-center gap-2 rounded-full border border-sky-200 bg-white/80 px-3 py-1 text-sm font-medium text-sky-700">
+                                <Sparkles size={15} />
+                                반올림 운영 허브
+                            </div>
+
+                            <div className="flex flex-wrap gap-2">
+                                <button
+                                    type="button"
+                                    onClick={() => setIsAnnouncementDialogOpen(true)}
+                                    className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50"
+                                >
+                                    <Bell size={16} className="text-indigo-600" />
+                                    공지
+                                    <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-xs text-indigo-700">{announcements.length}</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setIsScheduleDialogOpen(true)}
+                                    className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50"
+                                >
+                                    <CalendarClock size={16} className="text-sky-600" />
+                                    일정
+                                    <span className="rounded-full bg-sky-50 px-2 py-0.5 text-xs text-sky-700">{scheduleEvents.length}</span>
+                                </button>
+                            </div>
                         </div>
 
                         <div className="space-y-3">
@@ -261,13 +255,6 @@ export const HomeTab: React.FC<HomeTabProps> = ({ onNavigate }) => {
                 </div>
             </section>
 
-            <NoticeScheduleBoard
-                announcements={announcements}
-                scheduleEvents={scheduleEvents}
-                manageLabel={permissions.canManageSettings ? '설정에서 관리' : undefined}
-                onManage={permissions.canManageSettings ? () => onNavigate('settings') : undefined}
-            />
-
             <section className="grid grid-cols-1 gap-6 2xl:grid-cols-[1.15fr_0.85fr]">
                 <div className="space-y-6">
                     <div className={`grid gap-4 ${quickActions.length >= 4 ? 'sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4' : quickActions.length >= 3 ? 'sm:grid-cols-2 xl:grid-cols-3' : 'sm:grid-cols-2'}`}>
@@ -337,68 +324,6 @@ export const HomeTab: React.FC<HomeTabProps> = ({ onNavigate }) => {
                 </div>
 
                 <div className="space-y-6">
-                    {permissions.canManageMembers && (
-                        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-                            <div className="flex items-center justify-between gap-3">
-                                <div className="flex items-center gap-2 font-semibold text-slate-900">
-                                    <ShieldCheck size={18} className="text-indigo-600" />
-                                    접근 준비 필요
-                                </div>
-                                <button
-                                    type="button"
-                                    onClick={() => onNavigate('dashboard')}
-                                    className="text-sm font-medium text-indigo-600 hover:text-indigo-700"
-                                >
-                                    멤버 화면으로 이동
-                                </button>
-                            </div>
-                            <div className="mt-2 text-sm text-slate-500">
-                                로그인 이메일 누락, 승인 미완료, 보류 상태를 홈에서도 바로 확인할 수 있습니다.
-                            </div>
-
-                            <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4">
-                                <div className="flex items-center gap-2 text-sm font-semibold text-amber-800">
-                                    <Clock3 size={16} />
-                                    처리 대상 {insights.blockedAccessCount}명
-                                </div>
-                                <div className="mt-2 text-sm text-amber-700">
-                                    승인과 이메일 등록이 끝나야 실제 로그인 후 앱에 접근할 수 있습니다.
-                                </div>
-                            </div>
-
-                            <div className="mt-5 space-y-3">
-                                {insights.approvalQueue.map(({ member, tags }) => (
-                                    <div key={member.id} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
-                                        <div className="flex items-start justify-between gap-4">
-                                            <div>
-                                                <div className="font-semibold text-slate-900">{member.name}</div>
-                                                <div className="mt-1 text-sm text-slate-500">
-                                                    {member.loginEmail ?? '로그인 이메일이 아직 없습니다.'}
-                                                </div>
-                                            </div>
-                                            {!member.loginEmail && <Mail size={16} className="mt-1 text-sky-600" />}
-                                        </div>
-                                        <div className="mt-3 flex flex-wrap gap-2">
-                                            {tags.map((tag) => (
-                                                <span
-                                                    key={`${member.id}-${tag}`}
-                                                    className="inline-flex rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600"
-                                                >
-                                                    {tag}
-                                                </span>
-                                            ))}
-                                        </div>
-                                    </div>
-                                ))}
-                                {insights.approvalQueue.length === 0 && (
-                                    <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-6 text-center text-sm font-medium text-emerald-700">
-                                        현재 접근 준비가 필요한 멤버가 없습니다.
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-                    )}
-
                     <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
                         <div className="flex items-center gap-2 font-semibold text-slate-900">
                             <Medal size={18} className="text-indigo-600" />
@@ -452,6 +377,66 @@ export const HomeTab: React.FC<HomeTabProps> = ({ onNavigate }) => {
                     </div>
                 </div>
             </section>
+
+            <AppDialog
+                isOpen={isAnnouncementDialogOpen}
+                title="공지"
+                description="운영진이 등록한 최신 안내를 모아서 확인합니다."
+                size="lg"
+                onClose={() => setIsAnnouncementDialogOpen(false)}
+            >
+                <div className="space-y-4">
+                    {announcements.length === 0 ? (
+                        <div className="rounded-[24px] border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center text-sm text-slate-500">
+                            현재 열려 있는 공지가 없습니다.
+                        </div>
+                    ) : (
+                        announcements.map((announcement) => (
+                            <article key={announcement.id} className="rounded-[24px] border border-slate-200 bg-slate-50 px-5 py-5">
+                                <div className="flex flex-wrap items-start justify-between gap-3">
+                                    <div>
+                                        <div className="text-lg font-bold text-slate-900">{announcement.title}</div>
+                                        <div className="mt-2 text-sm leading-7 text-slate-600">{announcement.body}</div>
+                                    </div>
+                                    {announcement.isPinned && (
+                                        <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700">
+                                            고정
+                                        </span>
+                                    )}
+                                </div>
+                                <div className="mt-4 text-xs text-slate-500">게시일 {formatDateTime(announcement.createdAt)}</div>
+                            </article>
+                        ))
+                    )}
+                </div>
+            </AppDialog>
+
+            <AppDialog
+                isOpen={isScheduleDialogOpen}
+                title="다가오는 일정"
+                description="예정된 모임과 운영 일정을 일정별로 확인합니다."
+                size="lg"
+                onClose={() => setIsScheduleDialogOpen(false)}
+            >
+                <div className="space-y-4">
+                    {scheduleEvents.length === 0 ? (
+                        <div className="rounded-[24px] border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center text-sm text-slate-500">
+                            예정된 일정이 없습니다.
+                        </div>
+                    ) : (
+                        scheduleEvents.map((event) => (
+                            <article key={event.id} className="rounded-[24px] border border-slate-200 bg-slate-50 px-5 py-5">
+                                <div className="text-lg font-bold text-slate-900">{event.title}</div>
+                                {event.description && <div className="mt-2 text-sm leading-7 text-slate-600">{event.description}</div>}
+                                <div className="mt-4 space-y-1 text-sm text-slate-500">
+                                    <div>{formatDateTime(event.startAt)}{event.endAt ? ` ~ ${formatDateTime(event.endAt)}` : ''}</div>
+                                    {event.location && <div>{event.location}</div>}
+                                </div>
+                            </article>
+                        ))
+                    )}
+                </div>
+            </AppDialog>
         </div>
     );
 };
