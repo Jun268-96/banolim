@@ -794,7 +794,7 @@ export const ActivitiesTab: React.FC = () => {
                     <p className="text-slate-500 mt-1">출석 일괄 입력, 회원별 혼합 배치, 개별 활동 기록까지 운영 흐름에 맞춰 한 화면에서 처리합니다.</p>
                 </div>
 
-                <div className="inline-flex rounded-2xl border border-slate-200 bg-white p-1 shadow-sm">
+                <div className="grid grid-cols-2 gap-2 rounded-[24px] border border-slate-200 bg-white p-2 shadow-sm lg:grid-cols-4">
                     <button
                         type="button"
                         onClick={() => setEntryMode('attendance')}
@@ -842,7 +842,7 @@ export const ActivitiesTab: React.FC = () => {
                 </div>
             </header>
 
-            <div className="grid grid-cols-1 xl:grid-cols-[420px_minmax(0,1fr)] gap-6">
+            <div className="grid grid-cols-1 gap-6 2xl:grid-cols-[420px_minmax(0,1fr)]">
                 <section>
                     {entryMode === 'attendance' ? (
                         <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
@@ -998,7 +998,7 @@ export const ActivitiesTab: React.FC = () => {
                                                     <div className="text-sm font-semibold text-indigo-600">{member.score}점</div>
                                                 </div>
 
-                                                <div className="mt-4 grid grid-cols-3 gap-2">
+                                            <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-3">
                                                     {attendanceStatuses.map((status) => {
                                                         const Icon = attendanceStatusIcons[status];
                                                         const isSelected = attendanceDraft[member.id] === status;
@@ -1008,7 +1008,7 @@ export const ActivitiesTab: React.FC = () => {
                                                                 key={status}
                                                                 type="button"
                                                                 onClick={() => handleAttendanceStatusChange(member.id, status)}
-                                                                className={`rounded-xl border px-3 py-2 text-left transition-all ${
+                                                        className={`rounded-xl border px-3 py-2 text-left transition-all ${
                                                                     isSelected
                                                                         ? `${attendanceStatusStyles[status]} shadow-sm`
                                                                         : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50'
@@ -1505,7 +1505,7 @@ export const ActivitiesTab: React.FC = () => {
                 <section className="space-y-4">
                     {entryMode === 'attendance' ? (
                         <>
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
                                 <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
                                     <div className="text-sm text-slate-500">현재 범위 멤버</div>
                                     <div className="mt-2 text-3xl font-bold text-slate-900">{filteredAttendanceMembers.length}</div>
@@ -1639,7 +1639,7 @@ export const ActivitiesTab: React.FC = () => {
 
                                         return (
                                             <div key={session.id} className="rounded-[24px] border border-slate-200 bg-gradient-to-r from-white via-white to-slate-50 p-5">
-                                                <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                                                <div className="flex flex-col gap-4 2xl:flex-row 2xl:items-start 2xl:justify-between">
                                                     <div className="space-y-3">
                                                         <div className="flex flex-wrap items-center gap-2">
                                                             <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${
@@ -1677,7 +1677,7 @@ export const ActivitiesTab: React.FC = () => {
                                                         )}
                                                     </div>
 
-                                                    <div className="space-y-3 xl:w-[280px]">
+                                                    <div className="space-y-3 2xl:w-[280px]">
                                                         <div className="grid grid-cols-2 gap-3">
                                                             <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
                                                                 <div className="text-xs font-medium uppercase tracking-[0.16em] text-slate-500">체크인</div>
@@ -1745,7 +1745,7 @@ export const ActivitiesTab: React.FC = () => {
                         </>
                     ) : entryMode === 'mixed' ? (
                         <>
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
                                 <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
                                     <div className="text-sm text-slate-500">현재 범위 멤버</div>
                                     <div className="mt-2 text-3xl font-bold text-slate-900">{filteredMixedMembers.length}</div>
@@ -1775,7 +1775,7 @@ export const ActivitiesTab: React.FC = () => {
                                 </div>
 
                                 <div className="space-y-4 p-6">
-                                    <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+                                    <div className="grid grid-cols-1 gap-3 md:grid-cols-2 2xl:grid-cols-3">
                                         {mixedCategorySummary.map((summary) => (
                                             <div key={summary.categoryId} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                                                 <div className="flex items-center gap-2">
@@ -1844,7 +1844,7 @@ export const ActivitiesTab: React.FC = () => {
                             </div>
                         </>
                     ) : (
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
                             <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
                                 <div className="text-sm text-slate-500">유효 활동 기록</div>
                                 <div className="mt-2 text-3xl font-bold text-slate-900">{effectiveLogs.length}</div>

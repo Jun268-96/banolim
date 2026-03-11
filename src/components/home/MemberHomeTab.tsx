@@ -467,7 +467,7 @@ export const MemberHomeTab: React.FC = () => {
         <>
             <div className="space-y-6 animate-in fade-in duration-500">
                 <section className="rounded-[28px] border border-slate-200 bg-gradient-to-br from-sky-50 via-white to-indigo-50 p-6 lg:p-8">
-                <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1.25fr)_340px]">
+                <div className="grid grid-cols-1 gap-6 2xl:grid-cols-[minmax(0,1.25fr)_340px]">
                     <div className="space-y-5">
                         <div className="inline-flex items-center gap-2 rounded-full border border-sky-200 bg-white/90 px-3 py-1 text-sm font-medium text-sky-700">
                             <Sparkles size={15} />
@@ -499,7 +499,7 @@ export const MemberHomeTab: React.FC = () => {
                             </div>
                         </div>
 
-                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 2xl:grid-cols-4">
                             <div className="rounded-2xl border border-slate-200 bg-white/90 p-4">
                                 <div className="text-sm text-slate-500">현재 시즌 점수</div>
                                 <div className="mt-2 text-2xl font-bold text-slate-950">
@@ -582,7 +582,7 @@ export const MemberHomeTab: React.FC = () => {
                     </div>
                 </div>
 
-                <div className="grid grid-cols-1 gap-6 px-6 py-6 lg:grid-cols-[minmax(0,1fr)_320px]">
+                <div className="grid grid-cols-1 gap-6 px-6 py-6 2xl:grid-cols-[minmax(0,1fr)_320px]">
                     <form onSubmit={handleAttendanceCheckin} className="space-y-4">
                         <label className="block space-y-1.5">
                             <span className="text-xs font-medium text-slate-600">출석 코드</span>
@@ -683,7 +683,7 @@ export const MemberHomeTab: React.FC = () => {
                     </div>
                 </div>
 
-                <div className="mt-5 grid grid-cols-1 gap-4 lg:grid-cols-2">
+                <div className="mt-5 grid grid-cols-1 gap-4 2xl:grid-cols-2">
                     {recapSnapshots.length === 0 ? (
                         <div className="rounded-[24px] border border-dashed border-slate-300 bg-slate-50 px-5 py-6 text-sm leading-7 text-slate-500 lg:col-span-2">
                             아직 저장된 개인 리캡이 없습니다. 운영진이 월간 또는 시즌 저장본을 생성하면 여기서 다시 열어볼 수 있습니다.
@@ -723,7 +723,7 @@ export const MemberHomeTab: React.FC = () => {
                 </div>
             </section>
 
-            <section className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1.22fr)_minmax(320px,0.78fr)]">
+            <section className="grid grid-cols-1 gap-6 2xl:grid-cols-[minmax(0,1.22fr)_minmax(320px,0.78fr)]">
                 <div className="space-y-6">
                     <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
                         <div className="border-b border-slate-100 px-6 py-5">
@@ -870,7 +870,7 @@ export const MemberHomeTab: React.FC = () => {
                             <TrendingUp size={18} className="text-indigo-600" />
                             성장 스냅샷
                         </div>
-                        <div className="mt-5 grid grid-cols-2 gap-3">
+                        <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2">
                             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                                 <div className="text-sm text-slate-500">활동 일수</div>
                                 <div className="mt-2 text-xl font-bold text-slate-950">{recentSnapshot.activeDays}일</div>

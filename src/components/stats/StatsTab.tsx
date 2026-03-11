@@ -462,7 +462,7 @@ export const StatsTab: React.FC = () => {
                     </div>
                 </header>
 
-                <section className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)]">
+                <section className="grid grid-cols-1 gap-6 2xl:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)]">
                     <div className="rounded-[28px] border border-slate-200 bg-gradient-to-br from-slate-950 via-indigo-950 to-slate-900 p-6 text-white shadow-sm">
                         <div className="flex flex-col gap-5">
                             <div className="inline-flex w-fit items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.16em] text-white/85">
@@ -572,7 +572,7 @@ export const StatsTab: React.FC = () => {
                     </div>
                 </section>
 
-                <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+                <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 2xl:grid-cols-4">
                     <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
                         <div className="flex items-center justify-between">
                             <div className="rounded-xl bg-blue-50 p-3 text-blue-600">
@@ -627,10 +627,10 @@ export const StatsTab: React.FC = () => {
                     </div>
                 </section>
 
-                <section className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)]">
+                <section className="grid grid-cols-1 gap-6 2xl:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)]">
                     <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
                         <h3 className="mb-6 text-lg font-bold text-slate-900">전체 레벨 분포</h3>
-                        <div className="flex h-72 justify-center">
+                        <div className="flex h-60 justify-center sm:h-72">
                             <Doughnut data={doughnutData} options={{ maintainAspectRatio: false }} />
                         </div>
                     </div>
@@ -642,7 +642,7 @@ export const StatsTab: React.FC = () => {
                                 <p className="mt-1 text-sm text-slate-500">선택 시즌과 직전 시즌의 팀 점수를 나란히 비교합니다.</p>
                             </div>
                         </div>
-                        <div className="h-80">
+                        <div className="h-64 sm:h-72 lg:h-80">
                             <Bar
                                 data={teamBarData}
                                 options={{
@@ -654,7 +654,7 @@ export const StatsTab: React.FC = () => {
                     </div>
                 </section>
 
-                <section className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1.3fr)_minmax(320px,1fr)]">
+                <section className="grid grid-cols-1 gap-6 2xl:grid-cols-[minmax(0,1.3fr)_minmax(320px,1fr)]">
                     <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
                         <div className="mb-6 flex items-center justify-between gap-4">
                             <div>
@@ -662,7 +662,7 @@ export const StatsTab: React.FC = () => {
                                 <p className="mt-1 text-sm text-slate-500">어떤 활동 규칙이 시즌 분위기를 만들었는지 전시즌과 비교합니다.</p>
                             </div>
                         </div>
-                        <div className="h-80">
+                        <div className="h-64 sm:h-72 lg:h-80">
                             <Bar
                                 data={ruleBarData}
                                 options={{
@@ -717,7 +717,7 @@ export const StatsTab: React.FC = () => {
                     </div>
                 </section>
 
-                <section className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1.2fr)_minmax(320px,1fr)]">
+                <section className="grid grid-cols-1 gap-6 2xl:grid-cols-[minmax(0,1.2fr)_minmax(320px,1fr)]">
                     <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
                         <div className="mb-5 flex items-center justify-between">
                             <h3 className="text-lg font-bold text-slate-900">팀별 비교 보드</h3>

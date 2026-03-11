@@ -124,7 +124,7 @@ export const PointsTab: React.FC = () => {
                 <p className="mt-1 text-slate-500">같은 활동 규칙을 여러 회원에게 한 번에 반영합니다.</p>
             </header>
 
-            <div className="grid grid-cols-1 gap-6 xl:grid-cols-[360px_minmax(0,1fr)]">
+            <div className="grid grid-cols-1 gap-6 2xl:grid-cols-[360px_minmax(0,1fr)]">
                 <section className="space-y-5 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
                     <div>
                         <div className="text-sm font-semibold text-slate-900">일괄 기록</div>
@@ -242,7 +242,7 @@ export const PointsTab: React.FC = () => {
                                     <span className="font-normal text-slate-400">({teamMembers.length})</span>
                                 </div>
 
-                                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                                <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
                                     {teamMembers.map((member) => {
                                         const isSelected = selectedMemberIds.includes(member.id);
 

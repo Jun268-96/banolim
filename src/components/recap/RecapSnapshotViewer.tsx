@@ -73,7 +73,7 @@ export const RecapSnapshotViewer: React.FC<RecapSnapshotViewerProps> = ({
                     className="pointer-events-none absolute left-1/2 top-10 h-20 w-auto -translate-x-1/2 opacity-10 saturate-0"
                 />
 
-                <div className="grid h-full w-full grid-cols-1 lg:grid-cols-[minmax(0,1.05fr)_360px]">
+                <div className="grid h-full w-full grid-cols-1 2xl:grid-cols-[minmax(0,1.05fr)_360px]">
                     <div className="flex flex-col justify-between p-7 pt-16 text-white lg:p-10 lg:pt-16">
                         <div className="space-y-6">
                             <div className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.16em] text-white/90">
@@ -91,7 +91,7 @@ export const RecapSnapshotViewer: React.FC<RecapSnapshotViewerProps> = ({
                                 </p>
                             </div>
 
-                            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+                            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 2xl:grid-cols-4">
                                 {snapshot.payload.stats.map((stat) => (
                                     <div key={stat.label} className="rounded-[28px] border border-white/15 bg-black/15 p-5 backdrop-blur-sm">
                                         <div className="text-xs uppercase tracking-[0.16em] text-white/50">{stat.label}</div>
@@ -100,7 +100,7 @@ export const RecapSnapshotViewer: React.FC<RecapSnapshotViewerProps> = ({
                                 ))}
                             </div>
 
-                            <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+                            <div className="grid grid-cols-1 gap-4 2xl:grid-cols-2">
                                 {snapshot.payload.highlights.map((highlight) => (
                                     <div key={highlight.label} className="rounded-[30px] border border-white/15 bg-black/15 p-6 backdrop-blur-sm">
                                         <div className="text-xs font-semibold uppercase tracking-[0.18em] text-white/50">{highlight.label}</div>
@@ -136,7 +136,7 @@ export const RecapSnapshotViewer: React.FC<RecapSnapshotViewerProps> = ({
                         </div>
                     </div>
 
-                    <div className="hidden border-l border-white/10 bg-black/15 p-6 lg:flex lg:flex-col lg:justify-between">
+                    <div className="hidden border-l border-white/10 bg-black/15 p-6 2xl:flex 2xl:flex-col 2xl:justify-between">
                         <div>
                             <div className="rounded-[28px] border border-white/10 bg-black/20 p-5">
                                 <div className="text-xs uppercase tracking-[0.16em] text-white/45">저장 범위</div>

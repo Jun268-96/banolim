@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { CheckCircle2, Clock3, History, LayoutGrid, Mail, Network, Plus, Search, ShieldCheck, TableProperties, Trash2, Users, XCircle } from 'lucide-react';
+import { CheckCircle2, Clock3, FileText, History, LayoutGrid, Mail, Network, Plus, Search, ShieldCheck, TableProperties, Trash2, Upload, Users, XCircle } from 'lucide-react';
 import type { AppRole, AuditLogEntry, Category, Member, MemberStatus, RoleSummary, TeamSummary } from '../../types';
 import {
     addMember,
@@ -59,6 +59,131 @@ const normalizeLoginEmail = (value: string) => {
 
 type MemberViewMode = 'all' | 'pending' | 'approved' | 'inactive';
 type MemberDisplayMode = 'table' | 'cards' | 'organization';
+
+const getPreferredMemberDisplayMode = (): MemberDisplayMode => {
+    if (typeof window === 'undefined') {
+        return 'table';
+    }
+
+    return window.innerWidth < 1280 ? 'cards' : 'table';
+};
+
+type BulkImportRow = {
+    line: number;
+    name: string;
+    loginEmail: string | null;
+    roleName: string | null;
+    teamName: string | null;
+    status: MemberStatus | null;
+    isApproved: boolean | null;
+    isVisible: boolean | null;
+};
+
+const sampleMemberCsv = `name,login_email,role,team,status,approved,visible
+홍길동,hong@example.com,일반회원,기획팀,active,true,true
+김운영,manager@example.com,부회장,운영팀,active,true,true`;
+
+const parseDelimitedLine = (line: string) => {
+    const cells: string[] = [];
+    let current = '';
+    let inQuotes = false;
+
+    for (let index = 0; index < line.length; index += 1) {
+        const character = line[index];
+
+        if (character === '"') {
+            if (inQuotes && line[index + 1] === '"') {
+                current += '"';
+                index += 1;
+                continue;
+            }
+
+            inQuotes = !inQuotes;
+            continue;
+        }
+
+        if (character === ',' && !inQuotes) {
+            cells.push(current.trim());
+            current = '';
+            continue;
+        }
+
+        current += character;
+    }
+
+    cells.push(current.trim());
+    return cells;
+};
+
+const normalizeImportHeader = (value: string) =>
+    value.trim().toLowerCase().replace(/\s+/g, '_');
+
+const parseBooleanCell = (value: string) => {
+    const normalized = value.trim().toLowerCase();
+    if (!normalized) return null;
+    if (['true', '1', 'yes', 'y', '승인', '승인됨', '노출', '활성'].includes(normalized)) return true;
+    if (['false', '0', 'no', 'n', '미승인', '비노출', '숨김', '비활성'].includes(normalized)) return false;
+    return null;
+};
+
+const parseStatusCell = (value: string): MemberStatus | null => {
+    const normalized = value.trim().toLowerCase();
+    if (!normalized) return null;
+    if (normalized === 'active' || normalized === '활동중' || normalized === '활동_중') return 'active';
+    if (normalized === 'dormant' || normalized === '휴면' || normalized === '보류') return 'dormant';
+    if (normalized === 'inactive' || normalized === '비활성' || normalized === '반려') return 'inactive';
+    return null;
+};
+
+const parseMemberCsv = (rawText: string): { rows: BulkImportRow[]; errors: string[] } => {
+    const lines = rawText
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean);
+
+    if (lines.length === 0) {
+        return { rows: [], errors: [] };
+    }
+
+    const headers = parseDelimitedLine(lines[0]).map(normalizeImportHeader);
+    const getCell = (cells: string[], candidates: string[]) => {
+        const headerIndex = headers.findIndex((header) => candidates.includes(header));
+        return headerIndex >= 0 ? cells[headerIndex] ?? '' : '';
+    };
+
+    const rows: BulkImportRow[] = [];
+    const errors: string[] = [];
+
+    lines.slice(1).forEach((line, index) => {
+        const cells = parseDelimitedLine(line);
+        const name = getCell(cells, ['name', '이름']).trim();
+        const loginEmail = normalizeLoginEmail(getCell(cells, ['login_email', 'email', '로그인이메일', '이메일']) ?? '');
+        const roleName = getCell(cells, ['role', 'role_name', '직책', '역할']).trim() || null;
+        const teamName = getCell(cells, ['team', 'team_name', '팀']).trim() || null;
+        const status = parseStatusCell(getCell(cells, ['status', '상태']));
+        const isApproved = parseBooleanCell(getCell(cells, ['approved', 'is_approved', '승인']));
+        const isVisible = parseBooleanCell(getCell(cells, ['visible', 'is_visible', '노출']));
+        const lineNumber = index + 2;
+
+        if (!name) {
+            errors.push(`${lineNumber}행: 이름이 비어 있습니다.`);
+            return;
+        }
+
+        rows.push({
+            line: lineNumber,
+            name,
+            loginEmail,
+            roleName,
+            teamName,
+            status,
+            isApproved,
+            isVisible,
+        });
+    });
+
+    return { rows, errors };
+};
 
 const getApprovalTags = (member: Member) => {
     const tags: Array<{ label: string; className: string }> = [];
@@ -210,10 +335,13 @@ export const DashboardTab: React.FC = () => {
     const [newMemberLoginEmail, setNewMemberLoginEmail] = useState('');
     const [searchQuery, setSearchQuery] = useState('');
     const [memberView, setMemberView] = useState<MemberViewMode>('all');
-    const [displayMode, setDisplayMode] = useState<MemberDisplayMode>('table');
+    const [displayMode, setDisplayMode] = useState<MemberDisplayMode>(() => getPreferredMemberDisplayMode());
     const [historyMemberId, setHistoryMemberId] = useState<string | null>(null);
+    const [bulkCsvText, setBulkCsvText] = useState('');
+    const [bulkImportStatus, setBulkImportStatus] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [savingMemberId, setSavingMemberId] = useState<string | null>(null);
+    const [isImportingMembers, setIsImportingMembers] = useState(false);
 
     const refreshData = async () => {
         setIsLoading(true);
@@ -263,6 +391,30 @@ export const DashboardTab: React.FC = () => {
         };
     }, [permissions.canManageMembers]);
 
+    useEffect(() => {
+        if (typeof window === 'undefined') {
+            return undefined;
+        }
+
+        const mediaQuery = window.matchMedia('(min-width: 1280px)');
+        const handleBreakpointChange = (event: MediaQueryListEvent) => {
+            setDisplayMode((current) => {
+                if (event.matches) {
+                    return current === 'cards' ? 'table' : current;
+                }
+
+                if (current === 'table' || current === 'organization') {
+                    return 'cards';
+                }
+
+                return current;
+            });
+        };
+
+        mediaQuery.addEventListener('change', handleBreakpointChange);
+        return () => mediaQuery.removeEventListener('change', handleBreakpointChange);
+    }, []);
+
     const approvalQueue = useMemo(
         () =>
             members
@@ -304,6 +456,8 @@ export const DashboardTab: React.FC = () => {
     }, [searchQuery, viewScopedMembers]);
 
     const roleById = useMemo(() => new Map(roles.map((role) => [role.id, role])), [roles]);
+    const roleByName = useMemo(() => new Map(roles.map((role) => [role.name.trim().toLowerCase(), role])), [roles]);
+    const teamByName = useMemo(() => new Map(teams.map((team) => [team.name.trim().toLowerCase(), team])), [teams]);
 
     const getRoleScopeLabel = (member: Member) => {
         const permissionScope = roleById.get(member.roleId ?? '')?.permissionScope as AppRole | undefined;
@@ -377,6 +531,8 @@ export const DashboardTab: React.FC = () => {
             .slice(0, 8);
     }, [auditLogs, historyMemberId]);
 
+    const parsedBulkImport = useMemo(() => parseMemberCsv(bulkCsvText), [bulkCsvText]);
+
     const handleAddMember = async (event: React.FormEvent) => {
         event.preventDefault();
         if (!newMemberName.trim()) return;
@@ -412,6 +568,95 @@ export const DashboardTab: React.FC = () => {
         }
     };
 
+    const handleMemberCsvFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        if (!file) {
+            return;
+        }
+
+        const text = await file.text();
+        setBulkCsvText(text);
+        setBulkImportStatus(`${file.name} 파일을 불러왔습니다.`);
+        event.target.value = '';
+    };
+
+    const handleBulkImportMembers = async () => {
+        if (parsedBulkImport.rows.length === 0 || parsedBulkImport.errors.length > 0) {
+            return;
+        }
+
+        setIsImportingMembers(true);
+        setBulkImportStatus(null);
+
+        try {
+            let createdCount = 0;
+            let updatedCount = 0;
+            let skippedCount = 0;
+
+            const membersByEmail = new Map(
+                members
+                    .filter((member) => member.loginEmail)
+                    .map((member) => [member.loginEmail!.trim().toLowerCase(), member]),
+            );
+            const membersByName = new Map(members.map((member) => [member.name.trim().toLowerCase(), member]));
+
+            for (const row of parsedBulkImport.rows) {
+                const matchedByEmail = row.loginEmail ? membersByEmail.get(row.loginEmail) ?? null : null;
+                const matchedMember = matchedByEmail ?? membersByName.get(row.name.trim().toLowerCase()) ?? null;
+                const matchedRole = row.roleName ? roleByName.get(row.roleName.trim().toLowerCase()) ?? null : null;
+                const matchedTeam = row.teamName ? teamByName.get(row.teamName.trim().toLowerCase()) ?? null : null;
+
+                if (row.roleName && !matchedRole) {
+                    skippedCount += 1;
+                    continue;
+                }
+
+                if (row.teamName && !matchedTeam) {
+                    skippedCount += 1;
+                    continue;
+                }
+
+                if (!matchedMember) {
+                    const createdMember = await addMember(row.name, row.loginEmail);
+                    const updates: Partial<Pick<Member, 'loginEmail' | 'roleId' | 'teamId' | 'status' | 'isApproved' | 'isVisible'>> = {};
+                    if (row.loginEmail) updates.loginEmail = row.loginEmail;
+                    if (matchedRole) updates.roleId = matchedRole.id;
+                    if (matchedTeam) updates.teamId = matchedTeam.id;
+                    if (row.status) updates.status = row.status;
+                    if (row.isApproved !== null) updates.isApproved = row.isApproved;
+                    if (row.isVisible !== null) updates.isVisible = row.isVisible;
+                    if (Object.keys(updates).length > 0) {
+                        await updateMember(createdMember.id, updates);
+                    }
+                    createdCount += 1;
+                    continue;
+                }
+
+                const updates: Partial<Pick<Member, 'name' | 'loginEmail' | 'roleId' | 'teamId' | 'status' | 'isApproved' | 'isVisible'>> = {};
+                if (matchedMember.name !== row.name) updates.name = row.name;
+                if (row.loginEmail && row.loginEmail !== (matchedMember.loginEmail ?? null)) updates.loginEmail = row.loginEmail;
+                if (matchedRole && matchedRole.id !== (matchedMember.roleId ?? null)) updates.roleId = matchedRole.id;
+                if (matchedTeam && matchedTeam.id !== (matchedMember.teamId ?? null)) updates.teamId = matchedTeam.id;
+                if (row.status && row.status !== (matchedMember.status ?? 'active')) updates.status = row.status;
+                if (row.isApproved !== null && row.isApproved !== matchedMember.isApproved) updates.isApproved = row.isApproved;
+                if (row.isVisible !== null && row.isVisible !== (matchedMember.isVisible ?? true)) updates.isVisible = row.isVisible;
+
+                if (Object.keys(updates).length === 0) {
+                    skippedCount += 1;
+                    continue;
+                }
+
+                await updateMember(matchedMember.id, updates);
+                updatedCount += 1;
+            }
+
+            await refreshData();
+            setBulkImportStatus(`대량 등록 완료: 신규 ${createdCount}명, 업데이트 ${updatedCount}명, 건너뜀 ${skippedCount}명`);
+        } finally {
+            setIsImportingMembers(false);
+        }
+    };
+
     if (isLoading) {
         return (
             <div className="flex items-center justify-center h-64">
@@ -425,7 +670,7 @@ export const DashboardTab: React.FC = () => {
 
     return (
         <div className="space-y-6 animate-in fade-in duration-500">
-            <header className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+            <header className="flex flex-col gap-4 2xl:flex-row 2xl:items-start 2xl:justify-between">
                 <div>
                     <h2 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
                         <Users className="text-indigo-600" />
@@ -434,7 +679,7 @@ export const DashboardTab: React.FC = () => {
                     <p className="text-slate-500 mt-1">역할, 팀, 상태, 승인 여부, 로그인 이메일, 점수를 한 화면에서 관리합니다.</p>
                 </div>
 
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                <div className="flex w-full flex-col gap-3 2xl:w-auto 2xl:min-w-[420px]">
                     <label className="relative block">
                         <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                         <input
@@ -442,30 +687,30 @@ export const DashboardTab: React.FC = () => {
                             placeholder="멤버 검색"
                             value={searchQuery}
                             onChange={(event) => setSearchQuery(event.target.value)}
-                            className="pl-9 pr-3 py-2.5 rounded-xl border border-slate-200 bg-white text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 w-56"
+                            className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-9 pr-3 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 2xl:w-72"
                         />
                     </label>
 
                     {permissions.canManageMembers && (
-                        <form onSubmit={handleAddMember} className="flex items-center gap-2 bg-white p-2 rounded-xl shadow-sm border border-slate-200">
+                        <form onSubmit={handleAddMember} className="grid gap-2 rounded-2xl border border-slate-200 bg-white p-2 shadow-sm sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
                             <input
                                 type="text"
                                 placeholder="새 멤버 이름"
                                 value={newMemberName}
                                 onChange={(event) => setNewMemberName(event.target.value)}
-                                className="px-3 py-1.5 outline-none text-sm w-48 bg-transparent"
+                                className="w-full rounded-xl bg-slate-50 px-3 py-2.5 text-sm outline-none focus:bg-white"
                             />
                             <input
                                 type="email"
                                 placeholder="로그인 이메일(선택)"
                                 value={newMemberLoginEmail}
                                 onChange={(event) => setNewMemberLoginEmail(event.target.value)}
-                                className="px-3 py-1.5 outline-none text-sm w-56 bg-transparent border-l border-slate-200"
+                                className="w-full rounded-xl bg-slate-50 px-3 py-2.5 text-sm outline-none focus:bg-white"
                             />
                             <button
                                 type="submit"
                                 disabled={!newMemberName.trim()}
-                                className="p-1.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+                                className="inline-flex h-11 items-center justify-center rounded-xl bg-indigo-600 px-4 text-white transition-colors hover:bg-indigo-700 disabled:opacity-50"
                             >
                                 <Plus size={18} />
                             </button>
@@ -474,7 +719,7 @@ export const DashboardTab: React.FC = () => {
                 </div>
             </header>
 
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 2xl:grid-cols-4">
                 <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
                     <div className="text-sm text-slate-500">표시 중인 멤버</div>
                     <div className="mt-2 text-3xl font-bold text-slate-900">{members.length}</div>
@@ -495,7 +740,7 @@ export const DashboardTab: React.FC = () => {
 
             {permissions.canManageMembers && (
                 <section className="rounded-2xl border border-slate-200 bg-gradient-to-r from-indigo-50 via-white to-sky-50 p-6 shadow-sm">
-                    <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                    <div className="flex flex-col gap-4 2xl:flex-row 2xl:items-start 2xl:justify-between">
                         <div className="max-w-3xl">
                             <div className="inline-flex items-center gap-2 rounded-full border border-indigo-200 bg-white px-3 py-1 text-sm font-semibold text-indigo-700">
                                 <ShieldCheck size={14} />
@@ -527,7 +772,7 @@ export const DashboardTab: React.FC = () => {
                             </div>
                         </div>
 
-                        <div className="grid min-w-[280px] gap-3 sm:grid-cols-3 xl:grid-cols-1">
+                        <div className="grid gap-3 sm:grid-cols-3 2xl:w-[280px] 2xl:grid-cols-1">
                             <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
                                 <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">이메일 미등록</div>
                                 <div className="mt-2 text-2xl font-bold text-slate-900">{accessPreparation.missingEmail}</div>
@@ -539,6 +784,145 @@ export const DashboardTab: React.FC = () => {
                             <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
                                 <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">보류/비활성</div>
                                 <div className="mt-2 text-2xl font-bold text-slate-900">{accessPreparation.dormantOrInactive}</div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+            )}
+
+            {permissions.canManageMembers && (
+                <section className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+                    <div className="flex flex-col gap-4 border-b border-slate-100 bg-slate-50/70 px-6 py-5 xl:flex-row xl:items-start xl:justify-between">
+                        <div>
+                            <div className="flex items-center gap-2 font-semibold text-slate-900">
+                                <Upload size={18} className="text-indigo-600" />
+                                CSV 대량 등록
+                            </div>
+                            <div className="mt-1 text-sm text-slate-500">
+                                이름을 기준으로 새 멤버를 만들고, 로그인 이메일 또는 이름이 같은 기존 멤버는 역할·팀·상태 정보를 한 번에 갱신합니다.
+                            </div>
+                        </div>
+                        <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600">
+                            <div className="font-semibold text-slate-900">지원 헤더</div>
+                            <div className="mt-1">name, login_email, role, team, status, approved, visible</div>
+                        </div>
+                    </div>
+
+                    <div className="grid gap-6 p-5 sm:p-6 2xl:grid-cols-[minmax(0,1.2fr)_360px]">
+                        <div className="space-y-4">
+                            <div className="flex flex-wrap gap-2">
+                                <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50">
+                                    <Upload size={16} />
+                                    CSV 파일 불러오기
+                                    <input
+                                        type="file"
+                                        accept=".csv,text/csv"
+                                        onChange={(event) => void handleMemberCsvFile(event)}
+                                        className="hidden"
+                                    />
+                                </label>
+                                <button
+                                    type="button"
+                                    onClick={() => setBulkCsvText(sampleMemberCsv)}
+                                    className="inline-flex items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm font-medium text-indigo-700 transition-colors hover:bg-indigo-100"
+                                >
+                                    <FileText size={16} />
+                                    예시 채우기
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setBulkCsvText('');
+                                        setBulkImportStatus(null);
+                                    }}
+                                    className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
+                                >
+                                    초기화
+                                </button>
+                            </div>
+
+                            <textarea
+                                value={bulkCsvText}
+                                onChange={(event) => setBulkCsvText(event.target.value)}
+                                rows={12}
+                                placeholder="CSV를 붙여넣거나 파일을 불러오세요."
+                                className="w-full rounded-[24px] border border-slate-200 bg-slate-50 px-4 py-4 text-sm font-mono leading-6 outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                            />
+
+                            {bulkImportStatus && (
+                                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+                                    {bulkImportStatus}
+                                </div>
+                            )}
+
+                            {parsedBulkImport.errors.length > 0 && (
+                                <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                                    {parsedBulkImport.errors.join(' / ')}
+                                </div>
+                            )}
+
+                            <button
+                                type="button"
+                                onClick={() => void handleBulkImportMembers()}
+                                disabled={parsedBulkImport.rows.length === 0 || parsedBulkImport.errors.length > 0 || isImportingMembers}
+                                className="inline-flex items-center gap-2 rounded-2xl bg-indigo-600 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-indigo-700 disabled:opacity-50"
+                            >
+                                <Upload size={16} />
+                                {isImportingMembers ? '대량 등록 처리 중...' : '대량 등록 실행'}
+                            </button>
+                        </div>
+
+                        <div className="space-y-4">
+                            <div className="rounded-[24px] border border-slate-200 bg-slate-950 p-5 text-white">
+                                <div className="text-sm font-semibold text-slate-300">미리보기</div>
+                                <div className="mt-4 grid grid-cols-3 gap-3">
+                                    <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3">
+                                        <div className="text-[11px] uppercase tracking-[0.18em] text-slate-400">행 수</div>
+                                        <div className="mt-2 text-xl font-bold">{parsedBulkImport.rows.length}</div>
+                                    </div>
+                                    <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3">
+                                        <div className="text-[11px] uppercase tracking-[0.18em] text-slate-400">오류</div>
+                                        <div className="mt-2 text-xl font-bold">{parsedBulkImport.errors.length}</div>
+                                    </div>
+                                    <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3">
+                                        <div className="text-[11px] uppercase tracking-[0.18em] text-slate-400">이메일 포함</div>
+                                        <div className="mt-2 text-xl font-bold">{parsedBulkImport.rows.filter((row) => row.loginEmail).length}</div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="rounded-[24px] border border-slate-200 bg-slate-50 p-4">
+                                <div className="text-sm font-semibold text-slate-900">처리 규칙</div>
+                                <div className="mt-3 space-y-2 text-sm leading-6 text-slate-600">
+                                    <div>새 멤버는 `name`으로 생성되고, `login_email`이 있으면 로그인 준비까지 바로 이어집니다.</div>
+                                    <div>기존 멤버는 `login_email` 우선, 없으면 `name` 기준으로 찾아 업데이트합니다.</div>
+                                    <div>`role`, `team`은 현재 시스템에 이미 등록된 이름과 정확히 맞아야 반영됩니다.</div>
+                                    <div>`status`는 `active`, `dormant`, `inactive` 또는 한글 값으로 넣을 수 있습니다.</div>
+                                </div>
+                            </div>
+
+                            <div className="space-y-3 rounded-[24px] border border-slate-200 bg-white p-4">
+                                {parsedBulkImport.rows.slice(0, 5).map((row) => (
+                                    <div key={`${row.line}-${row.name}`} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                                        <div className="flex items-center justify-between gap-3">
+                                            <div className="font-medium text-slate-900">{row.name}</div>
+                                            <div className="text-xs font-semibold text-slate-400">{row.line}행</div>
+                                        </div>
+                                        <div className="mt-2 text-sm text-slate-600">
+                                            {row.loginEmail ?? '이메일 없음'}
+                                            <span className="text-slate-300"> · </span>
+                                            {row.roleName ?? '직책 미지정'}
+                                            <span className="text-slate-300"> · </span>
+                                            {row.teamName ?? '팀 미지정'}
+                                        </div>
+                                    </div>
+                                ))}
+
+                                {parsedBulkImport.rows.length === 0 && (
+                                    <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
+                                        CSV를 불러오면 여기서 상위 5개 행을 먼저 확인할 수 있습니다.
+                                    </div>
+                                )}
                             </div>
                         </div>
                     </div>
@@ -563,7 +947,7 @@ export const DashboardTab: React.FC = () => {
                         </div>
                     </div>
 
-                    <div className="grid gap-4 p-6 xl:grid-cols-2">
+                    <div className="grid gap-4 p-5 sm:p-6 2xl:grid-cols-2">
                         {approvalQueue.slice(0, 6).map((member) => {
                             const approvalTags = getApprovalTags(member);
                             const isSavingRow = savingMemberId === member.id;
@@ -596,7 +980,7 @@ export const DashboardTab: React.FC = () => {
                                             </div>
                                         </div>
 
-                                        <div className="flex min-w-[220px] flex-wrap gap-2 lg:justify-end">
+                                        <div className="flex flex-wrap gap-2 lg:justify-end 2xl:min-w-[220px]">
                                             <button
                                                 type="button"
                                                 disabled={isSavingRow || !canApprove}
@@ -657,7 +1041,7 @@ export const DashboardTab: React.FC = () => {
                 <div className="border-b border-slate-100 px-6 py-3 text-sm text-slate-500">
                     로그인 이메일이 등록된 회원만 실제 서비스에 로그인할 수 있습니다. 표 보기는 편집용, 카드/조직도 보기는 구조 파악용입니다.
                 </div>
-                <div className="flex flex-col gap-4 border-b border-slate-100 px-6 py-4 xl:flex-row xl:items-center xl:justify-between">
+                <div className="flex flex-col gap-4 border-b border-slate-100 px-5 py-4 sm:px-6 2xl:flex-row 2xl:items-center 2xl:justify-between">
                     <div className="flex flex-wrap items-center gap-2">
                         {([
                             { id: 'all' as const, label: '전체', count: members.length },
@@ -680,7 +1064,7 @@ export const DashboardTab: React.FC = () => {
                         ))}
                     </div>
 
-                    <div className="inline-flex rounded-full border border-slate-200 bg-slate-50 p-1">
+                    <div className="grid grid-cols-1 gap-2 rounded-[24px] border border-slate-200 bg-slate-50 p-2 sm:grid-cols-3">
                         {([
                             { id: 'table' as const, label: '표 보기', icon: TableProperties },
                             { id: 'cards' as const, label: '카드 보기', icon: LayoutGrid },
@@ -692,7 +1076,7 @@ export const DashboardTab: React.FC = () => {
                                     key={mode.id}
                                     type="button"
                                     onClick={() => setDisplayMode(mode.id)}
-                                    className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition-colors ${
+                                    className={`inline-flex items-center justify-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition-colors ${
                                         displayMode === mode.id
                                             ? 'bg-slate-900 text-white shadow-sm'
                                             : 'text-slate-600 hover:bg-white'
@@ -947,7 +1331,7 @@ export const DashboardTab: React.FC = () => {
                 )}
 
                 {displayMode === 'cards' && (
-                    <div className="grid gap-4 p-6 md:grid-cols-2 2xl:grid-cols-3">
+                    <div className="grid gap-4 p-5 sm:p-6 lg:grid-cols-2 2xl:grid-cols-3">
                         {filteredMembers.map((member) => (
                             <MemberSnapshotCard
                                 key={member.id}
@@ -978,7 +1362,7 @@ export const DashboardTab: React.FC = () => {
                             </div>
                         </div>
 
-                        <div className="grid gap-4 xl:grid-cols-2 2xl:grid-cols-3">
+                        <div className="grid gap-4 2xl:grid-cols-2">
                             {organizationGroups.map((group) => (
                                 <section key={`${group.roleId ?? group.roleName}-lane`} className="rounded-[28px] border border-slate-200 bg-slate-50 p-4">
                                     <div className="rounded-[24px] border border-slate-200 bg-white px-4 py-4">
@@ -1048,7 +1432,7 @@ export const DashboardTab: React.FC = () => {
                         </label>
                     </div>
 
-                    <div className="grid gap-6 p-6 xl:grid-cols-[340px_minmax(0,1fr)]">
+                    <div className="grid gap-6 p-5 sm:p-6 2xl:grid-cols-[340px_minmax(0,1fr)]">
                         <div className="rounded-[28px] border border-slate-200 bg-slate-950 p-5 text-white">
                             <div className="text-sm font-semibold text-slate-300">선택한 멤버</div>
                             {historyMember ? (

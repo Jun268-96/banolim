@@ -176,7 +176,7 @@ export const HomeTab: React.FC<HomeTabProps> = ({ onNavigate }) => {
     return (
         <div className="animate-in fade-in space-y-6 duration-500">
             <section className="rounded-[28px] border border-slate-200 bg-gradient-to-br from-sky-50 via-white to-indigo-50 p-6 lg:p-8">
-                <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-[minmax(0,1.35fr)_320px]">
+                <div className="grid grid-cols-1 items-start gap-6 2xl:grid-cols-[minmax(0,1.35fr)_320px]">
                     <div className="space-y-5">
                         <div className="inline-flex items-center gap-2 rounded-full border border-sky-200 bg-white/80 px-3 py-1 text-sm font-medium text-sky-700">
                             <Sparkles size={15} />
@@ -268,9 +268,9 @@ export const HomeTab: React.FC<HomeTabProps> = ({ onNavigate }) => {
                 onManage={permissions.canManageSettings ? () => onNavigate('settings') : undefined}
             />
 
-            <section className="grid grid-cols-1 gap-6 xl:grid-cols-[1.15fr_0.85fr]">
+            <section className="grid grid-cols-1 gap-6 2xl:grid-cols-[1.15fr_0.85fr]">
                 <div className="space-y-6">
-                    <div className={`grid gap-4 ${quickActions.length >= 4 ? 'md:grid-cols-2 xl:grid-cols-4' : quickActions.length >= 3 ? 'md:grid-cols-3' : 'md:grid-cols-2'}`}>
+                    <div className={`grid gap-4 ${quickActions.length >= 4 ? 'sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4' : quickActions.length >= 3 ? 'sm:grid-cols-2 xl:grid-cols-3' : 'sm:grid-cols-2'}`}>
                         {quickActions.map((action) => {
                             if (!action) {
                                 return null;
