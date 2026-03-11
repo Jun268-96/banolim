@@ -700,6 +700,12 @@ export interface Database {
                 };
                 Returns: string;
             };
+            is_registered_login_email: {
+                Args: {
+                    p_email: string;
+                };
+                Returns: boolean;
+            };
             get_my_activity_logs: {
                 Args: Record<string, never>;
                 Returns: {

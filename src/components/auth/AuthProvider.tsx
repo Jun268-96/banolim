@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import type { AuthChangeEvent, Session, User } from '@supabase/supabase-js';
 import type { AppRole, UserProfile } from '../../types';
+import { isRegisteredLoginEmail } from '../../lib/db';
 import { buildPermissions } from '../../lib/permissions';
 import { isAuthBypassed, isSupabaseConfigured, supabase } from '../../lib/supabase';
 import type { Database } from '../../types/database';
@@ -244,10 +245,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
                 setAuthError(null);
 
+                try {
+                    const isRegistered = await isRegisteredLoginEmail(email);
+                    if (!isRegistered) {
+                        return { error: '등록되지 않은 이메일입니다. 운영진에게 로그인 이메일 등록을 요청해 주세요.' };
+                    }
+                } catch (error) {
+                    if (error instanceof Error && error.message) {
+                        return { error: error.message };
+                    }
+
+                    return { error: '로그인 이메일 확인에 실패했습니다. 잠시 후 다시 시도해 주세요.' };
+                }
+
                 const { error } = await supabase.auth.signInWithOtp({
                     email,
                     options: {
-                        shouldCreateUser: false,
+                        shouldCreateUser: true,
                     },
                 });
 

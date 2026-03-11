@@ -29,6 +29,7 @@ grant execute on function public.create_point_rule_version(uuid, integer, intege
 grant execute on function public.get_my_activity_logs() to authenticated;
 grant execute on function public.get_my_member_badges() to authenticated;
 grant execute on function public.get_my_member_overview() to authenticated;
+grant execute on function public.is_registered_login_email(text) to anon, authenticated;
 grant execute on function public.reverse_activity_entry(uuid, text) to authenticated;
 grant execute on function public.submit_attendance_checkin(text) to authenticated;
 grant execute on function public.submit_correction_request(uuid, text) to authenticated;

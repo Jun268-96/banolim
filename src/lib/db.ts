@@ -806,6 +806,34 @@ export const getMembers = async (options?: { includeLoginEmail?: boolean }): Pro
     }
 };
 
+export const isRegisteredLoginEmail = async (email: string): Promise<boolean> => {
+    const normalizedEmail = normalizeLoginEmail(email);
+
+    if (!normalizedEmail) {
+        return false;
+    }
+
+    if (!isSupabaseConfigured) {
+        return localMembers.some((member) => normalizeLoginEmail(member.loginEmail) === normalizedEmail);
+    }
+
+    try {
+        const client = getSupabaseClient();
+        const { data, error } = await client.rpc('is_registered_login_email', {
+            p_email: normalizedEmail,
+        });
+
+        if (error) {
+            throw error;
+        }
+
+        return Boolean(data);
+    } catch (error) {
+        console.warn('[data] isRegisteredLoginEmail failed.', error);
+        throw new Error('로그인 이메일 확인에 실패했습니다. 운영진에게 인증 설정을 확인해 달라고 요청해 주세요.');
+    }
+};
+
 export const getCategories = async (): Promise<Category[]> => {
     if (!isSupabaseConfigured) {
         return localCategories
