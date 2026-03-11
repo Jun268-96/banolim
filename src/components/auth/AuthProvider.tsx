@@ -105,6 +105,16 @@ const getEmailOtpRequestErrorMessage = (error: unknown) => {
     }
 
     if (error instanceof Error && error.message) {
+        const normalizedMessage = error.message.toLowerCase();
+        if (
+            normalizedMessage.includes('signups not allowed for otp')
+            || normalizedMessage.includes('user not found')
+            || normalizedMessage.includes('email not found')
+            || normalizedMessage.includes('for security purposes')
+        ) {
+            return '등록되지 않은 이메일입니다. 운영진에게 로그인 이메일 등록을 요청해 주세요.';
+        }
+
         return error.message;
     }
 
@@ -234,7 +244,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
                 setAuthError(null);
 
-                const { error } = await supabase.auth.signInWithOtp({ email });
+                const { error } = await supabase.auth.signInWithOtp({
+                    email,
+                    options: {
+                        shouldCreateUser: false,
+                    },
+                });
 
                 return error ? { error: getEmailOtpRequestErrorMessage(error) } : {};
             },
