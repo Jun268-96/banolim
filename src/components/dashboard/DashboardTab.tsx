@@ -904,8 +904,17 @@ export const DashboardTab: React.FC = () => {
                 </div>
 
                 {displayMode === 'table' && (
-                    <div className="overflow-x-auto pb-2">
-                        <table className={`${permissions.canManageMembers ? 'min-w-[1240px]' : 'min-w-[960px]'} w-full text-left border-collapse`}>
+                    <div className="max-w-full">
+                        <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-3 text-xs font-medium text-slate-500 sm:px-6">
+                            <span>표 영역 안에서 좌우로 이동할 수 있습니다.</span>
+                            {permissions.canManageMembers && (
+                                <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] font-semibold text-slate-600">
+                                    관리 열 고정
+                                </span>
+                            )}
+                        </div>
+                    <div className="max-w-full overflow-x-auto overscroll-x-contain pb-3 [scrollbar-gutter:stable]">
+                        <table className={`${permissions.canManageMembers ? 'min-w-[1240px]' : 'min-w-[960px]'} min-w-full w-max text-left border-collapse`}>
                             <thead>
                                 <tr className="bg-slate-50 border-b border-slate-200 text-sm font-semibold text-slate-600">
                                     <th className="py-4 px-6 min-w-[92px] whitespace-nowrap">레벨</th>
@@ -918,7 +927,7 @@ export const DashboardTab: React.FC = () => {
                                     <th className="py-4 px-6 min-w-[140px] whitespace-nowrap">상태</th>
                                     <th className="py-4 px-6 min-w-[120px] whitespace-nowrap">승인</th>
                                     <th className="py-4 px-6 min-w-[132px] whitespace-nowrap">가입일</th>
-                                    <th className="py-4 px-6 min-w-[88px] whitespace-nowrap text-center">
+                                    <th className={`py-4 px-6 min-w-[112px] whitespace-nowrap text-center ${permissions.canManageMembers ? 'sticky right-0 z-20 border-l border-slate-200 bg-slate-50 shadow-[-12px_0_24px_-20px_rgba(15,23,42,0.35)]' : ''}`}>
                                         {permissions.canManageMembers ? '관리' : '조회'}
                                     </th>
                                 </tr>
@@ -1093,7 +1102,7 @@ export const DashboardTab: React.FC = () => {
                                                 )}
                                             </td>
                                             <td className="py-4 px-6 align-middle whitespace-nowrap text-sm text-slate-600">{formatDate(member.joinedAt)}</td>
-                                            <td className="py-4 px-6 align-middle whitespace-nowrap text-center">
+                                            <td className={`py-4 px-6 align-middle whitespace-nowrap text-center ${permissions.canManageMembers ? 'sticky right-0 z-10 border-l border-slate-100 bg-white shadow-[-12px_0_24px_-20px_rgba(15,23,42,0.2)] group-hover:bg-slate-50/95' : ''}`}>
                                                 {permissions.canManageMembers ? (
                                                     <div
                                                         className="flex items-center justify-center gap-1"
@@ -1142,6 +1151,7 @@ export const DashboardTab: React.FC = () => {
                                 )}
                             </tbody>
                         </table>
+                    </div>
                     </div>
                 )}
 

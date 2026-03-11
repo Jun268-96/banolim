@@ -28,7 +28,7 @@ export const Layout: React.FC<LayoutProps> = ({ activeTab, setActiveTab, childre
                 isOpen={isSidebarOpen}
                 onClose={() => setIsSidebarOpen(false)}
             />
-            <main className="relative min-w-0 overflow-x-hidden">
+            <main className="relative min-w-0 overflow-x-visible">
                 <div className="min-h-full w-full px-4 py-4 sm:px-5 sm:py-5 lg:px-6 lg:py-6 xl:px-8">
                     <div className="mb-5 flex flex-wrap items-start justify-between gap-3 lg:items-center">
                         <div className="flex items-center gap-3 lg:hidden">
