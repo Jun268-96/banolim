@@ -6,6 +6,7 @@ grant select on public.activity_log_feed to anon, authenticated;
 
 grant select, insert, update on public.roles to anon, authenticated;
 grant select, insert, update on public.teams to anon, authenticated;
+grant select, insert, delete on public.member_team_links to authenticated;
 grant select, insert, update on public.seasons to anon, authenticated;
 grant select, insert, update on public.members to anon, authenticated;
 grant select, insert, update on public.activity_types to anon, authenticated;
@@ -38,6 +39,7 @@ grant execute on function public.update_correction_request_status(uuid, public.c
 
 alter table public.roles enable row level security;
 alter table public.teams enable row level security;
+alter table public.member_team_links enable row level security;
 alter table public.seasons enable row level security;
 alter table public.members enable row level security;
 alter table public.activity_types enable row level security;
@@ -67,6 +69,27 @@ drop policy if exists teams_insert_all on public.teams;
 create policy teams_insert_all on public.teams for insert to authenticated with check (public.can_manage_admin_tables());
 drop policy if exists teams_update_all on public.teams;
 create policy teams_update_all on public.teams for update to authenticated using (public.can_manage_admin_tables()) with check (public.can_manage_admin_tables());
+
+drop policy if exists member_team_links_select_authenticated on public.member_team_links;
+create policy member_team_links_select_authenticated
+on public.member_team_links
+for select
+to authenticated
+using (public.can_access_member(member_id));
+
+drop policy if exists member_team_links_insert_authenticated on public.member_team_links;
+create policy member_team_links_insert_authenticated
+on public.member_team_links
+for insert
+to authenticated
+with check (public.can_manage_admin_tables() and public.can_access_member(member_id));
+
+drop policy if exists member_team_links_delete_authenticated on public.member_team_links;
+create policy member_team_links_delete_authenticated
+on public.member_team_links
+for delete
+to authenticated
+using (public.can_manage_admin_tables() and public.can_access_member(member_id));
 
 drop policy if exists seasons_select_all on public.seasons;
 create policy seasons_select_all on public.seasons for select to anon, authenticated using (true);

@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowUpDown, CheckCircle2, CircleHelp, Clock3, FileText, History, KeyRound, LayoutGrid, Mail, Network, Search, ShieldAlert, TableProperties, Trash2, Upload, UserPlus, Users, XCircle } from 'lucide-react';
-import type { AppRole, AuditLogEntry, Member, MemberStatus, RoleSummary, TeamSummary } from '../../types';
+import { ArrowUpDown, CheckCircle2, CircleHelp, Clock3, FileText, History, KeyRound, Mail, Network, Search, ShieldAlert, TableProperties, Trash2, Upload, UserPlus, Users, XCircle } from 'lucide-react';
+import type { AuditLogEntry, Member, MemberStatus, RoleSummary, TeamSummary, TeamType } from '../../types';
 import {
+    addTeam,
     addMember,
     deleteMember,
     getAuditLogs,
@@ -9,9 +10,9 @@ import {
     provisionMemberPasswordAuth,
     getRoles,
     getTeams,
+    setMemberTeams,
     updateMember,
 } from '../../lib/db';
-import { roleLabels, roleScopeDescriptions } from '../../lib/permissions';
 import { useAuth } from '../auth/auth-context';
 import { AppDialog } from '../shared/AppDialog';
 
@@ -57,8 +58,10 @@ const normalizeLoginEmail = (value: string) => {
     return normalized.length > 0 ? normalized : null;
 };
 
+const dedupeTeamIds = (teamIds: Array<string | null | undefined>) => [...new Set(teamIds.filter((teamId): teamId is string => Boolean(teamId)))];
+
 type MemberViewMode = 'all' | 'pending' | 'approved' | 'inactive';
-type MemberDisplayMode = 'table' | 'cards' | 'organization';
+type MemberDisplayMode = 'table' | 'teams' | 'organization';
 type MemberSortMode = 'name-asc' | 'name-desc' | 'joined-desc' | 'role-order';
 
 type BulkImportRow = {
@@ -75,6 +78,13 @@ type BulkImportRow = {
 const sampleMemberCsv = `name,login_email,role,team,status,approved,visible
 홍길동,hong@example.com,일반회원,기획팀,active,true,true
 김운영,manager@example.com,부회장,운영팀,active,true,true`;
+
+const teamTypeOptions: TeamType[] = ['core', 'study', 'project'];
+const teamTypeLabels: Record<TeamType, string> = {
+    core: '운영',
+    study: '스터디',
+    project: '프로젝트',
+};
 
 const parseDelimitedLine = (line: string) => {
     const cells: string[] = [];
@@ -225,95 +235,11 @@ const formatDateTime = (value?: string | null) => {
     }).format(new Date(value));
 };
 
-interface MemberSnapshotCardProps {
-    member: Member;
-    selected: boolean;
-    onSelect: () => void;
-    roleScopeLabel: string;
-    roleScopeDescription: string;
-    compact?: boolean;
-}
-
 interface OrganizationNodeProps {
     member: Member;
     selected: boolean;
     onSelect: () => void;
 }
-
-const MemberSnapshotCard: React.FC<MemberSnapshotCardProps> = ({
-    member,
-    selected,
-    onSelect,
-    roleScopeLabel,
-    roleScopeDescription,
-    compact = false,
-}) => {
-    const levelInfo = getLevelInfo(member.score);
-    const statusInfo = getStatusInfo(member);
-    const approvalTags = getApprovalTags(member);
-
-    return (
-        <button
-            type="button"
-            onClick={onSelect}
-            className={`text-left transition-all ${
-                compact ? 'rounded-[24px] p-4' : 'rounded-[28px] p-5'
-            } border ${selected ? 'border-indigo-400 bg-indigo-50/80 shadow-lg shadow-indigo-100' : 'border-slate-200 bg-white hover:border-slate-300 hover:shadow-md'}`}
-        >
-            <div className="flex items-start justify-between gap-4">
-                <div>
-                    <div className="flex flex-wrap items-center gap-2">
-                        <div className={`${compact ? 'text-lg' : 'text-xl'} font-bold text-slate-900`}>{member.name}</div>
-                        <span className={`inline-flex items-center justify-center rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] ${levelInfo.color}`}>
-                            lv.{levelInfo.level}
-                        </span>
-                    </div>
-                    <div className="mt-2 text-sm text-slate-500">
-                        직책 {member.roleName ?? '미지정'} · 권한 {roleScopeLabel}
-                    </div>
-                </div>
-                <span className={`inline-flex rounded-full border px-3 py-1 text-xs font-semibold ${statusInfo.className}`}>
-                    {statusInfo.label}
-                </span>
-            </div>
-
-            <div className="mt-4 flex flex-wrap gap-2">
-                {approvalTags.length > 0 ? (
-                    approvalTags.map((tag) => (
-                        <span key={`${member.id}-${tag.label}`} className={`inline-flex rounded-full border px-3 py-1 text-xs font-semibold ${tag.className}`}>
-                            {tag.label}
-                        </span>
-                    ))
-                ) : (
-                    <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
-                        접근 준비 완료
-                    </span>
-                )}
-            </div>
-
-            <div className={`mt-4 grid gap-3 ${compact ? 'grid-cols-1' : 'sm:grid-cols-2'}`}>
-                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                    <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">로그인 이메일</div>
-                    <div className="mt-2 break-all text-sm font-medium text-slate-700">{member.loginEmail ?? '아직 등록되지 않았습니다.'}</div>
-                </div>
-                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                    <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">소속</div>
-                    <div className="mt-2 text-sm font-medium text-slate-700">{member.teamName ?? '미지정'}</div>
-                </div>
-            </div>
-
-            <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-950 px-4 py-4 text-white">
-                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">시스템 권한 설명</div>
-                <div className="mt-2 text-sm leading-6 text-slate-100">{roleScopeDescription}</div>
-            </div>
-
-            <div className="mt-4 flex items-center justify-between text-sm">
-                <div className="text-slate-500">가입일 {formatDate(member.joinedAt)}</div>
-                <div className="font-bold text-indigo-600">{member.score}점</div>
-            </div>
-        </button>
-    );
-};
 
 const OrganizationNode: React.FC<OrganizationNodeProps> = ({
     member,
@@ -323,16 +249,27 @@ const OrganizationNode: React.FC<OrganizationNodeProps> = ({
     <button
         type="button"
         onClick={onSelect}
-        className={`relative rounded-[22px] border px-4 py-4 text-left transition-all ${
+        className={`relative flex min-h-[88px] w-full flex-col items-center justify-center rounded-xl border px-4 py-3 text-center transition-all ${
             selected
-                ? 'border-indigo-400 bg-indigo-50 shadow-md shadow-indigo-100'
-                : 'border-slate-200 bg-white hover:border-slate-300 hover:shadow-sm'
+                ? 'border-blue-700 bg-blue-700 text-white shadow-lg shadow-blue-200'
+                : 'border-blue-500 bg-blue-500 text-white hover:border-blue-600 hover:bg-blue-600 hover:shadow-md hover:shadow-blue-100'
         }`}
     >
-        <div className="text-base font-bold text-slate-900">{member.name}</div>
-        <div className="mt-1 text-sm text-slate-500">{member.roleName ?? '직책 미지정'}</div>
+        <div className="text-base font-bold">{member.name}</div>
+        <div className={`mt-1 text-xs font-medium ${selected ? 'text-blue-100' : 'text-blue-50'}`}>
+            {member.roleName ?? '직책 미지정'}
+        </div>
     </button>
 );
+
+const getMemberTeamLabels = (member: Member) => {
+    const labels = member.teamNames ?? [];
+    if (labels.length > 0) {
+        return labels;
+    }
+
+    return member.teamName ? [member.teamName] : [];
+};
 
 const getEntryChanges = (entry: AuditLogEntry) => {
     if (!entry.diff || typeof entry.diff !== 'object') {
@@ -366,17 +303,22 @@ export const DashboardTab: React.FC = () => {
     const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
     const [newMemberName, setNewMemberName] = useState('');
     const [newMemberLoginEmail, setNewMemberLoginEmail] = useState('');
+    const [newTeamName, setNewTeamName] = useState('');
+    const [newTeamType, setNewTeamType] = useState<TeamType>('core');
     const [searchQuery, setSearchQuery] = useState('');
     const [memberView, setMemberView] = useState<MemberViewMode>('all');
     const [displayMode, setDisplayMode] = useState<MemberDisplayMode>('table');
     const [sortMode, setSortMode] = useState<MemberSortMode>('role-order');
     const [selectedRoleFilter, setSelectedRoleFilter] = useState('all');
     const [selectedTeamFilter, setSelectedTeamFilter] = useState('all');
+    const [selectedTeamManagementId, setSelectedTeamManagementId] = useState<string | null>(null);
+    const [teamAssignmentQuery, setTeamAssignmentQuery] = useState('');
     const [historyMemberId, setHistoryMemberId] = useState<string | null>(null);
     const [bulkCsvText, setBulkCsvText] = useState('');
     const [bulkImportStatus, setBulkImportStatus] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [savingMemberId, setSavingMemberId] = useState<string | null>(null);
+    const [savingTeamMemberId, setSavingTeamMemberId] = useState<string | null>(null);
     const [isImportingMembers, setIsImportingMembers] = useState(false);
     const [provisioningMemberId, setProvisioningMemberId] = useState<string | null>(null);
     const [provisionedAccount, setProvisionedAccount] = useState<{
@@ -473,7 +415,7 @@ export const DashboardTab: React.FC = () => {
             : viewScopedMembers.filter((member) => (member.roleId ?? '') === selectedRoleFilter);
         const teamFiltered = selectedTeamFilter === 'all'
             ? roleFiltered
-            : roleFiltered.filter((member) => (member.teamId ?? '') === selectedTeamFilter);
+            : roleFiltered.filter((member) => (member.teamIds ?? []).includes(selectedTeamFilter) || (member.teamId ?? '') === selectedTeamFilter);
         const searched = query
             ? teamFiltered.filter((member) => member.name.toLowerCase().includes(query))
             : teamFiltered;
@@ -497,16 +439,6 @@ export const DashboardTab: React.FC = () => {
         });
     }, [roleById, searchQuery, selectedRoleFilter, selectedTeamFilter, sortMode, viewScopedMembers]);
 
-    const getRoleScopeLabel = (member: Member) => {
-        const permissionScope = roleById.get(member.roleId ?? '')?.permissionScope as AppRole | undefined;
-        return permissionScope ? roleLabels[permissionScope] ?? permissionScope : '회원';
-    };
-
-    const getRoleScopeDescription = (member: Member) => {
-        const permissionScope = roleById.get(member.roleId ?? '')?.permissionScope as AppRole | undefined;
-        return permissionScope ? roleScopeDescriptions[permissionScope] ?? permissionScope : '권한 범위가 아직 지정되지 않았습니다.';
-    };
-
     const accessPreparation = useMemo(
         () => ({
             total: members.filter((member) => !isAccessReady(member)).length,
@@ -517,35 +449,67 @@ export const DashboardTab: React.FC = () => {
         [members],
     );
 
+    const participatingTeamCount = useMemo(
+        () => new Set(members.flatMap((member) => member.teamIds ?? (member.teamId ? [member.teamId] : []))).size,
+        [members],
+    );
+
+    const selectedTeamForManagement = useMemo(
+        () => teams.find((team) => team.id === selectedTeamManagementId) ?? teams[0] ?? null,
+        [selectedTeamManagementId, teams],
+    );
+
+    const teamMembers = useMemo(() => {
+        if (!selectedTeamForManagement) {
+            return [];
+        }
+
+        return [...members]
+            .filter((member) => {
+                const teamIds = member.teamIds ?? [];
+                return teamIds.includes(selectedTeamForManagement.id) || member.teamId === selectedTeamForManagement.id;
+            })
+            .sort((a, b) => a.name.localeCompare(b.name));
+    }, [members, selectedTeamForManagement]);
+
+    const assignableMembers = useMemo(() => {
+        const query = teamAssignmentQuery.trim().toLowerCase();
+        const baseRows = [...members].sort((a, b) => a.name.localeCompare(b.name));
+
+        if (!query) {
+            return baseRows;
+        }
+
+        return baseRows.filter((member) => {
+            const roleName = member.roleName?.toLowerCase() ?? '';
+            return member.name.toLowerCase().includes(query) || roleName.includes(query);
+        });
+    }, [members, teamAssignmentQuery]);
+
     const memberById = useMemo(() => new Map(members.map((member) => [member.id, member])), [members]);
     const memberNameSuggestions = useMemo(
         () => [...new Set(members.map((member) => member.name))].sort((a, b) => a.localeCompare(b)),
         [members],
     );
 
-    const organizationGroups = useMemo(() => {
-        const grouped = new Map<string, { roleId: string | null; roleName: string; permissionScope: string; members: Member[]; rankOrder: number }>();
+    const organizationLevels = useMemo(() => {
+        const groupedByRank = new Map<number, Member[]>();
 
         filteredMembers.forEach((member) => {
-            const role = roleById.get(member.roleId ?? '') ?? null;
-            const key = member.roleId ?? `unassigned-${member.roleName ?? '미지정'}`;
-            const existing = grouped.get(key) ?? {
-                roleId: member.roleId ?? null,
-                roleName: member.roleName ?? '미지정',
-                permissionScope: role?.permissionScope ?? 'member',
-                members: [],
-                rankOrder: role?.rankOrder ?? 999,
-            };
-
-            existing.members.push(member);
-            grouped.set(key, existing);
+            const rankOrder = roleById.get(member.roleId ?? '')?.rankOrder ?? 999;
+            const current = groupedByRank.get(rankOrder) ?? [];
+            current.push(member);
+            groupedByRank.set(rankOrder, current);
         });
 
-        return [...grouped.values()]
-            .sort((a, b) => a.rankOrder - b.rankOrder || a.roleName.localeCompare(b.roleName))
-            .map((group) => ({
-                ...group,
-                members: [...group.members].sort((a, b) => b.score - a.score || a.name.localeCompare(b.name)),
+        return [...groupedByRank.entries()]
+            .sort((a, b) => a[0] - b[0])
+            .map(([rankOrder, membersAtLevel]) => ({
+                rankOrder,
+                members: [...membersAtLevel].sort((a, b) => {
+                    const roleCompare = (a.roleName ?? '').localeCompare(b.roleName ?? '');
+                    return roleCompare || a.name.localeCompare(b.name);
+                }),
             }));
     }, [filteredMembers, roleById]);
 
@@ -559,6 +523,17 @@ export const DashboardTab: React.FC = () => {
             setHistoryMemberId(filteredMembers[0]?.id ?? null);
         }
     }, [filteredMembers, historyMemberId]);
+
+    useEffect(() => {
+        if (!teams.length) {
+            setSelectedTeamManagementId(null);
+            return;
+        }
+
+        if (!selectedTeamManagementId || !teams.some((team) => team.id === selectedTeamManagementId)) {
+            setSelectedTeamManagementId(teams[0]?.id ?? null);
+        }
+    }, [selectedTeamManagementId, teams]);
 
     const historyMember = historyMemberId ? memberById.get(historyMemberId) ?? null : null;
 
@@ -602,6 +577,35 @@ export const DashboardTab: React.FC = () => {
             await refreshData();
         } finally {
             setSavingMemberId(null);
+        }
+    };
+
+    const handleAddTeam = async (event: React.FormEvent) => {
+        event.preventDefault();
+        const trimmedName = newTeamName.trim();
+        if (!trimmedName) {
+            return;
+        }
+
+        const created = await addTeam(trimmedName, newTeamType);
+        setNewTeamName('');
+        setNewTeamType('core');
+        await refreshData();
+        setSelectedTeamManagementId(created.id);
+    };
+
+    const handleToggleTeamMember = async (member: Member, teamId: string, nextChecked: boolean) => {
+        const currentTeamIds = member.teamIds ?? (member.teamId ? [member.teamId] : []);
+        const nextTeamIds = nextChecked
+            ? dedupeTeamIds([...currentTeamIds, teamId])
+            : currentTeamIds.filter((currentTeamId) => currentTeamId !== teamId);
+
+        setSavingTeamMemberId(member.id);
+        try {
+            await setMemberTeams(member.id, nextTeamIds);
+            await refreshData();
+        } finally {
+            setSavingTeamMemberId(null);
         }
     };
 
@@ -846,13 +850,13 @@ export const DashboardTab: React.FC = () => {
                 </div>
                 <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
                     <div className="text-sm text-slate-500">참여 팀 수</div>
-                    <div className="mt-2 text-3xl font-bold text-slate-900">{new Set(members.map((member) => member.teamName).filter(Boolean)).size}</div>
+                    <div className="mt-2 text-3xl font-bold text-slate-900">{participatingTeamCount}</div>
                 </div>
             </div>
 
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
                 <div className="border-b border-slate-100 px-6 py-3 text-sm text-slate-500">
-                    로그인 이메일이 등록된 회원만 실제 서비스에 로그인할 수 있습니다. 표 보기는 편집용, 카드/조직도 보기는 구조 파악용입니다.
+                    로그인 이메일이 등록된 회원만 실제 서비스에 로그인할 수 있습니다. 표 보기는 기본 관리용, 팀 지정은 다중 소속 관리용, 조직도는 구조 파악용입니다.
                 </div>
                 <div className="flex flex-col gap-4 border-b border-slate-100 px-5 py-4 sm:px-6 2xl:flex-row 2xl:items-center 2xl:justify-between">
                     <div className="flex flex-wrap items-center gap-2">
@@ -880,7 +884,7 @@ export const DashboardTab: React.FC = () => {
                     <div className="grid grid-cols-1 gap-2 rounded-[24px] border border-slate-200 bg-slate-50 p-2 sm:grid-cols-3">
                         {([
                             { id: 'table' as const, label: '표 보기', icon: TableProperties },
-                            { id: 'cards' as const, label: '카드 보기', icon: LayoutGrid },
+                            { id: 'teams' as const, label: '팀 지정', icon: Users },
                             { id: 'organization' as const, label: '조직도 보기', icon: Network },
                         ]).map((mode) => {
                             const Icon = mode.icon;
@@ -914,16 +918,15 @@ export const DashboardTab: React.FC = () => {
                             )}
                         </div>
                     <div className="max-w-full overflow-x-auto overscroll-x-contain pb-3 [scrollbar-gutter:stable]">
-                        <table className={`${permissions.canManageMembers ? 'min-w-[1240px]' : 'min-w-[960px]'} min-w-full w-max text-left border-collapse`}>
+                        <table className={`${permissions.canManageMembers ? 'min-w-[1080px]' : 'min-w-[860px]'} min-w-full w-max text-left border-collapse`}>
                             <thead>
                                 <tr className="bg-slate-50 border-b border-slate-200 text-sm font-semibold text-slate-600">
                                     <th className="py-4 px-6 min-w-[92px] whitespace-nowrap">레벨</th>
-                                    <th className="py-4 px-6 min-w-[180px] whitespace-nowrap">이름</th>
+                                    <th className="py-4 px-6 min-w-[108px] whitespace-nowrap">이름</th>
                                     {permissions.canManageMembers && (
                                         <th className="py-4 px-6 min-w-[240px] whitespace-nowrap">로그인 이메일</th>
                                     )}
-                                    <th className="py-4 px-6 min-w-[220px] whitespace-nowrap">직책 / 시스템 권한</th>
-                                    <th className="py-4 px-6 min-w-[180px] whitespace-nowrap">팀</th>
+                                    <th className="py-4 px-6 min-w-[180px] whitespace-nowrap">직책</th>
                                     <th className="py-4 px-6 min-w-[140px] whitespace-nowrap">상태</th>
                                     <th className="py-4 px-6 min-w-[120px] whitespace-nowrap">승인</th>
                                     <th className="py-4 px-6 min-w-[132px] whitespace-nowrap">가입일</th>
@@ -950,9 +953,7 @@ export const DashboardTab: React.FC = () => {
                                                 </span>
                                             </td>
                                             <td className="py-4 px-6 align-middle whitespace-nowrap">
-                                                <div className="flex items-center gap-3 whitespace-nowrap">
-                                                    <span className="font-medium text-slate-900">{member.name}</span>
-                                                </div>
+                                                <span className="font-medium text-slate-900">{member.name}</span>
                                             </td>
                                             {permissions.canManageMembers && (
                                                 <td className="py-4 px-6 align-middle whitespace-nowrap">
@@ -1015,42 +1016,13 @@ export const DashboardTab: React.FC = () => {
                                                             <option value="">미지정</option>
                                                             {roles.map((role) => (
                                                                 <option key={role.id} value={role.id}>
-                                                                    {role.name} · {roleLabels[role.permissionScope as AppRole] ?? role.permissionScope}
+                                                                    {role.name}
                                                                 </option>
                                                             ))}
                                                         </select>
-                                                        <div className="mt-1 text-xs text-slate-500">
-                                                            현재 권한: {getRoleScopeLabel(member)}
-                                                        </div>
                                                     </div>
                                                 ) : (
-                                                    <div className="whitespace-nowrap">
-                                                        <div className="text-slate-700">{member.roleName || '미지정'}</div>
-                                                        <div className="mt-1 text-xs text-slate-500">{getRoleScopeLabel(member)}</div>
-                                                    </div>
-                                                )}
-                                            </td>
-                                            <td className="py-4 px-6 align-middle whitespace-nowrap">
-                                                {permissions.canManageMembers ? (
-                                                    <select
-                                                        value={member.teamId ?? ''}
-                                                        disabled={isSavingRow}
-                                                        onClick={(event) => event.stopPropagation()}
-                                                        onChange={(event) => {
-                                                            const value = event.target.value || null;
-                                                            void handleMemberUpdate(member.id, { teamId: value });
-                                                        }}
-                                                        className="min-w-[160px] rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                                                    >
-                                                        <option value="">미지정</option>
-                                                        {teams.map((team) => (
-                                                            <option key={team.id} value={team.id}>
-                                                                {team.name}
-                                                            </option>
-                                                        ))}
-                                                    </select>
-                                                ) : (
-                                                    <div className="text-slate-700 whitespace-nowrap">{member.teamName || '미지정'}</div>
+                                                    <div className="text-slate-700 whitespace-nowrap">{member.roleName || '미지정'}</div>
                                                 )}
                                             </td>
                                             <td className="py-4 px-6 align-middle whitespace-nowrap">
@@ -1144,7 +1116,7 @@ export const DashboardTab: React.FC = () => {
 
                                 {filteredMembers.length === 0 && (
                                     <tr>
-                                        <td colSpan={permissions.canManageMembers ? 9 : 8} className="py-12 text-center text-slate-500">
+                                        <td colSpan={permissions.canManageMembers ? 8 : 7} className="py-12 text-center text-slate-500">
                                             검색 조건에 맞는 멤버가 없습니다.
                                         </td>
                                     </tr>
@@ -1155,78 +1127,231 @@ export const DashboardTab: React.FC = () => {
                     </div>
                 )}
 
-                {displayMode === 'cards' && (
-                    <div className="grid gap-4 p-5 sm:p-6 lg:grid-cols-2 2xl:grid-cols-3">
-                        {filteredMembers.map((member) => (
-                            <MemberSnapshotCard
-                                key={member.id}
-                                member={member}
-                                selected={historyMemberId === member.id}
-                                onSelect={() => setHistoryMemberId(member.id)}
-                                roleScopeLabel={getRoleScopeLabel(member)}
-                                roleScopeDescription={getRoleScopeDescription(member)}
-                            />
-                        ))}
-                        {filteredMembers.length === 0 && (
-                            <div className="md:col-span-2 2xl:col-span-3 rounded-[28px] border border-dashed border-slate-300 bg-slate-50 px-6 py-12 text-center text-slate-500">
-                                검색 조건에 맞는 멤버가 없습니다.
+                {displayMode === 'teams' && (
+                    <div className="grid gap-6 p-5 sm:p-6 2xl:grid-cols-[340px_minmax(0,1fr)]">
+                        <section className="space-y-4">
+                            <div className="rounded-[28px] border border-slate-200 bg-slate-950 p-5 text-white">
+                                <div className="text-sm font-semibold text-slate-300">팀 관리</div>
+                                <div className="mt-2 text-sm leading-6 text-slate-300">
+                                    팀은 여기서만 관리합니다. 한 멤버를 여러 팀에 겹쳐 배정할 수 있고, 첫 번째 소속이 대표 팀으로 다른 화면에 표시됩니다.
+                                </div>
+                                <form onSubmit={handleAddTeam} className="mt-5 space-y-3">
+                                    <input
+                                        type="text"
+                                        value={newTeamName}
+                                        onChange={(event) => setNewTeamName(event.target.value)}
+                                        placeholder="새 팀 이름"
+                                        className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none placeholder:text-slate-500 focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400"
+                                    />
+                                    <div className="flex gap-2">
+                                        <select
+                                            value={newTeamType}
+                                            onChange={(event) => setNewTeamType(event.target.value as TeamType)}
+                                            className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400"
+                                        >
+                                            {teamTypeOptions.map((teamType) => (
+                                                <option key={teamType} value={teamType} className="text-slate-900">
+                                                    {teamTypeLabels[teamType]}
+                                                </option>
+                                            ))}
+                                        </select>
+                                        <button
+                                            type="submit"
+                                            disabled={!newTeamName.trim()}
+                                            className="inline-flex shrink-0 items-center justify-center rounded-2xl bg-indigo-500 px-4 py-3 text-sm font-semibold text-white transition-colors hover:bg-indigo-400 disabled:opacity-50"
+                                        >
+                                            추가
+                                        </button>
+                                    </div>
+                                </form>
                             </div>
-                        )}
+
+                            <div className="space-y-3">
+                                {teams.map((team) => {
+                                    const assignedCount = members.filter((member) => (member.teamIds ?? []).includes(team.id) || member.teamId === team.id).length;
+                                    const isSelected = selectedTeamForManagement?.id === team.id;
+
+                                    return (
+                                        <button
+                                            key={team.id}
+                                            type="button"
+                                            onClick={() => setSelectedTeamManagementId(team.id)}
+                                            className={`w-full rounded-[24px] border px-4 py-4 text-left transition-all ${
+                                                isSelected
+                                                    ? 'border-indigo-300 bg-indigo-50 shadow-sm'
+                                                    : 'border-slate-200 bg-white hover:border-slate-300'
+                                            }`}
+                                        >
+                                            <div className="flex items-start justify-between gap-3">
+                                                <div>
+                                                    <div className="font-semibold text-slate-900">{team.name}</div>
+                                                    <div className="mt-1 text-sm text-slate-500">{teamTypeLabels[team.type]}</div>
+                                                </div>
+                                                <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600">
+                                                    {assignedCount}명
+                                                </span>
+                                            </div>
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        </section>
+
+                        <section className="space-y-4">
+                            {selectedTeamForManagement ? (
+                                <>
+                                    <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+                                        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+                                            <div>
+                                                <div className="text-sm font-semibold text-indigo-600">팀 지정</div>
+                                                <div className="mt-1 text-2xl font-bold text-slate-900">{selectedTeamForManagement.name}</div>
+                                                <div className="mt-2 text-sm text-slate-500">
+                                                    {teamTypeLabels[selectedTeamForManagement.type]} · 현재 {teamMembers.length}명 배정
+                                                </div>
+                                            </div>
+                                            <label className="relative block lg:w-[280px]">
+                                                <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                                                <input
+                                                    type="text"
+                                                    value={teamAssignmentQuery}
+                                                    onChange={(event) => setTeamAssignmentQuery(event.target.value)}
+                                                    placeholder="이름 또는 직책으로 검색"
+                                                    className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-9 pr-3 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                                                />
+                                            </label>
+                                        </div>
+                                    </div>
+
+                                    <div className="rounded-[28px] border border-slate-200 bg-white shadow-sm">
+                                        <div className="grid gap-3 border-b border-slate-100 px-5 py-4 sm:px-6">
+                                            <div className="text-sm text-slate-500">
+                                                체크를 켜면 해당 멤버가 이 팀에 추가되고, 끄면 이 팀에서만 빠집니다. 다른 팀 소속은 유지됩니다.
+                                            </div>
+                                            <div className="flex flex-wrap gap-2">
+                                                {teamMembers.length > 0 ? teamMembers.map((member) => (
+                                                    <span
+                                                        key={`${selectedTeamForManagement.id}-${member.id}`}
+                                                        className="rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-700"
+                                                    >
+                                                        {member.name}
+                                                    </span>
+                                                )) : (
+                                                    <span className="text-sm text-slate-400">아직 배정된 멤버가 없습니다.</span>
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        <div className="space-y-3 p-5 sm:p-6">
+                                            {assignableMembers.map((member) => {
+                                                const memberTeams = getMemberTeamLabels(member);
+                                                const isChecked = memberTeams.length > 0
+                                                    ? (member.teamIds ?? []).includes(selectedTeamForManagement.id) || member.teamId === selectedTeamForManagement.id
+                                                    : member.teamId === selectedTeamForManagement.id;
+
+                                                return (
+                                                    <label
+                                                        key={member.id}
+                                                        className="flex flex-col gap-3 rounded-[24px] border border-slate-200 bg-slate-50 px-4 py-4 transition-colors hover:border-slate-300 sm:flex-row sm:items-center sm:justify-between"
+                                                    >
+                                                        <div className="min-w-0">
+                                                            <div className="flex items-center gap-3">
+                                                                <input
+                                                                    type="checkbox"
+                                                                    checked={isChecked}
+                                                                    disabled={savingTeamMemberId === member.id}
+                                                                    onChange={(event) => {
+                                                                        void handleToggleTeamMember(member, selectedTeamForManagement.id, event.target.checked);
+                                                                    }}
+                                                                    className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                                                                />
+                                                                <div>
+                                                                    <div className="font-semibold text-slate-900">{member.name}</div>
+                                                                    <div className="mt-1 text-sm text-slate-500">{member.roleName ?? '직책 미지정'}</div>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                        <div className="flex flex-wrap gap-2 sm:justify-end">
+                                                            {memberTeams.length > 0 ? memberTeams.map((teamName) => (
+                                                                <span key={`${member.id}-${teamName}`} className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600">
+                                                                    {teamName}
+                                                                </span>
+                                                            )) : (
+                                                                <span className="rounded-full border border-dashed border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-400">
+                                                                    팀 미지정
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                    </label>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                </>
+                            ) : (
+                                <div className="rounded-[28px] border border-dashed border-slate-300 bg-slate-50 px-6 py-16 text-center text-slate-500">
+                                    먼저 팀을 하나 선택해 주세요.
+                                </div>
+                            )}
+                        </section>
                     </div>
                 )}
 
                 {displayMode === 'organization' && (
-                    <div className="space-y-5 p-6">
-                        <div className="rounded-[28px] border border-slate-200 bg-slate-950 px-5 py-5 text-white">
-                            <div className="flex items-center gap-2 text-sm font-semibold text-slate-200">
-                                <Network size={16} />
-                                조직도형 보기
-                            </div>
-                            <div className="mt-2 text-sm leading-6 text-slate-300">
-                                직책별 노드를 연결해서 최소 정보만 보여줍니다. 이름과 직책만 빠르게 파악하는 조직도 전용 보기입니다.
-                            </div>
-                        </div>
+                    <div className="overflow-x-auto px-4 py-6 sm:px-6">
+                        {organizationLevels.length > 0 ? (
+                            <div className="mx-auto min-w-max rounded-[28px] border border-slate-200 bg-white px-6 py-8 shadow-sm sm:px-10">
+                                <div className="flex flex-col items-center gap-8">
+                                    {organizationLevels.map((level, levelIndex) => {
+                                        const nodeWidth = 164;
+                                        const nodeGap = 28;
+                                        const rowWidth = Math.max(
+                                            level.members.length * nodeWidth + Math.max(level.members.length - 1, 0) * nodeGap,
+                                            nodeWidth,
+                                        );
 
-                        <div className="grid gap-5 xl:grid-cols-2">
-                            {organizationGroups.map((group) => (
-                                <section key={`${group.roleId ?? group.roleName}-lane`} className="rounded-[28px] border border-slate-200 bg-slate-50 p-5">
-                                    <div className="rounded-[24px] border border-slate-200 bg-white px-4 py-4 shadow-sm">
-                                        <div className="flex items-center justify-between gap-3">
-                                            <div>
-                                                <div className="text-lg font-bold text-slate-900">{group.roleName}</div>
-                                                <div className="mt-1 text-sm text-slate-500">
-                                                    {roleLabels[group.permissionScope as AppRole] ?? group.permissionScope}
+                                        return (
+                                            <div key={`organization-level-${level.rankOrder}`} className="flex flex-col items-center">
+                                                {levelIndex > 0 && (
+                                                    <div className="relative mb-4 flex justify-center" style={{ width: rowWidth }}>
+                                                        <div className="absolute top-0 h-6 w-px bg-blue-300" />
+                                                        {level.members.length > 1 && (
+                                                            <>
+                                                                <div className="absolute top-6 left-0 right-0 h-px bg-blue-300" />
+                                                                {level.members.map((member, memberIndex) => (
+                                                                    <div
+                                                                        key={`${member.id}-connector`}
+                                                                        className="absolute top-6 h-4 w-px bg-blue-300"
+                                                                        style={{
+                                                                            left: `${memberIndex * (nodeWidth + nodeGap) + nodeWidth / 2}px`,
+                                                                        }}
+                                                                    />
+                                                                ))}
+                                                            </>
+                                                        )}
+                                                    </div>
+                                                )}
+
+                                                <div className="flex justify-center gap-7" style={{ width: rowWidth }}>
+                                                    {level.members.map((member) => (
+                                                        <div key={member.id} className="flex w-[164px] flex-col items-center">
+                                                            <OrganizationNode
+                                                                member={member}
+                                                                selected={historyMemberId === member.id}
+                                                                onSelect={() => setHistoryMemberId(member.id)}
+                                                            />
+                                                        </div>
+                                                    ))}
                                                 </div>
                                             </div>
-                                            <span className="rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-700">
-                                                {group.members.length}명
-                                            </span>
-                                        </div>
-                                    </div>
-
-                                    <div className="mt-4 px-3">
-                                        <div className="mx-auto h-6 w-px bg-slate-300" />
-                                        <div className="grid gap-3 sm:grid-cols-2">
-                                            {group.members.map((member) => (
-                                                <div key={member.id} className="relative">
-                                                    <div className="absolute left-1/2 top-0 h-4 w-px -translate-x-1/2 bg-slate-300" />
-                                                    <OrganizationNode
-                                                        member={member}
-                                                        selected={historyMemberId === member.id}
-                                                        onSelect={() => setHistoryMemberId(member.id)}
-                                                    />
-                                                </div>
-                                            ))}
-                                        </div>
-                                    </div>
-                                </section>
-                            ))}
-                            {organizationGroups.length === 0 && (
-                                <div className="xl:col-span-2 2xl:col-span-3 rounded-[28px] border border-dashed border-slate-300 bg-slate-50 px-6 py-12 text-center text-slate-500">
-                                    검색 조건에 맞는 멤버가 없습니다.
+                                        );
+                                    })}
                                 </div>
-                            )}
-                        </div>
+                            </div>
+                        ) : (
+                            <div className="rounded-[28px] border border-dashed border-slate-300 bg-slate-50 px-6 py-12 text-center text-slate-500">
+                                검색 조건에 맞는 멤버가 없습니다.
+                            </div>
+                        )}
                     </div>
                 )}
             </div>
@@ -1266,7 +1391,7 @@ export const DashboardTab: React.FC = () => {
                                 <>
                                     <div className="mt-3 text-2xl font-bold">{historyMember.name}</div>
                                     <div className="mt-2 text-sm text-slate-300">
-                                        직책 {historyMember.roleName ?? '미지정'} · 권한 {getRoleScopeLabel(historyMember)}
+                                        직책 {historyMember.roleName ?? '미지정'}
                                     </div>
                                     <div className="mt-5 space-y-3">
                                         <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
@@ -1622,7 +1747,7 @@ export const DashboardTab: React.FC = () => {
                                             </div>
 
                                             <div className="text-sm text-slate-500">
-                                                직책 {member.roleName ?? '미지정'} · 시스템 권한 {getRoleScopeLabel(member)} · 팀 {member.teamName ?? '미지정'} · 가입일 {formatDate(member.joinedAt)}
+                                                직책 {member.roleName ?? '미지정'} · 팀 {getMemberTeamLabels(member).join(', ') || '미지정'} · 가입일 {formatDate(member.joinedAt)}
                                             </div>
                                         </div>
 

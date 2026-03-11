@@ -57,6 +57,27 @@ export interface Database {
                 };
                 Relationships: [];
             };
+            member_team_links: {
+                Row: {
+                    id: string;
+                    member_id: string;
+                    team_id: string;
+                    created_at: string;
+                };
+                Insert: {
+                    id?: string;
+                    member_id: string;
+                    team_id: string;
+                    created_at?: string;
+                };
+                Update: {
+                    id?: string;
+                    member_id?: string;
+                    team_id?: string;
+                    created_at?: string;
+                };
+                Relationships: [];
+            };
             seasons: {
                 Row: {
                     id: string;

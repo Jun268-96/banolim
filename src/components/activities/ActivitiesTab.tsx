@@ -291,15 +291,18 @@ export const ActivitiesTab: React.FC = () => {
         () =>
             activeMembers
                 .reduce<Array<{ id: string; name: string }>>((acc, member) => {
-                    if (!member.teamId || !member.teamName) {
-                        return acc;
-                    }
+                    const teamIds = member.teamIds ?? (member.teamId ? [member.teamId] : []);
+                    const teamNames = member.teamNames ?? (member.teamName ? [member.teamName] : []);
 
-                    if (acc.some((team) => team.id === member.teamId)) {
-                        return acc;
-                    }
+                    teamIds.forEach((teamId, index) => {
+                        const teamName = teamNames[index] ?? member.teamName ?? null;
+                        if (!teamName || acc.some((team) => team.id === teamId)) {
+                            return;
+                        }
+                        acc.push({ id: teamId, name: teamName });
+                    });
 
-                    return [...acc, { id: member.teamId, name: member.teamName }];
+                    return acc;
                 }, [])
                 .sort((a, b) => a.name.localeCompare(b.name)),
         [activeMembers],
@@ -313,10 +316,10 @@ export const ActivitiesTab: React.FC = () => {
                 }
 
                 if (selectedTeamFilter === 'ungrouped') {
-                    return !member.teamId;
+                    return (member.teamIds ?? []).length === 0 && !member.teamId;
                 }
 
-                return member.teamId === selectedTeamFilter;
+                return (member.teamIds ?? []).includes(selectedTeamFilter) || member.teamId === selectedTeamFilter;
             }),
         [activeMembers, selectedTeamFilter],
     );
@@ -329,10 +332,10 @@ export const ActivitiesTab: React.FC = () => {
                 }
 
                 if (selectedMixedTeamFilter === 'ungrouped') {
-                    return !member.teamId;
+                    return (member.teamIds ?? []).length === 0 && !member.teamId;
                 }
 
-                return member.teamId === selectedMixedTeamFilter;
+                return (member.teamIds ?? []).includes(selectedMixedTeamFilter) || member.teamId === selectedMixedTeamFilter;
             }),
         [activeMembers, selectedMixedTeamFilter],
     );
@@ -990,7 +993,7 @@ export const ActivitiesTab: React.FC = () => {
                                                     <div>
                                                         <div className="font-medium text-slate-900">{member.name}</div>
                                                         <div className="mt-1 text-sm text-slate-500">
-                                                            {member.teamName || '팀 미지정'}
+                                                            {(member.teamNames?.join(', ') || member.teamName) || '팀 미지정'}
                                                             <span className="text-slate-300"> · </span>
                                                             {member.roleName || '역할 없음'}
                                                         </div>
@@ -1325,7 +1328,7 @@ export const ActivitiesTab: React.FC = () => {
                                                                 <span>{member.name}</span>
                                                             </label>
                                                             <div className="mt-1 text-sm text-slate-500">
-                                                                {member.teamName || '팀 미지정'}
+                                                                {(member.teamNames?.join(', ') || member.teamName) || '팀 미지정'}
                                                                 <span className="text-slate-300"> · </span>
                                                                 {member.roleName || '역할 없음'}
                                                                 <span className="text-slate-300"> · </span>
@@ -1816,7 +1819,7 @@ export const ActivitiesTab: React.FC = () => {
                                                             <div className="mt-1 text-sm text-slate-500">
                                                                 {preview.category.categoryName}
                                                                 <span className="text-slate-300"> · </span>
-                                                                {preview.member.teamName || '팀 미지정'}
+                                                                {(preview.member.teamNames?.join(', ') || preview.member.teamName) || '팀 미지정'}
                                                             </div>
                                                             {preview.row.note && (
                                                                 <div className="mt-2 text-sm text-slate-600">{preview.row.note}</div>

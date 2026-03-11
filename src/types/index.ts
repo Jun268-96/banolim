@@ -89,6 +89,8 @@ export interface Member {
     roleName?: string | null;
     teamId?: string | null;
     teamName?: string | null;
+    teamIds?: string[];
+    teamNames?: string[];
     status?: MemberStatus;
     joinedAt?: string | null;
     isVisible?: boolean;

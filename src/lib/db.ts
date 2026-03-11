@@ -27,6 +27,7 @@ import type { Database, Json } from '../types/database';
 type MemberRow = Database['public']['Tables']['members']['Row'];
 type RoleRow = Database['public']['Tables']['roles']['Row'];
 type TeamRow = Database['public']['Tables']['teams']['Row'];
+type MemberTeamLinkRow = Database['public']['Tables']['member_team_links']['Row'];
 type SeasonRow = Database['public']['Tables']['seasons']['Row'];
 type ActivityRecordRow = Database['public']['Tables']['activity_records']['Row'];
 type PointLedgerRow = Database['public']['Tables']['point_ledgers']['Row'];
@@ -57,6 +58,8 @@ const normalizeLoginEmail = (value?: string | null) => {
     const normalized = value?.trim().toLowerCase() ?? '';
     return normalized.length > 0 ? normalized : null;
 };
+
+const dedupeTeamIds = (teamIds: Array<string | null | undefined>) => [...new Set(teamIds.filter((teamId): teamId is string => Boolean(teamId)))];
 
 const getLocalRoleById = (roleId?: string | null) => localRoles.find((role) => role.id === roleId) ?? null;
 const getLocalTeamById = (teamId?: string | null) => localTeams.find((team) => team.id === teamId) ?? null;
@@ -373,6 +376,53 @@ const localTeams: TeamSummary[] = [
     { id: 't4', name: '운영팀', type: 'core', isActive: true },
     { id: 't5', name: '스터디', type: 'study', isActive: true },
 ];
+
+let localMemberTeamLinks: Array<{ id: string; memberId: string; teamId: string; createdAt: string }> = localMembers
+    .filter((member) => member.teamId)
+    .map((member, index) => ({
+        id: `member_team_${index + 1}`,
+        memberId: member.id,
+        teamId: member.teamId!,
+        createdAt: new Date().toISOString(),
+    }));
+
+const getLocalMemberTeamIds = (memberId: string) =>
+    dedupeTeamIds(localMemberTeamLinks.filter((link) => link.memberId === memberId).map((link) => link.teamId));
+
+const getLocalMemberTeamNames = (memberId: string) =>
+    getLocalMemberTeamIds(memberId)
+        .map((teamId) => getLocalTeamById(teamId)?.name ?? null)
+        .filter((teamName): teamName is string => Boolean(teamName));
+
+const syncLocalMemberTeamState = (memberId: string, requestedTeamIds: string[]) => {
+    const normalizedTeamIds = dedupeTeamIds(requestedTeamIds).filter((teamId) => Boolean(getLocalTeamById(teamId)));
+    localMemberTeamLinks = [
+        ...localMemberTeamLinks.filter((link) => link.memberId !== memberId),
+        ...normalizedTeamIds.map((teamId) => ({
+            id: createLocalId('member_team'),
+            memberId,
+            teamId,
+            createdAt: new Date().toISOString(),
+        })),
+    ];
+
+    const primaryTeamId = normalizedTeamIds[0] ?? null;
+    const teamNames = normalizedTeamIds
+        .map((teamId) => getLocalTeamById(teamId)?.name ?? null)
+        .filter((teamName): teamName is string => Boolean(teamName));
+
+    localMembers = localMembers.map((member) =>
+        member.id === memberId
+            ? {
+                ...member,
+                teamId: primaryTeamId,
+                teamName: teamNames[0] ?? null,
+                teamIds: normalizedTeamIds,
+                teamNames,
+            }
+            : member,
+    );
+};
 
 const localCurrentSeason: SeasonSummary = {
     id: 'season_2026_spring',
@@ -747,6 +797,8 @@ export const getMembers = async (options?: { includeLoginEmail?: boolean }): Pro
         return sortMembers(
             localMembers.map((member) => ({
                 ...member,
+                teamIds: member.teamIds ?? getLocalMemberTeamIds(member.id),
+                teamNames: member.teamNames ?? getLocalMemberTeamNames(member.id),
                 loginEmail: includeLoginEmail ? member.loginEmail ?? null : null,
             })),
         );
@@ -763,17 +815,19 @@ export const getMembers = async (options?: { includeLoginEmail?: boolean }): Pro
                 .from('members')
                 .select('id, name, role_id, team_id, status, joined_at, is_approved, is_visible, auth_user_id, auth_provisioned_at, password_reset_required')
                 .eq('is_visible', true);
-        const [summaryResult, memberResult, roleResult, teamResult] = await Promise.all([
+        const [summaryResult, memberResult, roleResult, teamResult, memberTeamLinkResult] = await Promise.all([
             client.from('member_score_summary').select('id, name, is_approved, score'),
             memberQuery,
             client.from('roles').select('id, name'),
             client.from('teams').select('id, name'),
+            client.from('member_team_links').select('member_id, team_id'),
         ]);
 
         if (summaryResult.error) throw summaryResult.error;
         if (memberResult.error) throw memberResult.error;
         if (roleResult.error) throw roleResult.error;
         if (teamResult.error) throw teamResult.error;
+        if (memberTeamLinkResult.error) throw memberTeamLinkResult.error;
 
         const summaryRows = (summaryResult.data ?? []) as MemberScoreSummaryRow[];
         const memberRows = (memberResult.data ?? []) as Array<
@@ -783,14 +837,25 @@ export const getMembers = async (options?: { includeLoginEmail?: boolean }): Pro
         >;
         const roleRows = (roleResult.data ?? []) as RoleRow[];
         const teamRows = (teamResult.data ?? []) as TeamRow[];
+        const memberTeamLinkRows = (memberTeamLinkResult.data ?? []) as Pick<MemberTeamLinkRow, 'member_id' | 'team_id'>[];
 
         const summaryMap = new Map<string, MemberScoreSummaryRow>(summaryRows.map((summary) => [summary.id, summary]));
         const roleMap = new Map<string, string>(roleRows.map((role) => [role.id, role.name]));
         const teamMap = new Map<string, string>(teamRows.map((team) => [team.id, team.name]));
+        const memberTeamMap = new Map<string, string[]>();
+
+        memberTeamLinkRows.forEach((link) => {
+            const current = memberTeamMap.get(link.member_id) ?? [];
+            memberTeamMap.set(link.member_id, dedupeTeamIds([...current, link.team_id]));
+        });
 
         return sortMembers(
             memberRows.map((member) => {
                 const summary = summaryMap.get(member.id);
+                const teamIds = dedupeTeamIds([member.team_id, ...(memberTeamMap.get(member.id) ?? [])]);
+                const teamNames = teamIds
+                    .map((teamId) => teamMap.get(teamId) ?? null)
+                    .filter((teamName): teamName is string => Boolean(teamName));
 
                 return {
                     id: member.id,
@@ -803,8 +868,10 @@ export const getMembers = async (options?: { includeLoginEmail?: boolean }): Pro
                     isApproved: member.is_approved,
                     roleId: member.role_id,
                     roleName: member.role_id ? roleMap.get(member.role_id) ?? null : null,
-                    teamId: member.team_id,
-                    teamName: member.team_id ? teamMap.get(member.team_id) ?? null : null,
+                    teamId: member.team_id ?? teamIds[0] ?? null,
+                    teamName: member.team_id ? teamMap.get(member.team_id) ?? null : teamNames[0] ?? null,
+                    teamIds,
+                    teamNames,
                     status: member.status,
                     joinedAt: member.joined_at,
                     isVisible: member.is_visible,
@@ -1487,6 +1554,8 @@ export const addMember = async (name: string, loginEmail?: string | null): Promi
             isApproved: false,
             roleName: null,
             teamName: null,
+            teamIds: [],
+            teamNames: [],
             status: 'active',
             joinedAt: new Date().toISOString().slice(0, 10),
         };
@@ -1541,6 +1610,8 @@ export const addMember = async (name: string, loginEmail?: string | null): Promi
             roleName: null,
             teamId: null,
             teamName: null,
+            teamIds: [],
+            teamNames: [],
             status: data.status,
             joinedAt: data.joined_at,
             isVisible: true,
@@ -2272,6 +2343,79 @@ export const addTeam = async (name: string, type: TeamType): Promise<TeamSummary
     }
 };
 
+export const setMemberTeams = async (memberId: string, nextTeamIds: string[]): Promise<void> => {
+    const normalizedTeamIds = dedupeTeamIds(nextTeamIds);
+
+    if (!isSupabaseConfigured) {
+        const previousMember = localMembers.find((member) => member.id === memberId);
+        const previousTeamIds = getLocalMemberTeamIds(memberId);
+        syncLocalMemberTeamState(memberId, normalizedTeamIds);
+        const nextMember = localMembers.find((member) => member.id === memberId);
+
+        if (previousMember && nextMember && previousTeamIds.join('|') !== normalizedTeamIds.join('|')) {
+            const previousTeamNames = previousTeamIds
+                .map((teamId) => getLocalTeamById(teamId)?.name ?? null)
+                .filter((teamName): teamName is string => Boolean(teamName));
+            const nextTeamNames = normalizedTeamIds
+                .map((teamId) => getLocalTeamById(teamId)?.name ?? null)
+                .filter((teamName): teamName is string => Boolean(teamName));
+            const summary = `${nextMember.name} · 소속 팀 변경`;
+            logLocalAuditEntry({
+                actorId: null,
+                actorName: '로컬 운영자',
+                entityType: 'member',
+                entityId: memberId,
+                action: 'updated',
+                summary,
+                diff: {
+                    summary,
+                    memberName: nextMember.name,
+                    changes: {
+                        teams: {
+                            fromIds: previousTeamIds,
+                            fromNames: previousTeamNames,
+                            toIds: normalizedTeamIds,
+                            toNames: nextTeamNames,
+                        },
+                    },
+                },
+            });
+        }
+        return;
+    }
+
+    try {
+        const client = getSupabaseClient();
+        await client.from('member_team_links').delete().eq('member_id', memberId);
+
+        if (normalizedTeamIds.length > 0) {
+            const { error: insertError } = await client.from('member_team_links').insert(
+                normalizedTeamIds.map((teamId) => ({
+                    member_id: memberId,
+                    team_id: teamId,
+                })),
+            );
+
+            if (insertError) {
+                throw insertError;
+            }
+        }
+
+        const { error: memberError } = await client
+            .from('members')
+            .update({
+                team_id: normalizedTeamIds[0] ?? null,
+            })
+            .eq('id', memberId);
+
+        if (memberError) {
+            throw memberError;
+        }
+    } catch (error) {
+        fallback('setMemberTeams', () => undefined, error);
+    }
+};
+
 export const getSeasons = async (): Promise<SeasonSummary[]> => {
     if (!isSupabaseConfigured) {
         return [...localSeasons].sort((a, b) => b.startDate.localeCompare(a.startDate));
@@ -2415,6 +2559,7 @@ export const updateMember = async (
 ): Promise<void> => {
     if (!isSupabaseConfigured) {
         const previousMember = localMembers.find((member) => member.id === id);
+        const previousTeamIds = getLocalMemberTeamIds(id);
 
         localMembers = localMembers.map((member) => {
             if (member.id !== id) {
@@ -2422,7 +2567,6 @@ export const updateMember = async (
             }
 
             const nextRoleId = updates.roleId !== undefined ? updates.roleId : member.roleId ?? null;
-            const nextTeamId = updates.teamId !== undefined ? updates.teamId : member.teamId ?? null;
 
             return {
                 ...member,
@@ -2430,13 +2574,18 @@ export const updateMember = async (
                 loginEmail: updates.loginEmail !== undefined ? normalizeLoginEmail(updates.loginEmail) : member.loginEmail ?? null,
                 roleId: nextRoleId,
                 roleName: nextRoleId ? localRoles.find((role) => role.id === nextRoleId)?.name ?? null : null,
-                teamId: nextTeamId,
-                teamName: nextTeamId ? localTeams.find((team) => team.id === nextTeamId)?.name ?? null : null,
                 status: updates.status ?? member.status,
                 isApproved: updates.isApproved ?? member.isApproved,
                 isVisible: updates.isVisible ?? member.isVisible,
             };
         });
+
+        if (updates.teamId !== undefined) {
+            const nextTeamIds = updates.teamId
+                ? [updates.teamId, ...previousTeamIds.filter((teamId) => teamId !== updates.teamId)]
+                : previousTeamIds.filter((teamId) => teamId !== (previousMember?.teamId ?? null));
+            syncLocalMemberTeamState(id, nextTeamIds);
+        }
 
         const nextMember = localMembers.find((member) => member.id === id);
 
@@ -2517,6 +2666,23 @@ export const updateMember = async (
 
         if (error) {
             throw error;
+        }
+
+        if (updates.teamId !== undefined && updates.teamId) {
+            const { error: upsertError } = await client.from('member_team_links').upsert(
+                {
+                    member_id: id,
+                    team_id: updates.teamId,
+                },
+                {
+                    onConflict: 'member_id,team_id',
+                    ignoreDuplicates: true,
+                },
+            );
+
+            if (upsertError) {
+                throw upsertError;
+            }
         }
     } catch (error) {
         fallback('updateMember', () => undefined, error);

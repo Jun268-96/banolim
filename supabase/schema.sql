@@ -74,6 +74,14 @@ create table if not exists public.members (
     created_at timestamptz not null default now()
 );
 
+create table if not exists public.member_team_links (
+    id uuid primary key default gen_random_uuid(),
+    member_id uuid not null references public.members(id) on delete cascade,
+    team_id uuid not null references public.teams(id) on delete cascade,
+    created_at timestamptz not null default now(),
+    unique (member_id, team_id)
+);
+
 create table if not exists public.activity_types (
     id uuid primary key default gen_random_uuid(),
     code text not null unique,
@@ -261,10 +269,21 @@ stable
 security definer
 set search_path = public
 as $$
-    select members.team_id
-    from public.members
-    where members.id = p_member_id
-    limit 1;
+    select coalesce(
+        (
+            select members.team_id
+            from public.members
+            where members.id = p_member_id
+            limit 1
+        ),
+        (
+            select member_team_links.team_id
+            from public.member_team_links
+            where member_team_links.member_id = p_member_id
+            order by member_team_links.created_at asc
+            limit 1
+        )
+    );
 $$;
 
 create or replace function public.can_manage_admin_tables()
@@ -297,8 +316,6 @@ as $$
 declare
     v_app_role text;
     v_current_member_id uuid;
-    v_current_team_id uuid;
-    v_target_team_id uuid;
 begin
     v_app_role := coalesce(public.current_app_role(), 'member');
 
@@ -317,12 +334,14 @@ begin
     end if;
 
     if v_app_role = 'team_lead' then
-        v_current_team_id := public.member_team_id(v_current_member_id);
-        v_target_team_id := public.member_team_id(p_member_id);
-
-        return v_current_team_id is not null
-           and v_target_team_id is not null
-           and v_current_team_id = v_target_team_id;
+        return exists (
+            select 1
+            from public.member_team_links current_links
+            join public.member_team_links target_links
+              on target_links.team_id = current_links.team_id
+            where current_links.member_id = v_current_member_id
+              and target_links.member_id = p_member_id
+        ) or public.member_team_id(v_current_member_id) = public.member_team_id(p_member_id);
     end if;
 
     return false;

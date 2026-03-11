@@ -1,13 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { CalendarDays, Megaphone, Plus, Settings, ShieldCheck, Trash2, Users2, Workflow } from 'lucide-react';
-import type { AnnouncementItem, AppRole, Category, RoleSummary, ScheduleEventItem, SeasonStatus, SeasonSummary, TeamSummary, TeamType } from '../../types';
+import { CalendarDays, Megaphone, Plus, Settings, ShieldCheck, Trash2, Workflow } from 'lucide-react';
+import type { AnnouncementItem, AppRole, Category, RoleSummary, ScheduleEventItem, SeasonStatus, SeasonSummary } from '../../types';
 import {
     addAnnouncement,
     addCategory,
     addRole,
     addScheduleEvent,
     addSeason,
-    addTeam,
     createCategoryVersion,
     deleteAnnouncement,
     deleteCategory,
@@ -17,23 +16,16 @@ import {
     getRoles,
     getScheduleEvents,
     getSeasons,
-    getTeams,
 } from '../../lib/db';
 import { roleLabels, roleScopeDescriptions } from '../../lib/permissions';
 import { SettingsDialog } from './SettingsDialog';
 
 const seasonStatusOptions: SeasonStatus[] = ['planned', 'active', 'closed'];
-const teamTypeOptions: TeamType[] = ['core', 'study', 'project'];
 const roleScopeOptions: AppRole[] = ['super_admin', 'operator', 'team_lead', 'member'];
 const seasonStatusLabels: Record<SeasonStatus, string> = {
     planned: '예정',
     active: '진행 중',
     closed: '종료',
-};
-const teamTypeLabels: Record<TeamType, string> = {
-    core: '운영',
-    study: '스터디',
-    project: '프로젝트',
 };
 const ruleGroupOptions = [
     { value: 'attendance', label: '출석' },
@@ -49,7 +41,7 @@ const badgeClassByStatus: Record<SeasonStatus, string> = {
     closed: 'bg-slate-100 text-slate-700 border-slate-200',
 };
 
-type SettingsDialogType = 'rule' | 'role' | 'team' | 'season' | 'announcement' | 'schedule' | null;
+type SettingsDialogType = 'rule' | 'role' | 'season' | 'announcement' | 'schedule' | null;
 
 interface SectionHeaderProps {
     icon: React.ReactNode;
@@ -90,7 +82,6 @@ const EmptyState: React.FC<{ message: string }> = ({ message }) => (
 export const SettingsTab: React.FC = () => {
     const [categories, setCategories] = useState<Category[]>([]);
     const [roles, setRoles] = useState<RoleSummary[]>([]);
-    const [teams, setTeams] = useState<TeamSummary[]>([]);
     const [seasons, setSeasons] = useState<SeasonSummary[]>([]);
     const [announcements, setAnnouncements] = useState<AnnouncementItem[]>([]);
     const [scheduleEvents, setScheduleEvents] = useState<ScheduleEventItem[]>([]);
@@ -105,9 +96,6 @@ export const SettingsTab: React.FC = () => {
     const [newRoleName, setNewRoleName] = useState('');
     const [newRoleScope, setNewRoleScope] = useState<AppRole>('member');
     const [newRoleOrder, setNewRoleOrder] = useState<number>(100);
-
-    const [newTeamName, setNewTeamName] = useState('');
-    const [newTeamType, setNewTeamType] = useState<TeamType>('core');
 
     const [newSeasonName, setNewSeasonName] = useState('');
     const [newSeasonStartDate, setNewSeasonStartDate] = useState('');
@@ -152,17 +140,15 @@ export const SettingsTab: React.FC = () => {
 
     const refreshData = async () => {
         setIsLoading(true);
-        const [categoriesData, rolesData, teamsData, seasonsData, announcementsData, scheduleData] = await Promise.all([
+        const [categoriesData, rolesData, seasonsData, announcementsData, scheduleData] = await Promise.all([
             getCategories(),
             getRoles(),
-            getTeams(),
             getSeasons(),
             getAnnouncements(),
             getScheduleEvents(),
         ]);
         setCategories(categoriesData);
         setRoles(rolesData);
-        setTeams(teamsData);
         setSeasons(seasonsData);
         setAnnouncements(announcementsData);
         setScheduleEvents(scheduleData);
@@ -173,10 +159,9 @@ export const SettingsTab: React.FC = () => {
         let isMounted = true;
 
         const initialize = async () => {
-            const [categoriesData, rolesData, teamsData, seasonsData, announcementsData, scheduleData] = await Promise.all([
+            const [categoriesData, rolesData, seasonsData, announcementsData, scheduleData] = await Promise.all([
                 getCategories(),
                 getRoles(),
-                getTeams(),
                 getSeasons(),
                 getAnnouncements(),
                 getScheduleEvents(),
@@ -188,7 +173,6 @@ export const SettingsTab: React.FC = () => {
 
             setCategories(categoriesData);
             setRoles(rolesData);
-            setTeams(teamsData);
             setSeasons(seasonsData);
             setAnnouncements(announcementsData);
             setScheduleEvents(scheduleData);
@@ -251,17 +235,6 @@ export const SettingsTab: React.FC = () => {
         setNewRoleName('');
         setNewRoleScope('member');
         setNewRoleOrder(100);
-        setActiveDialog(null);
-        await refreshData();
-    };
-
-    const handleAddTeam = async (event: React.FormEvent) => {
-        event.preventDefault();
-        if (!newTeamName.trim()) return;
-
-        await addTeam(newTeamName.trim(), newTeamType);
-        setNewTeamName('');
-        setNewTeamType('core');
         setActiveDialog(null);
         await refreshData();
     };
@@ -361,7 +334,7 @@ export const SettingsTab: React.FC = () => {
                 <p className="mt-1 text-slate-500">리스트는 넓게 보고, 생성과 수정은 집중형 모달에서 처리하도록 재구성했습니다.</p>
             </header>
 
-            <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
                 <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
                     <div className="text-sm text-slate-500">활성 규칙</div>
                     <div className="mt-2 text-3xl font-bold text-slate-900">{categories.length}</div>
@@ -369,10 +342,6 @@ export const SettingsTab: React.FC = () => {
                 <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
                     <div className="text-sm text-slate-500">역할</div>
                     <div className="mt-2 text-3xl font-bold text-slate-900">{roles.length}</div>
-                </div>
-                <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-                    <div className="text-sm text-slate-500">팀</div>
-                    <div className="mt-2 text-3xl font-bold text-slate-900">{teams.length}</div>
                 </div>
                 <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
                     <div className="text-sm text-slate-500">시즌</div>
@@ -509,34 +478,6 @@ export const SettingsTab: React.FC = () => {
                     </div>
                 </section>
 
-                <section className="overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-sm">
-                    <SectionHeader
-                        icon={<Users2 size={18} className="text-indigo-600" />}
-                        title="팀"
-                        description="운영, 스터디, 프로젝트 팀을 나누어 멤버 소속과 통계 집계를 관리합니다."
-                        actionLabel="새 팀 추가"
-                        onAction={() => setActiveDialog('team')}
-                    />
-                    <div className="space-y-3 p-5 sm:p-6">
-                        {teams.length === 0 ? (
-                            <EmptyState message="아직 등록된 팀이 없습니다." />
-                        ) : (
-                            teams.map((team) => (
-                                <div key={team.id} className="rounded-[28px] border border-slate-200 bg-slate-50 px-4 py-4">
-                                    <div className="flex flex-wrap items-start justify-between gap-3">
-                                        <div>
-                                            <div className="text-base font-semibold text-slate-900">{team.name}</div>
-                                            <div className="mt-1 text-sm text-slate-500">{teamTypeLabels[team.type]}</div>
-                                        </div>
-                                        <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${team.isActive ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-slate-200 bg-slate-100 text-slate-700'}`}>
-                                            {team.isActive ? '활성' : '비활성'}
-                                        </span>
-                                    </div>
-                                </div>
-                            ))
-                        )}
-                    </div>
-                </section>
             </div>
 
             <section className="overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-sm">
@@ -820,57 +761,6 @@ export const SettingsTab: React.FC = () => {
                         >
                             <Plus size={16} />
                             역할 추가
-                        </button>
-                    </div>
-                </form>
-            </SettingsDialog>
-
-            <SettingsDialog
-                isOpen={activeDialog === 'team'}
-                onClose={() => setActiveDialog(null)}
-                title="새 팀 추가"
-                description="팀 이름과 유형을 먼저 등록하면 멤버 탭과 통계 화면에서 바로 사용할 수 있습니다."
-            >
-                <form onSubmit={handleAddTeam} className="space-y-5">
-                    <div className="grid gap-4 md:grid-cols-[minmax(0,1.5fr)_200px]">
-                        <label className="space-y-1.5">
-                            <span className="text-sm font-medium text-slate-700">팀 이름</span>
-                            <input
-                                type="text"
-                                value={newTeamName}
-                                onChange={(event) => setNewTeamName(event.target.value)}
-                                className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                                placeholder="예: 기획팀"
-                            />
-                        </label>
-                        <label className="space-y-1.5">
-                            <span className="text-sm font-medium text-slate-700">유형</span>
-                            <select
-                                value={newTeamType}
-                                onChange={(event) => setNewTeamType(event.target.value as TeamType)}
-                                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                            >
-                                {teamTypeOptions.map((type) => (
-                                    <option key={type} value={type}>{teamTypeLabels[type]}</option>
-                                ))}
-                            </select>
-                        </label>
-                    </div>
-                    <div className="flex flex-wrap justify-end gap-2">
-                        <button
-                            type="button"
-                            onClick={() => setActiveDialog(null)}
-                            className="inline-flex h-11 items-center justify-center rounded-2xl border border-slate-200 px-4 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50"
-                        >
-                            취소
-                        </button>
-                        <button
-                            type="submit"
-                            disabled={!newTeamName.trim()}
-                            className="inline-flex h-11 items-center justify-center gap-2 rounded-2xl bg-indigo-600 px-5 text-sm font-semibold text-white transition-colors hover:bg-indigo-700 disabled:opacity-50"
-                        >
-                            <Plus size={16} />
-                            팀 추가
                         </button>
                     </div>
                 </form>
