@@ -5,6 +5,8 @@ import { useAuth } from './auth-context';
 const EMAIL_OTP_COOLDOWN_KEY = 'banollim.email-otp.cooldown-until';
 const EMAIL_OTP_PENDING_EMAIL_KEY = 'banollim.email-otp.pending-email';
 const EMAIL_OTP_COOLDOWN_SECONDS = 60;
+const EMAIL_OTP_MIN_LENGTH = 6;
+const EMAIL_OTP_MAX_LENGTH = 10;
 
 const getRemainingCooldownSeconds = () => {
     if (typeof window === 'undefined') {
@@ -62,7 +64,7 @@ const setPendingEmailStorage = (email: string) => {
     window.localStorage.removeItem(EMAIL_OTP_PENDING_EMAIL_KEY);
 };
 
-const normalizeOtpCode = (value: string) => value.replace(/\D/g, '').slice(0, 6);
+const normalizeOtpCode = (value: string) => value.replace(/\D/g, '').slice(0, EMAIL_OTP_MAX_LENGTH);
 
 export const AuthScreen: React.FC = () => {
     const { authError, refreshProfile, session, signInWithEmailOtp, signOut, verifyEmailOtp } = useAuth();
@@ -114,7 +116,7 @@ export const AuthScreen: React.FC = () => {
             setPendingEmail(normalizedEmail);
             setPendingEmailStorage(normalizedEmail);
             setOtpCode('');
-            setMessage('이메일로 6자리 인증 코드를 보냈습니다. 메일함에서 코드를 확인해 입력해 주세요.');
+            setMessage('이메일로 인증 코드를 보냈습니다. 메일함에서 가장 최근에 받은 숫자 코드를 입력해 주세요.');
             setCooldownSeconds(startCooldown());
         }
 
@@ -123,7 +125,7 @@ export const AuthScreen: React.FC = () => {
 
     const handleVerifyOtp = async (event: React.FormEvent) => {
         event.preventDefault();
-        if (!pendingEmail || otpCode.length !== 6 || hasPendingSession) return;
+        if (!pendingEmail || otpCode.length < EMAIL_OTP_MIN_LENGTH || hasPendingSession) return;
 
         setIsSubmitting(true);
         setMessage(null);
@@ -164,7 +166,7 @@ export const AuthScreen: React.FC = () => {
                 setCooldownSeconds(startCooldown());
             }
         } else {
-            setMessage('새 인증 코드를 보냈습니다. 가장 최근에 받은 6자리 코드를 입력해 주세요.');
+            setMessage('새 인증 코드를 보냈습니다. 가장 최근에 받은 숫자 코드를 입력해 주세요.');
             setCooldownSeconds(startCooldown());
         }
 
@@ -217,7 +219,7 @@ export const AuthScreen: React.FC = () => {
                     </div>
                     <h2 className="mt-5 text-2xl font-bold text-slate-950">이메일로 로그인</h2>
                     <p className="mt-2 text-slate-500">
-                        등록된 이메일로 6자리 인증 코드를 보내드립니다. 인증 뒤 실제 접근 범위는 할당된 앱 권한에 따라 달라집니다.
+                        등록된 이메일로 숫자 인증 코드를 보내드립니다. 인증 뒤 실제 접근 범위는 할당된 앱 권한에 따라 달라집니다.
                     </p>
 
                     {hasPendingSession && authError && (
@@ -261,17 +263,17 @@ export const AuthScreen: React.FC = () => {
 
                         {isOtpStep && (
                             <label className="block space-y-1.5">
-                                <span className="text-xs font-medium text-slate-600">6자리 인증 코드</span>
+                                <span className="text-xs font-medium text-slate-600">이메일 인증 코드</span>
                                 <input
                                     type="text"
                                     inputMode="numeric"
                                     autoComplete="one-time-code"
                                     value={otpCode}
                                     onChange={(event) => setOtpCode(normalizeOtpCode(event.target.value))}
-                                    placeholder="예: 123456"
+                                    placeholder="메일에서 받은 숫자 코드를 입력해 주세요"
                                     disabled={hasPendingSession}
-                                    maxLength={6}
-                                    className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-center text-lg tracking-[0.35em] text-slate-900 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                                    maxLength={EMAIL_OTP_MAX_LENGTH}
+                                    className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-center text-lg tracking-[0.24em] text-slate-900 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
                                 />
                             </label>
                         )}
@@ -280,7 +282,7 @@ export const AuthScreen: React.FC = () => {
                             type="submit"
                             disabled={
                                 isOtpStep
-                                    ? otpCode.length !== 6 || isSubmitting || hasPendingSession
+                                    ? otpCode.length < EMAIL_OTP_MIN_LENGTH || isSubmitting || hasPendingSession
                                     : !email.trim() || isSubmitting || isCooldownActive || hasPendingSession
                             }
                             className="w-full rounded-2xl bg-indigo-600 px-4 py-3 text-white font-semibold hover:bg-indigo-700 disabled:opacity-50 transition-colors"
