@@ -890,11 +890,38 @@ export const provisionMemberPasswordAuth = async (memberId: string): Promise<{
     }
 
     const client = getSupabaseClient();
+    const {
+        data: { session },
+    } = await client.auth.getSession();
+
+    if (!session?.access_token) {
+        throw new Error('로그인 세션이 만료되었습니다. 다시 로그인한 뒤 계정을 발급해 주세요.');
+    }
+
     const { data, error } = await client.functions.invoke('provision-member-auth', {
         body: { memberId },
+        headers: {
+            Authorization: `Bearer ${session.access_token}`,
+        },
     });
 
     if (error) {
+        const response = (error as { context?: Response }).context;
+
+        if (response instanceof Response) {
+            const payload = await response
+                .json()
+                .catch(async () => ({ error: await response.text().catch(() => '') }));
+            const functionMessage =
+                payload && typeof payload === 'object' && 'error' in payload && typeof payload.error === 'string'
+                    ? payload.error
+                    : null;
+
+            if (functionMessage) {
+                throw new Error(functionMessage);
+            }
+        }
+
         throw new Error(error.message || '계정을 발급하지 못했습니다.');
     }
 
