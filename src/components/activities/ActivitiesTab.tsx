@@ -7,6 +7,7 @@ import {
     ClipboardList,
     Clock3,
     History,
+    Link2,
     MessageSquareWarning,
     PlusCircle,
     RotateCcw,
@@ -142,10 +143,12 @@ export const ActivitiesTab: React.FC = () => {
     const [selectedMemberId, setSelectedMemberId] = useState('');
     const [selectedCategoryId, setSelectedCategoryId] = useState('');
     const [note, setNote] = useState('');
+    const [singleEvidenceUrl, setSingleEvidenceUrl] = useState('');
 
     const [attendanceDate, setAttendanceDate] = useState(new Date().toISOString().slice(0, 10));
     const [attendanceTitle, setAttendanceTitle] = useState('정기모임');
     const [attendanceNote, setAttendanceNote] = useState('');
+    const [attendanceEvidenceUrl, setAttendanceEvidenceUrl] = useState('');
     const [selectedTeamFilter, setSelectedTeamFilter] = useState('all');
     const [attendanceDraft, setAttendanceDraft] = useState<Record<string, AttendanceStatus>>({});
 
@@ -266,6 +269,11 @@ export const ActivitiesTab: React.FC = () => {
         [categories],
     );
 
+    const selectedCategory = useMemo(
+        () => categories.find((category) => category.id === selectedCategoryId) ?? null,
+        [categories, selectedCategoryId],
+    );
+
     const attendancePreviewRows = useMemo(
         () =>
             filteredAttendanceMembers.flatMap((member) => {
@@ -381,11 +389,13 @@ export const ActivitiesTab: React.FC = () => {
             await createBatchActivityEntries(memberIds, category.id, sharedNote, {
                 occurredAt,
                 reason: `${baseTitle} · ${attendanceStatusLabels[status]}`,
+                evidenceUrl: attendanceEvidenceUrl,
             });
         }
 
         setAttendanceDraft({});
         setAttendanceNote('');
+        setAttendanceEvidenceUrl('');
         await refreshData();
         setIsSaving(false);
     };
@@ -397,8 +407,11 @@ export const ActivitiesTab: React.FC = () => {
         }
 
         setIsSaving(true);
-        await createActivityEntry(selectedMemberId, selectedCategoryId, note);
+        await createActivityEntry(selectedMemberId, selectedCategoryId, note, {
+            evidenceUrl: singleEvidenceUrl,
+        });
         setNote('');
+        setSingleEvidenceUrl('');
         await refreshData();
         setIsSaving(false);
     };
@@ -560,6 +573,17 @@ export const ActivitiesTab: React.FC = () => {
                                         rows={3}
                                         placeholder="예: 전체 OT 공지 후 출석 점검"
                                         className="w-full resize-none rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                                    />
+                                </label>
+
+                                <label className="space-y-1.5">
+                                    <span className="text-xs font-medium text-slate-600">증빙 링크</span>
+                                    <input
+                                        type="url"
+                                        value={attendanceEvidenceUrl}
+                                        onChange={(event) => setAttendanceEvidenceUrl(event.target.value)}
+                                        placeholder="예: 구글 시트 출석부, 공지 문서 링크"
+                                        className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
                                     />
                                 </label>
 
@@ -729,6 +753,37 @@ export const ActivitiesTab: React.FC = () => {
                                     />
                                 </label>
 
+                                <label className="block space-y-1.5">
+                                    <span className="text-xs font-medium text-slate-600">증빙 링크</span>
+                                    <input
+                                        type="url"
+                                        value={singleEvidenceUrl}
+                                        onChange={(event) => setSingleEvidenceUrl(event.target.value)}
+                                        placeholder="예: 발표 자료, 회의록, 과제 제출 링크"
+                                        className="w-full px-4 py-2 border border-slate-200 rounded-xl outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all text-sm"
+                                    />
+                                </label>
+
+                                {selectedCategory && (
+                                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                                        <div className="flex flex-wrap items-center gap-2">
+                                            <span className="rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700">
+                                                v{selectedCategory.version ?? 1}
+                                            </span>
+                                            <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700">
+                                                기본 {selectedCategory.pointValue > 0 ? '+' : ''}
+                                                {selectedCategory.pointValue}점
+                                            </span>
+                                            <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-700">
+                                                감점 {selectedCategory.penaltyPoint ?? 0}점
+                                            </span>
+                                        </div>
+                                        <div className="mt-3 text-sm text-slate-600">
+                                            {selectedCategory.conditionSummary ?? '추가 조건 요약이 아직 등록되지 않았습니다.'}
+                                        </div>
+                                    </div>
+                                )}
+
                                 <button
                                     type="submit"
                                     disabled={!selectedMemberId || !selectedCategoryId || isSaving}
@@ -868,6 +923,7 @@ export const ActivitiesTab: React.FC = () => {
                                         <th className="py-4 px-6 w-24">점수</th>
                                         <th className="py-4 px-6 w-28">상태</th>
                                         <th className="py-4 px-6">메모</th>
+                                        <th className="py-4 px-6 w-36">증빙</th>
                                         <th className="py-4 px-6 w-28 text-center">관리</th>
                                     </tr>
                                 </thead>
@@ -900,6 +956,21 @@ export const ActivitiesTab: React.FC = () => {
                                                     </span>
                                                 </td>
                                                 <td className="py-4 px-6 text-sm text-slate-600">{log.note || '-'}</td>
+                                                <td className="py-4 px-6">
+                                                    {log.evidenceUrl ? (
+                                                        <a
+                                                            href={log.evidenceUrl}
+                                                            target="_blank"
+                                                            rel="noreferrer"
+                                                            className="inline-flex items-center gap-1 rounded-lg border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs font-medium text-sky-700 transition-colors hover:bg-sky-100"
+                                                        >
+                                                            <Link2 size={14} />
+                                                            링크 보기
+                                                        </a>
+                                                    ) : (
+                                                        <span className="text-xs text-slate-400">-</span>
+                                                    )}
+                                                </td>
                                                 <td className="py-4 px-6 text-center">
                                                     {canReverse ? (
                                                         <button
@@ -921,7 +992,7 @@ export const ActivitiesTab: React.FC = () => {
 
                                     {logs.length === 0 && (
                                         <tr>
-                                            <td colSpan={7} className="py-12 text-center text-slate-500">
+                                            <td colSpan={8} className="py-12 text-center text-slate-500">
                                                 아직 활동 기록이 없습니다. 왼쪽 폼에서 첫 기록을 추가해 주세요.
                                             </td>
                                         </tr>

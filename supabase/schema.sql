@@ -98,6 +98,7 @@ create table if not exists public.activity_records (
     occurred_at timestamptz not null default now(),
     status text not null default 'confirmed',
     note text,
+    evidence_url text,
     created_by uuid references public.members(id) on delete set null,
     created_at timestamptz not null default now()
 );
@@ -275,12 +276,91 @@ begin
 end;
 $$;
 
+create or replace function public.create_point_rule_version(
+    p_source_rule_id uuid,
+    p_base_point integer,
+    p_penalty_point integer default 0,
+    p_condition_json jsonb default '{}'::jsonb
+)
+returns uuid
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+    v_source_rule public.point_rules%rowtype;
+    v_new_rule_id uuid;
+    v_rule_name text;
+begin
+    if not public.can_manage_admin_tables() then
+        raise exception '점수 규칙을 관리할 권한이 없습니다.';
+    end if;
+
+    select point_rules.*
+    into v_source_rule
+    from public.point_rules
+    where point_rules.id = p_source_rule_id
+    limit 1;
+
+    if v_source_rule.id is null then
+        raise exception '기준 점수 규칙을 찾지 못했습니다.';
+    end if;
+
+    insert into public.point_rules (
+        activity_type_id,
+        base_point,
+        penalty_point,
+        condition_json,
+        is_active,
+        version
+    )
+    values (
+        v_source_rule.activity_type_id,
+        p_base_point,
+        coalesce(p_penalty_point, 0),
+        coalesce(p_condition_json, '{}'::jsonb),
+        true,
+        v_source_rule.version + 1
+    )
+    returning id into v_new_rule_id;
+
+    update public.point_rules
+    set is_active = false
+    where point_rules.id = p_source_rule_id;
+
+    select activity_types.name
+    into v_rule_name
+    from public.activity_types
+    where activity_types.id = v_source_rule.activity_type_id
+    limit 1;
+
+    perform public.create_audit_log(
+        'point_rule',
+        v_new_rule_id,
+        'version_created',
+        jsonb_build_object(
+            'summary', concat(coalesce(v_rule_name, '알 수 없는 규칙'), ' 규칙 v', v_source_rule.version + 1, ' 생성'),
+            'sourceRuleId', p_source_rule_id,
+            'newRuleId', v_new_rule_id,
+            'activityTypeId', v_source_rule.activity_type_id,
+            'ruleName', v_rule_name,
+            'basePoint', p_base_point,
+            'penaltyPoint', coalesce(p_penalty_point, 0),
+            'condition', coalesce(p_condition_json, '{}'::jsonb)
+        )
+    );
+
+    return v_new_rule_id;
+end;
+$$;
+
 create or replace function public.create_activity_entry(
     p_member_id uuid,
     p_point_rule_id uuid,
     p_note text default null,
     p_reason text default null,
-    p_occurred_at timestamptz default now()
+    p_occurred_at timestamptz default now(),
+    p_evidence_url text default null
 )
 returns uuid
 language plpgsql
@@ -346,6 +426,7 @@ begin
         occurred_at,
         status,
         note,
+        evidence_url,
         created_by
     )
     values (
@@ -355,6 +436,7 @@ begin
         coalesce(p_occurred_at, now()),
         'confirmed',
         p_note,
+        nullif(btrim(coalesce(p_evidence_url, '')), ''),
         v_actor_member_id
     )
     returning id into v_record_id;
@@ -388,7 +470,8 @@ begin
             'ruleName', v_rule_name,
             'delta', v_base_point,
             'reason', coalesce(p_reason, p_note, '수동 활동 기록'),
-            'occurredAt', coalesce(p_occurred_at, now())
+            'occurredAt', coalesce(p_occurred_at, now()),
+            'evidenceUrl', nullif(btrim(coalesce(p_evidence_url, '')), '')
         )
     );
 
@@ -401,7 +484,8 @@ create or replace function public.create_batch_activity_entries(
     p_point_rule_id uuid,
     p_note text default null,
     p_reason text default null,
-    p_occurred_at timestamptz default now()
+    p_occurred_at timestamptz default now(),
+    p_evidence_url text default null
 )
 returns uuid[]
 language plpgsql
@@ -423,7 +507,8 @@ begin
             p_point_rule_id,
             p_note,
             p_reason,
-            p_occurred_at
+            p_occurred_at,
+            p_evidence_url
         );
         v_record_ids := array_append(v_record_ids, v_record_id);
     end loop;
@@ -484,6 +569,7 @@ returns table (
     point_delta integer,
     reason text,
     note text,
+    evidence_url text,
     reversal_of uuid,
     is_reversal boolean,
     record_status text
@@ -507,6 +593,7 @@ as $$
         pl.delta as point_delta,
         pl.reason,
         ar.note,
+        ar.evidence_url,
         pl.reversal_of,
         (pl.reversal_of is not null) as is_reversal,
         coalesce(ar.status, 'confirmed') as record_status
@@ -832,7 +919,10 @@ select
     pr.id,
     pr.activity_type_id,
     at.name as category_name,
+    at.group_name,
     pr.base_point as point_value,
+    pr.penalty_point,
+    pr.condition_json,
     pr.is_active,
     pr.version
 from public.point_rules pr

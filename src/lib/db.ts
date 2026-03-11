@@ -81,11 +81,66 @@ let localMembers: Member[] = [
 ];
 
 let localCategories: Category[] = [
-    { id: 'p1', categoryName: '정기모임 출석', pointValue: 10 },
-    { id: 'p2', categoryName: '스터디 참여', pointValue: 15 },
-    { id: 'p3', categoryName: '발표', pointValue: 30 },
-    { id: 'p4', categoryName: '지각', pointValue: -5 },
-    { id: 'p5', categoryName: '불참', pointValue: 0 },
+    {
+        id: 'p1',
+        activityTypeId: 'at_attendance_present',
+        categoryName: '정기모임 출석',
+        groupName: 'attendance',
+        pointValue: 10,
+        penaltyPoint: 0,
+        conditionSummary: '정시 참석 시 기본 점수 지급',
+        conditionJson: { summary: '정시 참석 시 기본 점수 지급' },
+        version: 1,
+        isActive: true,
+    },
+    {
+        id: 'p2',
+        activityTypeId: 'at_study',
+        categoryName: '스터디 참여',
+        groupName: 'study',
+        pointValue: 15,
+        penaltyPoint: 0,
+        conditionSummary: '스터디 출석 또는 실습 참여 완료',
+        conditionJson: { summary: '스터디 출석 또는 실습 참여 완료' },
+        version: 1,
+        isActive: true,
+    },
+    {
+        id: 'p3',
+        activityTypeId: 'at_presentation',
+        categoryName: '발표',
+        groupName: 'contribution',
+        pointValue: 30,
+        penaltyPoint: 0,
+        conditionSummary: '정기 발표 또는 세션 리딩',
+        conditionJson: { summary: '정기 발표 또는 세션 리딩' },
+        version: 2,
+        isActive: true,
+    },
+    {
+        id: 'p4',
+        activityTypeId: 'at_attendance_late',
+        categoryName: '지각',
+        groupName: 'attendance',
+        pointValue: -5,
+        penaltyPoint: 5,
+        conditionSummary: '정기모임 시작 이후 입장',
+        conditionJson: { summary: '정기모임 시작 이후 입장' },
+        version: 1,
+        isActive: true,
+    },
+    {
+        id: 'p5',
+        activityTypeId: 'at_attendance_absent',
+        categoryName: '불참',
+        groupName: 'attendance',
+        pointValue: 0,
+        penaltyPoint: 0,
+        conditionSummary: '사전 공유된 불참 처리 규칙 적용',
+        conditionJson: { summary: '사전 공유된 불참 처리 규칙 적용' },
+        version: 1,
+        isActive: true,
+    },
 ];
 
 let localLogs: ActivityLog[] = [
@@ -98,6 +153,7 @@ let localLogs: ActivityLog[] = [
         pointDelta: 10,
         reason: '정기모임 출석',
         note: '주간 정기모임',
+        evidenceUrl: 'https://example.com/attendance-sheet',
         recordStatus: 'confirmed',
     },
     {
@@ -109,6 +165,7 @@ let localLogs: ActivityLog[] = [
         pointDelta: 30,
         reason: '발표',
         note: 'AI 스터디 세션',
+        evidenceUrl: 'https://example.com/slides/ai-study',
         recordStatus: 'confirmed',
     },
 ];
@@ -287,9 +344,27 @@ const getSupabaseClient = () => {
 
 const createActivityCode = () => `manual-${Date.now()}`;
 
+const getConditionSummary = (value: Json | Record<string, unknown> | null | undefined) => {
+    if (!value || Array.isArray(value) || typeof value !== 'object') {
+        return null;
+    }
+
+    const summary = (value as Record<string, unknown>).summary;
+    return typeof summary === 'string' && summary.trim().length > 0 ? summary.trim() : null;
+};
+
+interface CategoryInput {
+    categoryName: string;
+    pointValue: number;
+    penaltyPoint?: number;
+    conditionSummary?: string;
+    groupName?: string;
+}
+
 interface ActivityEntryOptions {
     occurredAt?: string;
     reason?: string;
+    evidenceUrl?: string;
 }
 
 export const getMembers = async (options?: { includeLoginEmail?: boolean }): Promise<Member[]> => {
@@ -377,14 +452,16 @@ export const getMembers = async (options?: { includeLoginEmail?: boolean }): Pro
 
 export const getCategories = async (): Promise<Category[]> => {
     if (!isSupabaseConfigured) {
-        return [...localCategories];
+        return localCategories
+            .filter((category) => category.isActive !== false)
+            .sort((a, b) => a.categoryName.localeCompare(b.categoryName));
     }
 
     try {
         const client = getSupabaseClient();
         const { data, error } = await client
             .from('point_rule_catalog')
-            .select('id, category_name, point_value, is_active')
+            .select('id, activity_type_id, category_name, group_name, point_value, penalty_point, condition_json, is_active, version')
             .eq('is_active', true)
             .order('category_name', { ascending: true });
 
@@ -394,11 +471,25 @@ export const getCategories = async (): Promise<Category[]> => {
 
         return ((data ?? []) as PointRuleCatalogRow[]).map((category) => ({
             id: category.id,
+            activityTypeId: category.activity_type_id,
             categoryName: category.category_name,
+            groupName: category.group_name,
             pointValue: category.point_value,
+            penaltyPoint: category.penalty_point,
+            conditionSummary: getConditionSummary(category.condition_json),
+            conditionJson: parseJsonObject(category.condition_json),
+            isActive: category.is_active,
+            version: category.version,
         }));
     } catch (error) {
-        return fallback('getCategories', () => [...localCategories], error);
+        return fallback(
+            'getCategories',
+            () =>
+                localCategories
+                    .filter((category) => category.isActive !== false)
+                    .sort((a, b) => a.categoryName.localeCompare(b.categoryName)),
+            error,
+        );
     }
 };
 
@@ -414,7 +505,7 @@ export const getLogs = async (): Promise<ActivityLog[]> => {
                 .from('point_ledgers')
                 .select('id, record_id, member_id, point_rule_id, delta, reason, created_at, reversal_of')
                 .order('created_at', { ascending: false }),
-            client.from('activity_records').select('id, note, occurred_at, status'),
+            client.from('activity_records').select('id, note, evidence_url, occurred_at, status'),
             getMembers(),
             getCategories(),
         ]);
@@ -422,9 +513,9 @@ export const getLogs = async (): Promise<ActivityLog[]> => {
         if (ledgerResult.error) throw ledgerResult.error;
         if (recordResult.error) throw recordResult.error;
 
-        const recordRows = (recordResult.data ?? []) as Pick<ActivityRecordRow, 'id' | 'note' | 'occurred_at' | 'status'>[];
+        const recordRows = (recordResult.data ?? []) as Pick<ActivityRecordRow, 'id' | 'note' | 'evidence_url' | 'occurred_at' | 'status'>[];
         const ledgerRows = (ledgerResult.data ?? []) as Pick<PointLedgerRow, 'id' | 'record_id' | 'member_id' | 'point_rule_id' | 'delta' | 'reason' | 'created_at' | 'reversal_of'>[];
-        const recordMap = new Map<string, Pick<ActivityRecordRow, 'id' | 'note' | 'occurred_at' | 'status'>>(recordRows.map((record) => [record.id, record]));
+        const recordMap = new Map<string, Pick<ActivityRecordRow, 'id' | 'note' | 'evidence_url' | 'occurred_at' | 'status'>>(recordRows.map((record) => [record.id, record]));
         const memberMap = new Map(members.map((member) => [member.id, member.name]));
         const categoryMap = new Map(categories.map((category) => [category.id, category.categoryName]));
 
@@ -440,6 +531,7 @@ export const getLogs = async (): Promise<ActivityLog[]> => {
                 pointDelta: ledger.delta,
                 reason: ledger.reason,
                 note: record?.note ?? null,
+                evidenceUrl: record?.evidence_url ?? null,
                 memberName: memberMap.get(ledger.member_id) ?? '알 수 없는 멤버',
                 categoryName: categoryMap.get(ledger.point_rule_id) ?? '알 수 없는 규칙',
                 reversalOf: ledger.reversal_of,
@@ -477,6 +569,7 @@ const mapMyActivityLogRow = (row: MyActivityLogRow): ActivityLog => ({
     pointDelta: row.point_delta,
     reason: row.reason,
     note: row.note,
+    evidenceUrl: row.evidence_url,
     reversalOf: row.reversal_of,
     isReversal: row.is_reversal,
     recordStatus: row.record_status,
@@ -1045,12 +1138,29 @@ export const updateMember = async (
     }
 };
 
-export const addCategory = async (categoryName: string, pointValue: number): Promise<Category> => {
+export const addCategory = async ({
+    categoryName,
+    pointValue,
+    penaltyPoint = pointValue < 0 ? Math.abs(pointValue) : 0,
+    conditionSummary = '',
+    groupName = 'manual',
+}: CategoryInput): Promise<Category> => {
+    const normalizedConditionSummary = conditionSummary.trim();
+    const normalizedGroupName = groupName.trim() || 'manual';
+    const conditionJson = normalizedConditionSummary ? { summary: normalizedConditionSummary } : {};
+
     if (!isSupabaseConfigured) {
         const newCategory: Category = {
             id: createLocalId('rule'),
+            activityTypeId: createLocalId('activity_type'),
             categoryName,
+            groupName: normalizedGroupName,
             pointValue,
+            penaltyPoint,
+            conditionSummary: normalizedConditionSummary || null,
+            conditionJson,
+            version: 1,
+            isActive: true,
         };
         localCategories.push(newCategory);
         return newCategory;
@@ -1063,9 +1173,9 @@ export const addCategory = async (categoryName: string, pointValue: number): Pro
             .insert({
                 code: createActivityCode(),
                 name: categoryName,
-                group_name: 'manual',
+                group_name: normalizedGroupName,
             })
-            .select('id')
+            .select('id, group_name')
             .single();
 
         if (activityTypeError) {
@@ -1077,12 +1187,12 @@ export const addCategory = async (categoryName: string, pointValue: number): Pro
             .insert({
                 activity_type_id: activityType.id,
                 base_point: pointValue,
-                penalty_point: pointValue < 0 ? Math.abs(pointValue) : 0,
-                condition_json: {},
+                penalty_point: penaltyPoint,
+                condition_json: conditionJson,
                 is_active: true,
                 version: 1,
             })
-            .select('id, base_point')
+            .select('id, activity_type_id, base_point, penalty_point, condition_json, is_active, version')
             .single();
 
         if (pointRuleError) {
@@ -1091,23 +1201,126 @@ export const addCategory = async (categoryName: string, pointValue: number): Pro
 
         return {
             id: pointRule.id,
+            activityTypeId: pointRule.activity_type_id,
             categoryName,
+            groupName: activityType.group_name,
             pointValue: pointRule.base_point,
+            penaltyPoint: pointRule.penalty_point,
+            conditionSummary: normalizedConditionSummary || null,
+            conditionJson: parseJsonObject(pointRule.condition_json),
+            version: pointRule.version,
+            isActive: pointRule.is_active,
         };
     } catch (error) {
         const newCategory: Category = {
             id: createLocalId('rule'),
+            activityTypeId: createLocalId('activity_type'),
             categoryName,
+            groupName: normalizedGroupName,
             pointValue,
+            penaltyPoint,
+            conditionSummary: normalizedConditionSummary || null,
+            conditionJson,
+            version: 1,
+            isActive: true,
         };
         localCategories.push(newCategory);
         return fallback('addCategory', () => newCategory, error);
     }
 };
 
+export const createCategoryVersion = async (
+    sourceRuleId: string,
+    {
+        pointValue,
+        penaltyPoint = 0,
+        conditionSummary = '',
+    }: Pick<CategoryInput, 'pointValue' | 'penaltyPoint' | 'conditionSummary'>,
+): Promise<Category | null> => {
+    const normalizedConditionSummary = conditionSummary.trim();
+    const conditionJson = normalizedConditionSummary ? { summary: normalizedConditionSummary } : {};
+
+    if (!isSupabaseConfigured) {
+        const sourceCategory = localCategories.find((category) => category.id === sourceRuleId);
+        if (!sourceCategory || !sourceCategory.activityTypeId) {
+            return null;
+        }
+
+        localCategories = localCategories.map((category) =>
+            category.id === sourceRuleId
+                ? {
+                    ...category,
+                    isActive: false,
+                }
+                : category,
+        );
+
+        const nextCategory: Category = {
+            id: createLocalId('rule'),
+            activityTypeId: sourceCategory.activityTypeId,
+            categoryName: sourceCategory.categoryName,
+            groupName: sourceCategory.groupName ?? 'manual',
+            pointValue,
+            penaltyPoint,
+            conditionSummary: normalizedConditionSummary || null,
+            conditionJson,
+            version: (sourceCategory.version ?? 1) + 1,
+            isActive: true,
+        };
+        localCategories.push(nextCategory);
+        return nextCategory;
+    }
+
+    try {
+        const client = getSupabaseClient();
+        const { data: newRuleId, error: createError } = await client.rpc('create_point_rule_version', {
+            p_source_rule_id: sourceRuleId,
+            p_base_point: pointValue,
+            p_penalty_point: penaltyPoint,
+            p_condition_json: conditionJson,
+        });
+
+        if (createError) {
+            throw createError;
+        }
+
+        const { data: insertedRule, error: insertedRuleError } = await client
+            .from('point_rule_catalog')
+            .select('id, activity_type_id, category_name, group_name, point_value, penalty_point, condition_json, is_active, version')
+            .eq('id', newRuleId)
+            .single();
+
+        if (insertedRuleError) {
+            throw insertedRuleError;
+        }
+
+        return {
+            id: insertedRule.id,
+            activityTypeId: insertedRule.activity_type_id,
+            categoryName: insertedRule.category_name,
+            groupName: insertedRule.group_name,
+            pointValue: insertedRule.point_value,
+            penaltyPoint: insertedRule.penalty_point,
+            conditionSummary: getConditionSummary(insertedRule.condition_json),
+            conditionJson: parseJsonObject(insertedRule.condition_json),
+            version: insertedRule.version,
+            isActive: insertedRule.is_active,
+        };
+    } catch (error) {
+        return fallback('createCategoryVersion', () => null, error);
+    }
+};
+
 export const deleteCategory = async (id: string): Promise<void> => {
     if (!isSupabaseConfigured) {
-        localCategories = localCategories.filter((category) => category.id !== id);
+        localCategories = localCategories.map((category) =>
+            category.id === id
+                ? {
+                    ...category,
+                    isActive: false,
+                }
+                : category,
+        );
         return;
     }
 
@@ -1122,7 +1335,14 @@ export const deleteCategory = async (id: string): Promise<void> => {
             throw error;
         }
     } catch (error) {
-        localCategories = localCategories.filter((category) => category.id !== id);
+        localCategories = localCategories.map((category) =>
+            category.id === id
+                ? {
+                    ...category,
+                    isActive: false,
+                }
+                : category,
+        );
         fallback('deleteCategory', () => undefined, error);
     }
 };
@@ -1135,6 +1355,7 @@ export const createActivityEntry = async (
 ): Promise<void> => {
     const trimmedNote = note?.trim() || null;
     const occurredAt = options?.occurredAt ?? new Date().toISOString();
+    const evidenceUrl = options?.evidenceUrl?.trim() || null;
     const recordId = createLocalId('record');
 
     if (!isSupabaseConfigured) {
@@ -1155,6 +1376,7 @@ export const createActivityEntry = async (
             pointDelta: category.pointValue,
             reason: options?.reason ?? trimmedNote ?? category.categoryName,
             note: trimmedNote,
+            evidenceUrl,
             memberName: member.name,
             categoryName: category.categoryName,
             recordStatus: 'confirmed',
@@ -1174,6 +1396,7 @@ export const createActivityEntry = async (
                 delta: category.pointValue,
                 reason: options?.reason ?? trimmedNote ?? category.categoryName,
                 occurredAt,
+                evidenceUrl,
             },
         });
         return;
@@ -1187,6 +1410,7 @@ export const createActivityEntry = async (
             p_note: trimmedNote,
             p_reason: options?.reason ?? trimmedNote ?? '수동 활동 기록',
             p_occurred_at: occurredAt,
+            p_evidence_url: evidenceUrl,
         });
 
         if (error) throw error;
@@ -1205,6 +1429,7 @@ export const createActivityEntry = async (
                 pointDelta: category.pointValue,
                 reason: options?.reason ?? trimmedNote ?? category.categoryName,
                 note: trimmedNote,
+                evidenceUrl,
                 memberName: member.name,
                 categoryName: category.categoryName,
                 recordStatus: 'confirmed',
@@ -1224,6 +1449,7 @@ export const createActivityEntry = async (
                     delta: category.pointValue,
                     reason: options?.reason ?? trimmedNote ?? category.categoryName,
                     occurredAt,
+                    evidenceUrl,
                 },
             });
         }
@@ -1244,6 +1470,7 @@ export const createBatchActivityEntries = async (
 ): Promise<void> => {
     const trimmedNote = note?.trim() || null;
     const occurredAt = options?.occurredAt ?? new Date().toISOString();
+    const evidenceUrl = options?.evidenceUrl?.trim() || null;
 
     if (isSupabaseConfigured) {
         try {
@@ -1254,6 +1481,7 @@ export const createBatchActivityEntries = async (
                 p_note: trimmedNote,
                 p_reason: options?.reason ?? trimmedNote ?? '수동 일괄 활동 기록',
                 p_occurred_at: occurredAt,
+                p_evidence_url: evidenceUrl,
             });
 
             if (error) {
@@ -1267,7 +1495,10 @@ export const createBatchActivityEntries = async (
     }
 
     for (const memberId of memberIds) {
-        await createActivityEntry(memberId, categoryId, trimmedNote ?? undefined, options);
+        await createActivityEntry(memberId, categoryId, trimmedNote ?? undefined, {
+            ...options,
+            evidenceUrl: evidenceUrl ?? undefined,
+        });
     }
 };
 
@@ -1308,6 +1539,7 @@ export const reverseActivityEntry = async (recordId: string, note?: string): Pro
             pointDelta: originalLog.pointDelta * -1,
             reason: trimmedNote ?? `기록 취소 · ${originalLog.reason ?? originalLog.categoryName ?? '원본 기록'}`,
             note: originalLog.note ?? null,
+            evidenceUrl: originalLog.evidenceUrl ?? null,
             memberName: member?.name ?? originalLog.memberName ?? null,
             categoryName: category?.categoryName ?? originalLog.categoryName ?? null,
             reversalOf: originalLog.id,

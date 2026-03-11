@@ -52,8 +52,15 @@ export interface Member {
 
 export interface Category {
     id: string;
+    activityTypeId?: string | null;
     categoryName: string;
     pointValue: number;
+    penaltyPoint?: number;
+    conditionSummary?: string | null;
+    conditionJson?: Record<string, unknown> | null;
+    groupName?: string | null;
+    version?: number;
+    isActive?: boolean;
 }
 
 export interface ActivityLog {
@@ -65,6 +72,7 @@ export interface ActivityLog {
     pointDelta: number;
     reason?: string | null;
     note?: string | null;
+    evidenceUrl?: string | null;
     memberName?: string | null;
     categoryName?: string | null;
     reversalOf?: string | null;

@@ -1,11 +1,12 @@
-import React, { useEffect, useState } from 'react';
-import { CalendarDays, Plus, Settings, ShieldCheck, Users2, Trash2 } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { CalendarDays, Plus, Settings, ShieldCheck, Users2, Trash2, Workflow } from 'lucide-react';
 import type { AppRole, Category, RoleSummary, SeasonStatus, SeasonSummary, TeamSummary, TeamType } from '../../types';
 import {
     addCategory,
     addRole,
     addSeason,
     addTeam,
+    createCategoryVersion,
     deleteCategory,
     getCategories,
     getRoles,
@@ -27,6 +28,13 @@ const teamTypeLabels: Record<TeamType, string> = {
     study: '스터디',
     project: '프로젝트',
 };
+const ruleGroupOptions = [
+    { value: 'attendance', label: '출석' },
+    { value: 'study', label: '스터디' },
+    { value: 'contribution', label: '기여' },
+    { value: 'operations', label: '운영' },
+    { value: 'manual', label: '기타' },
+];
 
 const badgeClassByStatus: Record<SeasonStatus, string> = {
     planned: 'bg-amber-50 text-amber-700 border-amber-200',
@@ -42,6 +50,10 @@ export const SettingsTab: React.FC = () => {
 
     const [newCatName, setNewCatName] = useState('');
     const [newCatValue, setNewCatValue] = useState<number>(10);
+    const [newCatPenaltyPoint, setNewCatPenaltyPoint] = useState<number>(0);
+    const [newCatGroupName, setNewCatGroupName] = useState('manual');
+    const [newCatConditionSummary, setNewCatConditionSummary] = useState('');
+    const [versionSourceRuleId, setVersionSourceRuleId] = useState<string | null>(null);
 
     const [newRoleName, setNewRoleName] = useState('');
     const [newRoleScope, setNewRoleScope] = useState('member');
@@ -56,6 +68,20 @@ export const SettingsTab: React.FC = () => {
     const [newSeasonStatus, setNewSeasonStatus] = useState<SeasonStatus>('planned');
 
     const [isLoading, setIsLoading] = useState(true);
+
+    const versionSourceCategory = useMemo(
+        () => categories.find((category) => category.id === versionSourceRuleId) ?? null,
+        [categories, versionSourceRuleId],
+    );
+
+    const resetCategoryForm = () => {
+        setNewCatName('');
+        setNewCatValue(10);
+        setNewCatPenaltyPoint(0);
+        setNewCatGroupName('manual');
+        setNewCatConditionSummary('');
+        setVersionSourceRuleId(null);
+    };
 
     const refreshData = async () => {
         setIsLoading(true);
@@ -105,10 +131,32 @@ export const SettingsTab: React.FC = () => {
         event.preventDefault();
         if (!newCatName.trim()) return;
 
-        await addCategory(newCatName.trim(), newCatValue);
-        setNewCatName('');
-        setNewCatValue(10);
+        if (versionSourceRuleId) {
+            await createCategoryVersion(versionSourceRuleId, {
+                pointValue: newCatValue,
+                penaltyPoint: newCatPenaltyPoint,
+                conditionSummary: newCatConditionSummary,
+            });
+        } else {
+            await addCategory({
+                categoryName: newCatName.trim(),
+                pointValue: newCatValue,
+                penaltyPoint: newCatPenaltyPoint,
+                conditionSummary: newCatConditionSummary,
+                groupName: newCatGroupName,
+            });
+        }
+        resetCategoryForm();
         await refreshData();
+    };
+
+    const handleStartVersioning = (category: Category) => {
+        setVersionSourceRuleId(category.id);
+        setNewCatName(category.categoryName);
+        setNewCatValue(category.pointValue);
+        setNewCatPenaltyPoint(category.penaltyPoint ?? 0);
+        setNewCatGroupName(category.groupName ?? 'manual');
+        setNewCatConditionSummary(category.conditionSummary ?? '');
     };
 
     const handleDeleteCategory = async (id: string) => {
@@ -200,17 +248,34 @@ export const SettingsTab: React.FC = () => {
                         </div>
                         <form onSubmit={handleAddCategory} className="flex flex-col gap-3 md:flex-row md:items-end">
                             <div className="flex-1 space-y-1.5">
-                                <label htmlFor="catName" className="text-xs font-medium text-slate-600">규칙 이름</label>
+                                <label htmlFor="catName" className="text-xs font-medium text-slate-600">활동 이름</label>
                                 <input
                                     id="catName"
                                     type="text"
                                     placeholder="예: 발표, 스터디 참여"
                                     value={newCatName}
                                     onChange={(event) => setNewCatName(event.target.value)}
+                                    disabled={Boolean(versionSourceCategory)}
                                     className="w-full px-4 py-2 border border-slate-200 rounded-xl outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all text-sm"
                                 />
                             </div>
-                            <div className="w-full md:w-36 space-y-1.5">
+                            <div className="w-full md:w-40 space-y-1.5">
+                                <label htmlFor="catGroup" className="text-xs font-medium text-slate-600">그룹</label>
+                                <select
+                                    id="catGroup"
+                                    value={newCatGroupName}
+                                    onChange={(event) => setNewCatGroupName(event.target.value)}
+                                    disabled={Boolean(versionSourceCategory)}
+                                    className="w-full px-4 py-2 border border-slate-200 rounded-xl outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all text-sm bg-white disabled:bg-slate-100"
+                                >
+                                    {ruleGroupOptions.map((option) => (
+                                        <option key={option.value} value={option.value}>
+                                            {option.label}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div className="w-full md:w-32 space-y-1.5">
                                 <label htmlFor="catValue" className="text-xs font-medium text-slate-600">기본 점수</label>
                                 <input
                                     id="catValue"
@@ -220,30 +285,78 @@ export const SettingsTab: React.FC = () => {
                                     className="w-full px-4 py-2 border border-slate-200 rounded-xl outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all text-sm"
                                 />
                             </div>
+                            <div className="w-full md:w-32 space-y-1.5">
+                                <label htmlFor="catPenalty" className="text-xs font-medium text-slate-600">감점</label>
+                                <input
+                                    id="catPenalty"
+                                    type="number"
+                                    value={newCatPenaltyPoint}
+                                    onChange={(event) => setNewCatPenaltyPoint(Number(event.target.value) || 0)}
+                                    className="w-full px-4 py-2 border border-slate-200 rounded-xl outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all text-sm"
+                                />
+                            </div>
+                            <div className="flex-1 space-y-1.5">
+                                <label htmlFor="catCondition" className="text-xs font-medium text-slate-600">조건 요약</label>
+                                <input
+                                    id="catCondition"
+                                    type="text"
+                                    placeholder="예: 발표 자료 제출 시 기본 점수 지급"
+                                    value={newCatConditionSummary}
+                                    onChange={(event) => setNewCatConditionSummary(event.target.value)}
+                                    className="w-full px-4 py-2 border border-slate-200 rounded-xl outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all text-sm"
+                                />
+                            </div>
                             <button
                                 type="submit"
                                 disabled={!newCatName.trim()}
                                 className="px-6 py-2 bg-indigo-600 text-white font-medium rounded-xl hover:bg-indigo-700 disabled:opacity-50 transition-colors flex items-center justify-center gap-2 h-10"
                             >
                                 <Plus size={18} />
-                                추가
+                                {versionSourceCategory ? `v${(versionSourceCategory.version ?? 1) + 1} 생성` : '추가'}
                             </button>
+                            {versionSourceCategory && (
+                                <button
+                                    type="button"
+                                    onClick={resetCategoryForm}
+                                    className="px-4 py-2 border border-slate-200 text-slate-700 font-medium rounded-xl hover:bg-slate-50 transition-colors h-10"
+                                >
+                                    새 규칙으로 전환
+                                </button>
+                            )}
                         </form>
+                        <div className="mt-4 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600">
+                            {versionSourceCategory ? (
+                                <>
+                                    <span className="font-semibold text-slate-900">{versionSourceCategory.categoryName}</span>
+                                    {' '}규칙의 새 버전을 만드는 중입니다. 기존 버전은 비활성화되고, 과거 기록은 이전 rule id를 계속 참조합니다.
+                                </>
+                            ) : (
+                                '규칙을 수정할 때는 기존 항목을 덮어쓰지 않고 새 버전을 만들어 과거 기록 해석이 바뀌지 않게 유지합니다.'
+                            )}
+                        </div>
                     </div>
 
                     <div className="overflow-x-auto">
                         <table className="w-full text-left border-collapse">
                             <thead>
                                 <tr className="bg-white border-b border-slate-100 text-sm font-semibold text-slate-600">
-                                    <th className="py-4 px-6">규칙 이름</th>
-                                    <th className="py-4 px-6 w-32">점수</th>
-                                    <th className="py-4 px-6 w-20 text-center">관리</th>
+                                    <th className="py-4 px-6 min-w-[220px]">활동</th>
+                                    <th className="py-4 px-6 w-28">기본</th>
+                                    <th className="py-4 px-6 w-28">감점</th>
+                                    <th className="py-4 px-6 w-24">버전</th>
+                                    <th className="py-4 px-6 min-w-[240px]">조건</th>
+                                    <th className="py-4 px-6 w-36 text-center">관리</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100">
                                 {categories.map((category) => (
                                     <tr key={category.id} className="hover:bg-slate-50 transition-colors group">
-                                        <td className="py-4 px-6 font-medium text-slate-900">{category.categoryName}</td>
+                                        <td className="py-4 px-6">
+                                            <div className="font-medium text-slate-900">{category.categoryName}</div>
+                                            <div className="mt-1 text-xs text-slate-500">
+                                                {ruleGroupOptions.find((option) => option.value === (category.groupName ?? 'manual'))?.label ?? category.groupName ?? '기타'}
+                                            </div>
+                                        </td>
                                         <td className="py-4 px-6">
                                             <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold border ${category.pointValue > 0
                                                 ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
@@ -253,14 +366,39 @@ export const SettingsTab: React.FC = () => {
                                                 {category.pointValue}점
                                             </span>
                                         </td>
+                                        <td className="py-4 px-6">
+                                            <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold border ${(category.penaltyPoint ?? 0) > 0
+                                                ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                                : 'bg-slate-100 text-slate-600 border-slate-200'
+                                                }`}>
+                                                {(category.penaltyPoint ?? 0) > 0 ? `-${category.penaltyPoint}점` : '없음'}
+                                            </span>
+                                        </td>
+                                        <td className="py-4 px-6">
+                                            <span className="inline-flex rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700">
+                                                v{category.version ?? 1}
+                                            </span>
+                                        </td>
+                                        <td className="py-4 px-6 text-sm text-slate-600">{category.conditionSummary ?? '-'}</td>
                                         <td className="py-4 px-6 text-center">
-                                            <button
-                                                onClick={() => handleDeleteCategory(category.id)}
-                                                className="p-2 text-slate-400 hover:bg-rose-50 hover:text-rose-600 rounded-lg transition-colors opacity-0 group-hover:opacity-100"
-                                                title="규칙 비활성화"
-                                            >
-                                                <Trash2 size={16} />
-                                            </button>
+                                            <div className="flex items-center justify-center gap-2 opacity-0 transition-opacity group-hover:opacity-100">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleStartVersioning(category)}
+                                                    className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50"
+                                                    title="새 버전 만들기"
+                                                >
+                                                    <Workflow size={14} />
+                                                    새 버전
+                                                </button>
+                                                <button
+                                                    onClick={() => handleDeleteCategory(category.id)}
+                                                    className="p-2 text-slate-400 hover:bg-rose-50 hover:text-rose-600 rounded-lg transition-colors"
+                                                    title="규칙 비활성화"
+                                                >
+                                                    <Trash2 size={16} />
+                                                </button>
+                                            </div>
                                         </td>
                                     </tr>
                                 ))}

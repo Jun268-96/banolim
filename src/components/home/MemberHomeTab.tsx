@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { BadgeCheck, CalendarDays, Clock3, MessageSquareWarning, Send, ShieldCheck, Sparkles, TriangleAlert, UserRound } from 'lucide-react';
+import { BadgeCheck, CalendarDays, Clock3, Link2, MessageSquareWarning, Send, ShieldCheck, Sparkles, TriangleAlert, UserRound } from 'lucide-react';
 import type { ActivityLog, CorrectionRequest, CorrectionRequestStatus, Member, MemberStatus, SeasonSummary } from '../../types';
 import { getCorrectionRequests, getCurrentSeason, getMyActivityLogs, getMyMemberOverview, submitCorrectionRequest } from '../../lib/db';
 import { roleLabels } from '../../lib/permissions';
@@ -272,6 +272,17 @@ export const MemberHomeTab: React.FC = () => {
                                             {log.reason ?? '기록 사유 없음'}
                                             {log.note ? <span className="text-slate-300"> · {log.note}</span> : null}
                                         </div>
+                                        {log.evidenceUrl && (
+                                            <a
+                                                href={log.evidenceUrl}
+                                                target="_blank"
+                                                rel="noreferrer"
+                                                className="mt-3 inline-flex items-center gap-1 rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-medium text-sky-700 transition-colors hover:bg-sky-100"
+                                            >
+                                                <Link2 size={13} />
+                                                증빙 링크
+                                            </a>
+                                        )}
                                     </div>
                                     <div className="flex flex-wrap items-center gap-3">
                                         <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${log.pointDelta >= 0 ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-rose-200 bg-rose-50 text-rose-700'}`}>

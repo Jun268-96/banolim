@@ -15,6 +15,7 @@ export const PointsTab: React.FC = () => {
     const [selectedCategoryId, setSelectedCategoryId] = useState('');
     const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
     const [note, setNote] = useState('');
+    const [evidenceUrl, setEvidenceUrl] = useState('');
     const [isLoading, setIsLoading] = useState(true);
     const [isSaving, setIsSaving] = useState(false);
 
@@ -92,8 +93,11 @@ export const PointsTab: React.FC = () => {
         }
 
         setIsSaving(true);
-        await createBatchActivityEntries(selectedMemberIds, selectedCategoryId, note);
+        await createBatchActivityEntries(selectedMemberIds, selectedCategoryId, note, {
+            evidenceUrl,
+        });
         setNote('');
+        setEvidenceUrl('');
         setSelectedMemberIds([]);
         await refreshData();
         setIsSaving(false);
@@ -138,7 +142,7 @@ export const PointsTab: React.FC = () => {
                                 {categories.map((category) => (
                                     <option key={category.id} value={category.id}>
                                         {category.categoryName} ({category.pointValue > 0 ? '+' : ''}
-                                        {category.pointValue})
+                                        {category.pointValue}) · v{category.version ?? 1}
                                     </option>
                                 ))}
                             </select>
@@ -155,6 +159,17 @@ export const PointsTab: React.FC = () => {
                             />
                         </label>
 
+                        <label className="block space-y-1.5">
+                            <span className="text-xs font-medium text-slate-600">증빙 링크</span>
+                            <input
+                                type="url"
+                                value={evidenceUrl}
+                                onChange={(event) => setEvidenceUrl(event.target.value)}
+                                placeholder="예: 회의록, 제출물, 참고 문서 링크"
+                                className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                            />
+                        </label>
+
                         <div className="space-y-2 rounded-2xl border border-slate-200 bg-slate-50 p-4">
                             <div className="flex items-center justify-between text-sm">
                                 <span className="text-slate-500">선택한 멤버</span>
@@ -166,6 +181,14 @@ export const PointsTab: React.FC = () => {
                                     {(selectedCategory?.pointValue ?? 0) > 0 ? '+' : ''}
                                     {selectedCategory?.pointValue ?? 0}점
                                 </span>
+                            </div>
+                            <div className="flex items-center justify-between text-sm">
+                                <span className="text-slate-500">규칙 버전</span>
+                                <span className="font-semibold text-slate-900">v{selectedCategory?.version ?? 1}</span>
+                            </div>
+                            <div className="flex items-center justify-between text-sm">
+                                <span className="text-slate-500">감점 규칙</span>
+                                <span className="font-semibold text-slate-900">{selectedCategory?.penaltyPoint ?? 0}점</span>
                             </div>
                             <div className="flex items-center justify-between text-sm">
                                 <span className="text-slate-500">예상 총합</span>

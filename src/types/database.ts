@@ -192,6 +192,7 @@ export interface Database {
                     occurred_at: string;
                     status: string;
                     note: string | null;
+                    evidence_url: string | null;
                     created_by: string | null;
                     created_at: string;
                 };
@@ -203,6 +204,7 @@ export interface Database {
                     occurred_at?: string;
                     status?: string;
                     note?: string | null;
+                    evidence_url?: string | null;
                     created_by?: string | null;
                     created_at?: string;
                 };
@@ -214,6 +216,7 @@ export interface Database {
                     occurred_at?: string;
                     status?: string;
                     note?: string | null;
+                    evidence_url?: string | null;
                     created_by?: string | null;
                     created_at?: string;
                 };
@@ -373,7 +376,10 @@ export interface Database {
                     id: string;
                     activity_type_id: string;
                     category_name: string;
+                    group_name: string;
                     point_value: number;
+                    penalty_point: number;
+                    condition_json: Json;
                     is_active: boolean;
                     version: number;
                 };
@@ -394,6 +400,7 @@ export interface Database {
         Functions: {
             create_activity_entry: {
                 Args: {
+                    p_evidence_url?: string | null;
                     p_member_id: string;
                     p_note?: string | null;
                     p_occurred_at?: string | null;
@@ -404,6 +411,7 @@ export interface Database {
             };
             create_batch_activity_entries: {
                 Args: {
+                    p_evidence_url?: string | null;
                     p_member_ids: string[];
                     p_note?: string | null;
                     p_occurred_at?: string | null;
@@ -412,11 +420,21 @@ export interface Database {
                 };
                 Returns: string[];
             };
+            create_point_rule_version: {
+                Args: {
+                    p_base_point: number;
+                    p_condition_json?: Json;
+                    p_penalty_point?: number;
+                    p_source_rule_id: string;
+                };
+                Returns: string;
+            };
             get_my_activity_logs: {
                 Args: Record<string, never>;
                 Returns: {
                     category_id: string;
                     category_name: string | null;
+                    evidence_url: string | null;
                     id: string;
                     is_reversal: boolean;
                     member_id: string;
