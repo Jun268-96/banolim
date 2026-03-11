@@ -1,4 +1,21 @@
-import type { ActivityLog, AuditLogEntry, Badge, BadgeTone, Category, CorrectionRequest, CorrectionRequestStatus, Member, MemberBadge, RoleSummary, SeasonSummary, TeamSummary, TeamType, SeasonStatus } from '../types';
+import type {
+    ActivityLog,
+    AnnouncementItem,
+    AuditLogEntry,
+    Badge,
+    BadgeTone,
+    Category,
+    CorrectionRequest,
+    CorrectionRequestStatus,
+    Member,
+    MemberBadge,
+    RoleSummary,
+    ScheduleEventItem,
+    SeasonSummary,
+    TeamSummary,
+    TeamType,
+    SeasonStatus,
+} from '../types';
 import { isSupabaseConfigured, supabase } from './supabase';
 import type { Database, Json } from '../types/database';
 
@@ -329,7 +346,59 @@ const localSeasons: SeasonSummary[] = [
     },
 ];
 
+let localAnnouncements: AnnouncementItem[] = [
+    {
+        id: 'notice_1',
+        title: '3월 정기모임 운영 안내',
+        body: '이번 주 정기모임은 활동 리캡 공유와 시즌 출석 규칙 안내를 함께 진행합니다.',
+        startAt: new Date(Date.now() - 1000 * 60 * 60 * 24).toISOString(),
+        endAt: null,
+        isPinned: true,
+        isActive: true,
+        createdAt: new Date(Date.now() - 1000 * 60 * 60 * 24).toISOString(),
+    },
+    {
+        id: 'notice_2',
+        title: '발표 자료 제출 마감',
+        body: '발표자는 모임 전날 밤 10시까지 자료 링크를 제출해 주세요.',
+        startAt: new Date().toISOString(),
+        endAt: null,
+        isPinned: false,
+        isActive: true,
+        createdAt: new Date().toISOString(),
+    },
+];
+
+let localScheduleEvents: ScheduleEventItem[] = [
+    {
+        id: 'schedule_1',
+        title: '정기모임 오프라인 세션',
+        description: '출석 체크와 시즌 규칙 설명, 팀별 브리핑을 진행합니다.',
+        location: '반디스쿨 3층 세미나실',
+        startAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 2).toISOString(),
+        endAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 2 + 1000 * 60 * 90).toISOString(),
+        seasonId: localCurrentSeason.id,
+        isActive: true,
+        createdAt: new Date().toISOString(),
+    },
+    {
+        id: 'schedule_2',
+        title: '운영진 주간 체크인',
+        description: '승인 대기, 정정 요청, 리캡 공유 카드 현황을 점검합니다.',
+        location: '온라인 미트',
+        startAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 4).toISOString(),
+        endAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 4 + 1000 * 60 * 45).toISOString(),
+        seasonId: localCurrentSeason.id,
+        isActive: true,
+        createdAt: new Date().toISOString(),
+    },
+];
+
 const sortMembers = (members: Member[]) => [...members].sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
+const sortAnnouncements = (items: AnnouncementItem[]) =>
+    [...items].sort((a, b) => Number(b.isPinned) - Number(a.isPinned) || (b.startAt ?? b.createdAt).localeCompare(a.startAt ?? a.createdAt));
+const sortScheduleEvents = (items: ScheduleEventItem[]) =>
+    [...items].sort((a, b) => a.startAt.localeCompare(b.startAt));
 
 const enrichLocalLogs = () => {
     const memberMap = new Map(localMembers.map((member) => [member.id, member]));
@@ -1171,6 +1240,268 @@ export const getTeams = async (): Promise<TeamSummary[]> => {
         }));
     } catch (error) {
         return fallback('getTeams', () => [...localTeams].sort((a, b) => a.name.localeCompare(b.name)), error);
+    }
+};
+
+export const getAnnouncements = async (): Promise<AnnouncementItem[]> => {
+    if (!isSupabaseConfigured) {
+        return sortAnnouncements(localAnnouncements.filter((item) => item.isActive));
+    }
+
+    try {
+        const client = getSupabaseClient();
+        const { data, error } = await client
+            .from('announcements')
+            .select('id, title, body, starts_at, ends_at, is_pinned, is_active, created_at')
+            .eq('is_active', true)
+            .order('is_pinned', { ascending: false })
+            .order('starts_at', { ascending: false });
+
+        if (error) {
+            throw error;
+        }
+
+        return ((data ?? []) as Array<
+            Pick<Database['public']['Tables']['announcements']['Row'], 'id' | 'title' | 'body' | 'starts_at' | 'ends_at' | 'is_pinned' | 'is_active' | 'created_at'>
+        >).map((item) => ({
+            id: item.id,
+            title: item.title,
+            body: item.body,
+            startAt: item.starts_at,
+            endAt: item.ends_at,
+            isPinned: item.is_pinned,
+            isActive: item.is_active,
+            createdAt: item.created_at,
+        }));
+    } catch (error) {
+        return fallback('getAnnouncements', () => sortAnnouncements(localAnnouncements.filter((item) => item.isActive)), error);
+    }
+};
+
+export const addAnnouncement = async (input: {
+    title: string;
+    body: string;
+    startAt?: string | null;
+    endAt?: string | null;
+    isPinned?: boolean;
+}): Promise<AnnouncementItem> => {
+    const payload = {
+        title: input.title.trim(),
+        body: input.body.trim(),
+        startAt: input.startAt ?? null,
+        endAt: input.endAt ?? null,
+        isPinned: input.isPinned ?? false,
+    };
+
+    if (!isSupabaseConfigured) {
+        const item: AnnouncementItem = {
+            id: createLocalId('notice'),
+            title: payload.title,
+            body: payload.body,
+            startAt: payload.startAt,
+            endAt: payload.endAt,
+            isPinned: payload.isPinned,
+            isActive: true,
+            createdAt: new Date().toISOString(),
+        };
+        localAnnouncements.push(item);
+        return item;
+    }
+
+    try {
+        const client = getSupabaseClient();
+        const { data, error } = await client
+            .from('announcements')
+            .insert({
+                title: payload.title,
+                body: payload.body,
+                starts_at: payload.startAt,
+                ends_at: payload.endAt,
+                is_pinned: payload.isPinned,
+                is_active: true,
+            })
+            .select('id, title, body, starts_at, ends_at, is_pinned, is_active, created_at')
+            .single();
+
+        if (error) {
+            throw error;
+        }
+
+        return {
+            id: data.id,
+            title: data.title,
+            body: data.body,
+            startAt: data.starts_at,
+            endAt: data.ends_at,
+            isPinned: data.is_pinned,
+            isActive: data.is_active,
+            createdAt: data.created_at,
+        };
+    } catch (error) {
+        const item: AnnouncementItem = {
+            id: createLocalId('notice'),
+            title: payload.title,
+            body: payload.body,
+            startAt: payload.startAt,
+            endAt: payload.endAt,
+            isPinned: payload.isPinned,
+            isActive: true,
+            createdAt: new Date().toISOString(),
+        };
+        localAnnouncements.push(item);
+        return fallback('addAnnouncement', () => item, error);
+    }
+};
+
+export const deleteAnnouncement = async (id: string): Promise<void> => {
+    if (!isSupabaseConfigured) {
+        localAnnouncements = localAnnouncements.filter((item) => item.id !== id);
+        return;
+    }
+
+    try {
+        const client = getSupabaseClient();
+        const { error } = await client.from('announcements').update({ is_active: false }).eq('id', id);
+        if (error) {
+            throw error;
+        }
+    } catch (error) {
+        localAnnouncements = localAnnouncements.filter((item) => item.id !== id);
+        fallback('deleteAnnouncement', () => undefined, error);
+    }
+};
+
+export const getScheduleEvents = async (): Promise<ScheduleEventItem[]> => {
+    if (!isSupabaseConfigured) {
+        return sortScheduleEvents(localScheduleEvents.filter((item) => item.isActive));
+    }
+
+    try {
+        const client = getSupabaseClient();
+        const { data, error } = await client
+            .from('schedule_events')
+            .select('id, title, description, location, start_at, end_at, season_id, is_active, created_at')
+            .eq('is_active', true)
+            .order('start_at', { ascending: true });
+
+        if (error) {
+            throw error;
+        }
+
+        return ((data ?? []) as Array<
+            Pick<Database['public']['Tables']['schedule_events']['Row'], 'id' | 'title' | 'description' | 'location' | 'start_at' | 'end_at' | 'season_id' | 'is_active' | 'created_at'>
+        >).map((item) => ({
+            id: item.id,
+            title: item.title,
+            description: item.description,
+            location: item.location,
+            startAt: item.start_at,
+            endAt: item.end_at,
+            seasonId: item.season_id,
+            isActive: item.is_active,
+            createdAt: item.created_at,
+        }));
+    } catch (error) {
+        return fallback('getScheduleEvents', () => sortScheduleEvents(localScheduleEvents.filter((item) => item.isActive)), error);
+    }
+};
+
+export const addScheduleEvent = async (input: {
+    title: string;
+    description?: string | null;
+    location?: string | null;
+    startAt: string;
+    endAt?: string | null;
+    seasonId?: string | null;
+}): Promise<ScheduleEventItem> => {
+    const payload = {
+        title: input.title.trim(),
+        description: input.description?.trim() || null,
+        location: input.location?.trim() || null,
+        startAt: input.startAt,
+        endAt: input.endAt ?? null,
+        seasonId: input.seasonId ?? null,
+    };
+
+    if (!isSupabaseConfigured) {
+        const item: ScheduleEventItem = {
+            id: createLocalId('schedule'),
+            title: payload.title,
+            description: payload.description,
+            location: payload.location,
+            startAt: payload.startAt,
+            endAt: payload.endAt,
+            seasonId: payload.seasonId,
+            isActive: true,
+            createdAt: new Date().toISOString(),
+        };
+        localScheduleEvents.push(item);
+        return item;
+    }
+
+    try {
+        const client = getSupabaseClient();
+        const { data, error } = await client
+            .from('schedule_events')
+            .insert({
+                title: payload.title,
+                description: payload.description,
+                location: payload.location,
+                start_at: payload.startAt,
+                end_at: payload.endAt,
+                season_id: payload.seasonId,
+                is_active: true,
+            })
+            .select('id, title, description, location, start_at, end_at, season_id, is_active, created_at')
+            .single();
+
+        if (error) {
+            throw error;
+        }
+
+        return {
+            id: data.id,
+            title: data.title,
+            description: data.description,
+            location: data.location,
+            startAt: data.start_at,
+            endAt: data.end_at,
+            seasonId: data.season_id,
+            isActive: data.is_active,
+            createdAt: data.created_at,
+        };
+    } catch (error) {
+        const item: ScheduleEventItem = {
+            id: createLocalId('schedule'),
+            title: payload.title,
+            description: payload.description,
+            location: payload.location,
+            startAt: payload.startAt,
+            endAt: payload.endAt,
+            seasonId: payload.seasonId,
+            isActive: true,
+            createdAt: new Date().toISOString(),
+        };
+        localScheduleEvents.push(item);
+        return fallback('addScheduleEvent', () => item, error);
+    }
+};
+
+export const deleteScheduleEvent = async (id: string): Promise<void> => {
+    if (!isSupabaseConfigured) {
+        localScheduleEvents = localScheduleEvents.filter((item) => item.id !== id);
+        return;
+    }
+
+    try {
+        const client = getSupabaseClient();
+        const { error } = await client.from('schedule_events').update({ is_active: false }).eq('id', id);
+        if (error) {
+            throw error;
+        }
+    } catch (error) {
+        localScheduleEvents = localScheduleEvents.filter((item) => item.id !== id);
+        fallback('deleteScheduleEvent', () => undefined, error);
     }
 };
 

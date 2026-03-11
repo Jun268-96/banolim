@@ -387,6 +387,81 @@ export interface Database {
                 };
                 Relationships: [];
             };
+            announcements: {
+                Row: {
+                    id: string;
+                    title: string;
+                    body: string;
+                    starts_at: string | null;
+                    ends_at: string | null;
+                    is_pinned: boolean;
+                    is_active: boolean;
+                    created_by: string | null;
+                    created_at: string;
+                };
+                Insert: {
+                    id?: string;
+                    title: string;
+                    body: string;
+                    starts_at?: string | null;
+                    ends_at?: string | null;
+                    is_pinned?: boolean;
+                    is_active?: boolean;
+                    created_by?: string | null;
+                    created_at?: string;
+                };
+                Update: {
+                    id?: string;
+                    title?: string;
+                    body?: string;
+                    starts_at?: string | null;
+                    ends_at?: string | null;
+                    is_pinned?: boolean;
+                    is_active?: boolean;
+                    created_by?: string | null;
+                    created_at?: string;
+                };
+                Relationships: [];
+            };
+            schedule_events: {
+                Row: {
+                    id: string;
+                    title: string;
+                    description: string | null;
+                    location: string | null;
+                    start_at: string;
+                    end_at: string | null;
+                    season_id: string | null;
+                    is_active: boolean;
+                    created_by: string | null;
+                    created_at: string;
+                };
+                Insert: {
+                    id?: string;
+                    title: string;
+                    description?: string | null;
+                    location?: string | null;
+                    start_at: string;
+                    end_at?: string | null;
+                    season_id?: string | null;
+                    is_active?: boolean;
+                    created_by?: string | null;
+                    created_at?: string;
+                };
+                Update: {
+                    id?: string;
+                    title?: string;
+                    description?: string | null;
+                    location?: string | null;
+                    start_at?: string;
+                    end_at?: string | null;
+                    season_id?: string | null;
+                    is_active?: boolean;
+                    created_by?: string | null;
+                    created_at?: string;
+                };
+                Relationships: [];
+            };
             user_profiles: {
                 Row: {
                     id: string;

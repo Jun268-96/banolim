@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Award, CalendarDays, ChevronLeft, ChevronRight, Crown, Flame, Layers3, Sparkles, Star, TrendingUp, Trophy, Users, X, Zap } from 'lucide-react';
+import { Award, CalendarDays, ChevronLeft, ChevronRight, Crown, Flame, Layers3, Share2, Sparkles, Star, TrendingUp, Trophy, Users, X, Zap } from 'lucide-react';
 import type { ActivityLog, Member, MemberBadge, SeasonSummary } from '../../types';
+import { ShareRecapCard } from '../recap/ShareRecapCard';
 
 type RecapPeriod = 'month' | 'season';
 
@@ -64,6 +65,7 @@ export const RecapViewer: React.FC<RecapViewerProps> = ({
 }) => {
     const [period, setPeriod] = useState<RecapPeriod>('season');
     const [currentSlide, setCurrentSlide] = useState(0);
+    const [showShareCard, setShowShareCard] = useState(false);
 
     const effectiveLogs = useMemo(
         () => logs.filter((log) => !log.isReversal && log.recordStatus !== 'reversed'),
@@ -409,6 +411,26 @@ export const RecapViewer: React.FC<RecapViewerProps> = ({
         ];
     }, [recap, scope.subtitle, scope.title, scopeBadges, scopeLogs.length]);
 
+    const shareCard = useMemo(() => ({
+        title: scope.title,
+        subtitle: scope.subtitle,
+        summary: recap.topTeam && recap.mvp
+            ? `${recap.topTeam.teamName}이 팀 흐름을 이끌었고, ${recap.mvp.name}님이 MVP를 기록했습니다.`
+            : '현재 구간의 운영 리캡을 한 장 카드로 압축했습니다.',
+        badge: period === 'month' ? '월간 운영 카드' : '시즌 운영 카드',
+        note: recap.bestDay
+            ? `${formatDate(recap.bestDay.day)}에 하루 최고 ${recap.bestDay.delta > 0 ? '+' : ''}${recap.bestDay.delta}점이 기록됐습니다.`
+            : '활동이 더 쌓이면 최고 활동일과 팀 흐름이 카드에 반영됩니다.',
+        mascotUrl: recap.badgeLeader ? bandiMascotUrl : didiMascotUrl,
+        fileName: `banollim-${period === 'month' ? 'monthly' : 'season'}-overview`,
+        stats: [
+            { label: '총 활동', value: `${recap.activityCount}건` },
+            { label: '참여 회원', value: `${recap.uniqueMemberCount}명` },
+            { label: '누적 총점', value: `${recap.totalPoints > 0 ? '+' : ''}${recap.totalPoints}점` },
+            { label: '신규 배지', value: `${scopeBadges.length}개` },
+        ],
+    }), [period, recap.activityCount, recap.badgeLeader, recap.bestDay, recap.mvp, recap.topTeam, recap.totalPoints, recap.uniqueMemberCount, scope.subtitle, scope.title, scopeBadges.length]);
+
     useEffect(() => {
         const timer = window.setInterval(() => {
             setCurrentSlide((prev) => (prev + 1) % slides.length);
@@ -423,6 +445,14 @@ export const RecapViewer: React.FC<RecapViewerProps> = ({
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/90 px-4 py-6 backdrop-blur-xl animate-in fade-in duration-300">
+            <button
+                type="button"
+                onClick={() => setShowShareCard(true)}
+                className="absolute left-5 top-5 rounded-full border border-white/10 bg-white/10 p-2 text-white/70 transition-colors hover:bg-white/20 hover:text-white"
+            >
+                <Share2 size={20} />
+            </button>
+
             <button
                 type="button"
                 onClick={onClose}
@@ -558,6 +588,20 @@ export const RecapViewer: React.FC<RecapViewerProps> = ({
                     </button>
                 </div>
             </div>
+
+            {showShareCard && (
+                <ShareRecapCard
+                    title={shareCard.title}
+                    subtitle={shareCard.subtitle}
+                    summary={shareCard.summary}
+                    badge={shareCard.badge}
+                    note={shareCard.note}
+                    mascotUrl={shareCard.mascotUrl}
+                    fileName={shareCard.fileName}
+                    stats={shareCard.stats}
+                    onClose={() => setShowShareCard(false)}
+                />
+            )}
         </div>
     );
 };

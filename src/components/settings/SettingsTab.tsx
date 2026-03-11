@@ -1,15 +1,21 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { CalendarDays, Plus, Settings, ShieldCheck, Users2, Trash2, Workflow } from 'lucide-react';
-import type { AppRole, Category, RoleSummary, SeasonStatus, SeasonSummary, TeamSummary, TeamType } from '../../types';
+import { CalendarDays, Megaphone, Plus, Settings, ShieldCheck, Trash2, Users2, Workflow } from 'lucide-react';
+import type { AnnouncementItem, AppRole, Category, RoleSummary, ScheduleEventItem, SeasonStatus, SeasonSummary, TeamSummary, TeamType } from '../../types';
 import {
     addCategory,
+    addAnnouncement,
     addRole,
+    addScheduleEvent,
     addSeason,
     addTeam,
     createCategoryVersion,
+    deleteAnnouncement,
     deleteCategory,
+    deleteScheduleEvent,
+    getAnnouncements,
     getCategories,
     getRoles,
+    getScheduleEvents,
     getSeasons,
     getTeams,
 } from '../../lib/db';
@@ -47,6 +53,8 @@ export const SettingsTab: React.FC = () => {
     const [roles, setRoles] = useState<RoleSummary[]>([]);
     const [teams, setTeams] = useState<TeamSummary[]>([]);
     const [seasons, setSeasons] = useState<SeasonSummary[]>([]);
+    const [announcements, setAnnouncements] = useState<AnnouncementItem[]>([]);
+    const [scheduleEvents, setScheduleEvents] = useState<ScheduleEventItem[]>([]);
 
     const [newCatName, setNewCatName] = useState('');
     const [newCatValue, setNewCatValue] = useState<number>(10);
@@ -67,6 +75,19 @@ export const SettingsTab: React.FC = () => {
     const [newSeasonEndDate, setNewSeasonEndDate] = useState('');
     const [newSeasonStatus, setNewSeasonStatus] = useState<SeasonStatus>('planned');
 
+    const [newAnnouncementTitle, setNewAnnouncementTitle] = useState('');
+    const [newAnnouncementBody, setNewAnnouncementBody] = useState('');
+    const [newAnnouncementStartAt, setNewAnnouncementStartAt] = useState('');
+    const [newAnnouncementEndAt, setNewAnnouncementEndAt] = useState('');
+    const [newAnnouncementPinned, setNewAnnouncementPinned] = useState(true);
+
+    const [newScheduleTitle, setNewScheduleTitle] = useState('');
+    const [newScheduleDescription, setNewScheduleDescription] = useState('');
+    const [newScheduleLocation, setNewScheduleLocation] = useState('');
+    const [newScheduleStartAt, setNewScheduleStartAt] = useState('');
+    const [newScheduleEndAt, setNewScheduleEndAt] = useState('');
+    const [newScheduleSeasonId, setNewScheduleSeasonId] = useState('');
+
     const [isLoading, setIsLoading] = useState(true);
 
     const versionSourceCategory = useMemo(
@@ -85,16 +106,20 @@ export const SettingsTab: React.FC = () => {
 
     const refreshData = async () => {
         setIsLoading(true);
-        const [categoriesData, rolesData, teamsData, seasonsData] = await Promise.all([
+        const [categoriesData, rolesData, teamsData, seasonsData, announcementsData, scheduleData] = await Promise.all([
             getCategories(),
             getRoles(),
             getTeams(),
             getSeasons(),
+            getAnnouncements(),
+            getScheduleEvents(),
         ]);
         setCategories(categoriesData);
         setRoles(rolesData);
         setTeams(teamsData);
         setSeasons(seasonsData);
+        setAnnouncements(announcementsData);
+        setScheduleEvents(scheduleData);
         setIsLoading(false);
     };
 
@@ -102,11 +127,13 @@ export const SettingsTab: React.FC = () => {
         let isMounted = true;
 
         const initialize = async () => {
-            const [categoriesData, rolesData, teamsData, seasonsData] = await Promise.all([
+            const [categoriesData, rolesData, teamsData, seasonsData, announcementsData, scheduleData] = await Promise.all([
                 getCategories(),
                 getRoles(),
                 getTeams(),
                 getSeasons(),
+                getAnnouncements(),
+                getScheduleEvents(),
             ]);
 
             if (!isMounted) {
@@ -117,6 +144,8 @@ export const SettingsTab: React.FC = () => {
             setRoles(rolesData);
             setTeams(teamsData);
             setSeasons(seasonsData);
+            setAnnouncements(announcementsData);
+            setScheduleEvents(scheduleData);
             setIsLoading(false);
         };
 
@@ -196,6 +225,60 @@ export const SettingsTab: React.FC = () => {
         setNewSeasonStartDate('');
         setNewSeasonEndDate('');
         setNewSeasonStatus('planned');
+        await refreshData();
+    };
+
+    const handleAddAnnouncement = async (event: React.FormEvent) => {
+        event.preventDefault();
+        if (!newAnnouncementTitle.trim() || !newAnnouncementBody.trim()) return;
+
+        await addAnnouncement({
+            title: newAnnouncementTitle,
+            body: newAnnouncementBody,
+            startAt: newAnnouncementStartAt || null,
+            endAt: newAnnouncementEndAt || null,
+            isPinned: newAnnouncementPinned,
+        });
+
+        setNewAnnouncementTitle('');
+        setNewAnnouncementBody('');
+        setNewAnnouncementStartAt('');
+        setNewAnnouncementEndAt('');
+        setNewAnnouncementPinned(true);
+        await refreshData();
+    };
+
+    const handleDeleteAnnouncement = async (id: string) => {
+        if (!confirm('이 공지를 비활성화할까요?')) return;
+        await deleteAnnouncement(id);
+        await refreshData();
+    };
+
+    const handleAddScheduleEvent = async (event: React.FormEvent) => {
+        event.preventDefault();
+        if (!newScheduleTitle.trim() || !newScheduleStartAt) return;
+
+        await addScheduleEvent({
+            title: newScheduleTitle,
+            description: newScheduleDescription,
+            location: newScheduleLocation,
+            startAt: newScheduleStartAt,
+            endAt: newScheduleEndAt || null,
+            seasonId: newScheduleSeasonId || null,
+        });
+
+        setNewScheduleTitle('');
+        setNewScheduleDescription('');
+        setNewScheduleLocation('');
+        setNewScheduleStartAt('');
+        setNewScheduleEndAt('');
+        setNewScheduleSeasonId('');
+        await refreshData();
+    };
+
+    const handleDeleteScheduleEvent = async (id: string) => {
+        if (!confirm('이 일정을 숨길까요?')) return;
+        await deleteScheduleEvent(id);
         await refreshData();
     };
 
@@ -592,6 +675,240 @@ export const SettingsTab: React.FC = () => {
                             </div>
                         </div>
                     ))}
+                </div>
+            </section>
+
+            <section className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+                <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+                    <div className="border-b border-slate-200 bg-slate-50/60 px-6 py-5">
+                        <div className="flex items-center gap-2 text-slate-900 font-semibold">
+                            <Megaphone size={18} className="text-indigo-600" />
+                            공지 관리
+                        </div>
+                        <div className="mt-1 text-sm text-slate-500">홈과 내 상태 화면에 노출할 운영 공지를 등록하고 정리합니다.</div>
+                    </div>
+
+                    <div className="space-y-5 p-6">
+                        <form onSubmit={handleAddAnnouncement} className="space-y-4">
+                            <label className="block space-y-1.5">
+                                <span className="text-xs font-medium text-slate-600">공지 제목</span>
+                                <input
+                                    type="text"
+                                    value={newAnnouncementTitle}
+                                    onChange={(event) => setNewAnnouncementTitle(event.target.value)}
+                                    className="w-full rounded-xl border border-slate-200 px-4 py-2 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                                    placeholder="예: 3월 전체 모임 안내"
+                                />
+                            </label>
+                            <label className="block space-y-1.5">
+                                <span className="text-xs font-medium text-slate-600">공지 내용</span>
+                                <textarea
+                                    value={newAnnouncementBody}
+                                    onChange={(event) => setNewAnnouncementBody(event.target.value)}
+                                    rows={4}
+                                    className="w-full resize-none rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                                    placeholder="일정 변경, 준비물, 제출 기한 등을 적어 주세요."
+                                />
+                            </label>
+                            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                                <label className="space-y-1.5">
+                                    <span className="text-xs font-medium text-slate-600">노출 시작</span>
+                                    <input
+                                        type="datetime-local"
+                                        value={newAnnouncementStartAt}
+                                        onChange={(event) => setNewAnnouncementStartAt(event.target.value)}
+                                        className="w-full rounded-xl border border-slate-200 px-4 py-2 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                                    />
+                                </label>
+                                <label className="space-y-1.5">
+                                    <span className="text-xs font-medium text-slate-600">노출 종료</span>
+                                    <input
+                                        type="datetime-local"
+                                        value={newAnnouncementEndAt}
+                                        onChange={(event) => setNewAnnouncementEndAt(event.target.value)}
+                                        className="w-full rounded-xl border border-slate-200 px-4 py-2 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                                    />
+                                </label>
+                            </div>
+                            <label className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-medium text-slate-700">
+                                <input
+                                    type="checkbox"
+                                    checked={newAnnouncementPinned}
+                                    onChange={(event) => setNewAnnouncementPinned(event.target.checked)}
+                                    className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                                />
+                                상단 고정 공지로 노출
+                            </label>
+                            <button
+                                type="submit"
+                                disabled={!newAnnouncementTitle.trim() || !newAnnouncementBody.trim()}
+                                className="inline-flex h-10 items-center gap-2 rounded-xl bg-indigo-600 px-5 text-sm font-semibold text-white transition-colors hover:bg-indigo-700 disabled:opacity-50"
+                            >
+                                <Plus size={16} />
+                                공지 등록
+                            </button>
+                        </form>
+
+                        <div className="space-y-3">
+                            {announcements.map((announcement) => (
+                                <div key={announcement.id} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                                    <div className="flex items-start justify-between gap-4">
+                                        <div>
+                                            <div className="flex flex-wrap items-center gap-2">
+                                                <div className="font-semibold text-slate-900">{announcement.title}</div>
+                                                {announcement.isPinned && (
+                                                    <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-700">
+                                                        고정
+                                                    </span>
+                                                )}
+                                            </div>
+                                            <div className="mt-2 text-sm leading-6 text-slate-600">{announcement.body}</div>
+                                            <div className="mt-3 text-xs text-slate-500">
+                                                {announcement.startAt ? `노출 시작 ${announcement.startAt}` : '즉시 노출'}
+                                                {announcement.endAt ? ` · 종료 ${announcement.endAt}` : ''}
+                                            </div>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={() => handleDeleteAnnouncement(announcement.id)}
+                                            className="rounded-xl border border-slate-200 bg-white p-2 text-slate-500 transition-colors hover:bg-rose-50 hover:text-rose-600"
+                                            title="공지 숨기기"
+                                        >
+                                            <Trash2 size={16} />
+                                        </button>
+                                    </div>
+                                </div>
+                            ))}
+                            {announcements.length === 0 && (
+                                <div className="rounded-2xl border border-dashed border-slate-200 px-4 py-8 text-center text-sm text-slate-500">
+                                    아직 등록된 공지가 없습니다.
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+
+                <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+                    <div className="border-b border-slate-200 bg-slate-50/60 px-6 py-5">
+                        <div className="flex items-center gap-2 text-slate-900 font-semibold">
+                            <CalendarDays size={18} className="text-indigo-600" />
+                            일정 관리
+                        </div>
+                        <div className="mt-1 text-sm text-slate-500">예정된 모임, 세션, 제출 마감 일정을 등록하고 노출 상태를 관리합니다.</div>
+                    </div>
+
+                    <div className="space-y-5 p-6">
+                        <form onSubmit={handleAddScheduleEvent} className="space-y-4">
+                            <label className="block space-y-1.5">
+                                <span className="text-xs font-medium text-slate-600">일정 제목</span>
+                                <input
+                                    type="text"
+                                    value={newScheduleTitle}
+                                    onChange={(event) => setNewScheduleTitle(event.target.value)}
+                                    className="w-full rounded-xl border border-slate-200 px-4 py-2 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                                    placeholder="예: 3월 정기모임"
+                                />
+                            </label>
+                            <label className="block space-y-1.5">
+                                <span className="text-xs font-medium text-slate-600">설명</span>
+                                <textarea
+                                    value={newScheduleDescription}
+                                    onChange={(event) => setNewScheduleDescription(event.target.value)}
+                                    rows={3}
+                                    className="w-full resize-none rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                                    placeholder="진행 주제, 준비물, 참가 방식 등을 적어 주세요."
+                                />
+                            </label>
+                            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                                <label className="space-y-1.5">
+                                    <span className="text-xs font-medium text-slate-600">시작 일시</span>
+                                    <input
+                                        type="datetime-local"
+                                        value={newScheduleStartAt}
+                                        onChange={(event) => setNewScheduleStartAt(event.target.value)}
+                                        className="w-full rounded-xl border border-slate-200 px-4 py-2 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                                    />
+                                </label>
+                                <label className="space-y-1.5">
+                                    <span className="text-xs font-medium text-slate-600">종료 일시</span>
+                                    <input
+                                        type="datetime-local"
+                                        value={newScheduleEndAt}
+                                        onChange={(event) => setNewScheduleEndAt(event.target.value)}
+                                        className="w-full rounded-xl border border-slate-200 px-4 py-2 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                                    />
+                                </label>
+                            </div>
+                            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                                <label className="space-y-1.5">
+                                    <span className="text-xs font-medium text-slate-600">장소</span>
+                                    <input
+                                        type="text"
+                                        value={newScheduleLocation}
+                                        onChange={(event) => setNewScheduleLocation(event.target.value)}
+                                        className="w-full rounded-xl border border-slate-200 px-4 py-2 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                                        placeholder="예: 4층 세미나실 / Discord"
+                                    />
+                                </label>
+                                <label className="space-y-1.5">
+                                    <span className="text-xs font-medium text-slate-600">연결 시즌</span>
+                                    <select
+                                        value={newScheduleSeasonId}
+                                        onChange={(event) => setNewScheduleSeasonId(event.target.value)}
+                                        className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                                    >
+                                        <option value="">시즌 미지정</option>
+                                        {seasons.map((season) => (
+                                            <option key={season.id} value={season.id}>
+                                                {season.name}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </label>
+                            </div>
+                            <button
+                                type="submit"
+                                disabled={!newScheduleTitle.trim() || !newScheduleStartAt}
+                                className="inline-flex h-10 items-center gap-2 rounded-xl bg-indigo-600 px-5 text-sm font-semibold text-white transition-colors hover:bg-indigo-700 disabled:opacity-50"
+                            >
+                                <Plus size={16} />
+                                일정 등록
+                            </button>
+                        </form>
+
+                        <div className="space-y-3">
+                            {scheduleEvents.map((scheduleEvent) => (
+                                <div key={scheduleEvent.id} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                                    <div className="flex items-start justify-between gap-4">
+                                        <div>
+                                            <div className="font-semibold text-slate-900">{scheduleEvent.title}</div>
+                                            {scheduleEvent.description && (
+                                                <div className="mt-2 text-sm leading-6 text-slate-600">{scheduleEvent.description}</div>
+                                            )}
+                                            <div className="mt-3 text-xs text-slate-500">
+                                                {scheduleEvent.startAt}
+                                                {scheduleEvent.endAt ? ` ~ ${scheduleEvent.endAt}` : ''}
+                                                {scheduleEvent.location ? ` · ${scheduleEvent.location}` : ''}
+                                            </div>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={() => handleDeleteScheduleEvent(scheduleEvent.id)}
+                                            className="rounded-xl border border-slate-200 bg-white p-2 text-slate-500 transition-colors hover:bg-rose-50 hover:text-rose-600"
+                                            title="일정 숨기기"
+                                        >
+                                            <Trash2 size={16} />
+                                        </button>
+                                    </div>
+                                </div>
+                            ))}
+                            {scheduleEvents.length === 0 && (
+                                <div className="rounded-2xl border border-dashed border-slate-200 px-4 py-8 text-center text-sm text-slate-500">
+                                    아직 등록된 일정이 없습니다.
+                                </div>
+                            )}
+                        </div>
+                    </div>
                 </div>
             </section>
         </div>

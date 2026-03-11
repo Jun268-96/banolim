@@ -16,6 +16,8 @@ grant select on public.audit_logs to authenticated;
 grant select on public.correction_requests to authenticated;
 grant select on public.badges to authenticated;
 grant select on public.member_badges to authenticated;
+grant select, insert, update on public.announcements to authenticated;
+grant select, insert, update on public.schedule_events to authenticated;
 grant execute on function public.award_member_badges(uuid) to authenticated;
 grant execute on function public.create_activity_entry(uuid, uuid, text, text, timestamptz, text) to authenticated;
 grant execute on function public.create_batch_activity_entries(uuid[], uuid, text, text, timestamptz, text) to authenticated;
@@ -39,6 +41,8 @@ alter table public.audit_logs enable row level security;
 alter table public.correction_requests enable row level security;
 alter table public.badges enable row level security;
 alter table public.member_badges enable row level security;
+alter table public.announcements enable row level security;
+alter table public.schedule_events enable row level security;
 
 drop policy if exists roles_select_all on public.roles;
 create policy roles_select_all on public.roles for select to anon, authenticated using (true);
@@ -118,3 +122,47 @@ on public.member_badges
 for select
 to authenticated
 using (public.can_access_member(member_id));
+
+drop policy if exists announcements_select_authenticated on public.announcements;
+create policy announcements_select_authenticated
+on public.announcements
+for select
+to authenticated
+using (true);
+
+drop policy if exists announcements_insert_authenticated on public.announcements;
+create policy announcements_insert_authenticated
+on public.announcements
+for insert
+to authenticated
+with check (public.can_manage_admin_tables());
+
+drop policy if exists announcements_update_authenticated on public.announcements;
+create policy announcements_update_authenticated
+on public.announcements
+for update
+to authenticated
+using (public.can_manage_admin_tables())
+with check (public.can_manage_admin_tables());
+
+drop policy if exists schedule_events_select_authenticated on public.schedule_events;
+create policy schedule_events_select_authenticated
+on public.schedule_events
+for select
+to authenticated
+using (true);
+
+drop policy if exists schedule_events_insert_authenticated on public.schedule_events;
+create policy schedule_events_insert_authenticated
+on public.schedule_events
+for insert
+to authenticated
+with check (public.can_manage_admin_tables());
+
+drop policy if exists schedule_events_update_authenticated on public.schedule_events;
+create policy schedule_events_update_authenticated
+on public.schedule_events
+for update
+to authenticated
+using (public.can_manage_admin_tables())
+with check (public.can_manage_admin_tables());

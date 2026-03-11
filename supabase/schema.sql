@@ -158,6 +158,31 @@ create table if not exists public.member_badges (
     season_id uuid references public.seasons(id) on delete set null
 );
 
+create table if not exists public.announcements (
+    id uuid primary key default gen_random_uuid(),
+    title text not null,
+    body text not null,
+    starts_at timestamptz,
+    ends_at timestamptz,
+    is_pinned boolean not null default false,
+    is_active boolean not null default true,
+    created_by uuid references public.members(id) on delete set null,
+    created_at timestamptz not null default now()
+);
+
+create table if not exists public.schedule_events (
+    id uuid primary key default gen_random_uuid(),
+    title text not null,
+    description text,
+    location text,
+    start_at timestamptz not null,
+    end_at timestamptz,
+    season_id uuid references public.seasons(id) on delete set null,
+    is_active boolean not null default true,
+    created_by uuid references public.members(id) on delete set null,
+    created_at timestamptz not null default now()
+);
+
 create or replace function public.current_actor_member_id()
 returns uuid
 language sql

@@ -1,10 +1,30 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Activity, BadgeCheck, Flame, Link2, Medal, MessageSquareWarning, PlayCircle, Send, ShieldCheck, Sparkles, TrendingUp, TriangleAlert, UserRound, Zap } from 'lucide-react';
-import type { ActivityLog, CorrectionRequest, CorrectionRequestStatus, Member, MemberBadge, MemberStatus, SeasonSummary } from '../../types';
-import { getCorrectionRequests, getCurrentSeason, getMyActivityLogs, getMyMemberBadges, getMyMemberOverview, submitCorrectionRequest } from '../../lib/db';
+import type {
+    ActivityLog,
+    AnnouncementItem,
+    CorrectionRequest,
+    CorrectionRequestStatus,
+    Member,
+    MemberBadge,
+    MemberStatus,
+    ScheduleEventItem,
+    SeasonSummary,
+} from '../../types';
+import {
+    getAnnouncements,
+    getCorrectionRequests,
+    getCurrentSeason,
+    getMyActivityLogs,
+    getMyMemberBadges,
+    getMyMemberOverview,
+    getScheduleEvents,
+    submitCorrectionRequest,
+} from '../../lib/db';
 import { roleLabels } from '../../lib/permissions';
 import { useAuth } from '../auth/auth-context';
 import { MemberRecapViewer } from './MemberRecapViewer';
+import { NoticeScheduleBoard } from '../shared/NoticeScheduleBoard';
 
 type TimelineRange = '30d' | '90d' | 'all';
 type MemberRecapPeriod = 'month' | 'season';
@@ -84,6 +104,8 @@ export const MemberHomeTab: React.FC = () => {
     const [member, setMember] = useState<Member | null>(null);
     const [logs, setLogs] = useState<ActivityLog[]>([]);
     const [memberBadges, setMemberBadges] = useState<MemberBadge[]>([]);
+    const [announcements, setAnnouncements] = useState<AnnouncementItem[]>([]);
+    const [scheduleEvents, setScheduleEvents] = useState<ScheduleEventItem[]>([]);
     const [correctionRequests, setCorrectionRequests] = useState<CorrectionRequest[]>([]);
     const [selectedRequestLog, setSelectedRequestLog] = useState<ActivityLog | null>(null);
     const [timelineRange, setTimelineRange] = useState<TimelineRange>('90d');
@@ -98,12 +120,14 @@ export const MemberHomeTab: React.FC = () => {
 
         const loadData = async () => {
             setIsLoading(true);
-            const [seasonData, memberData, logData, memberBadgeData, correctionRequestData] = await Promise.all([
+            const [seasonData, memberData, logData, memberBadgeData, correctionRequestData, announcementData, scheduleData] = await Promise.all([
                 getCurrentSeason(),
                 getMyMemberOverview(profile?.memberId ?? null),
                 getMyActivityLogs(profile?.memberId ?? null),
                 getMyMemberBadges(profile?.memberId ?? null),
                 getCorrectionRequests({ requesterMemberId: profile?.memberId ?? null }),
+                getAnnouncements(),
+                getScheduleEvents(),
             ]);
 
             if (!isMounted) {
@@ -115,6 +139,8 @@ export const MemberHomeTab: React.FC = () => {
             setLogs(logData);
             setMemberBadges(memberBadgeData);
             setCorrectionRequests(correctionRequestData);
+            setAnnouncements(announcementData);
+            setScheduleEvents(scheduleData);
             setIsLoading(false);
         };
 
@@ -453,6 +479,13 @@ export const MemberHomeTab: React.FC = () => {
                     </div>
                 </div>
             </section>
+
+            <NoticeScheduleBoard
+                announcements={announcements}
+                scheduleEvents={scheduleEvents}
+                title="공지와 다가오는 일정"
+                description="운영진이 공유한 안내와 예정된 일정을 한곳에서 확인할 수 있습니다."
+            />
 
             <section className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1.22fr)_minmax(320px,0.78fr)]">
                 <div className="space-y-6">

@@ -27,6 +27,29 @@ export interface TeamSummary {
     isActive: boolean;
 }
 
+export interface AnnouncementItem {
+    id: string;
+    title: string;
+    body: string;
+    startAt?: string | null;
+    endAt?: string | null;
+    isPinned: boolean;
+    isActive: boolean;
+    createdAt: string;
+}
+
+export interface ScheduleEventItem {
+    id: string;
+    title: string;
+    description?: string | null;
+    location?: string | null;
+    startAt: string;
+    endAt?: string | null;
+    seasonId?: string | null;
+    isActive: boolean;
+    createdAt: string;
+}
+
 export interface UserProfile {
     id: string;
     email: string;

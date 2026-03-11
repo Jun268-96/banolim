@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Users, Plus, Trash2, Search } from 'lucide-react';
+import { CheckCircle2, Clock3, Mail, Search, ShieldCheck, Trash2, Users, XCircle, Plus } from 'lucide-react';
 import type { Category, Member, MemberStatus, RoleSummary, TeamSummary } from '../../types';
 import {
     addMember,
@@ -55,6 +55,29 @@ const normalizeLoginEmail = (value: string) => {
     return normalized.length > 0 ? normalized : null;
 };
 
+type MemberViewMode = 'all' | 'pending' | 'approved' | 'inactive';
+
+const getApprovalTags = (member: Member) => {
+    const tags: Array<{ label: string; className: string }> = [];
+
+    if (!member.loginEmail) {
+        tags.push({ label: '이메일 미등록', className: 'border-sky-200 bg-sky-50 text-sky-700' });
+    }
+    if (!member.isApproved) {
+        tags.push({ label: '승인 대기', className: 'border-amber-200 bg-amber-50 text-amber-700' });
+    }
+    if (member.status === 'dormant') {
+        tags.push({ label: '보류', className: 'border-violet-200 bg-violet-50 text-violet-700' });
+    }
+    if (member.status === 'inactive') {
+        tags.push({ label: '반려/비활성', className: 'border-slate-200 bg-slate-100 text-slate-600' });
+    }
+
+    return tags;
+};
+
+const isAccessReady = (member: Member) => Boolean(member.loginEmail) && member.isApproved && member.status === 'active';
+
 export const DashboardTab: React.FC = () => {
     const { permissions } = useAuth();
     const [members, setMembers] = useState<Member[]>([]);
@@ -64,6 +87,7 @@ export const DashboardTab: React.FC = () => {
     const [newMemberName, setNewMemberName] = useState('');
     const [newMemberLoginEmail, setNewMemberLoginEmail] = useState('');
     const [searchQuery, setSearchQuery] = useState('');
+    const [memberView, setMemberView] = useState<MemberViewMode>('all');
     const [isLoading, setIsLoading] = useState(true);
     const [savingMemberId, setSavingMemberId] = useState<string | null>(null);
 
@@ -111,17 +135,45 @@ export const DashboardTab: React.FC = () => {
         };
     }, [permissions.canManageMembers]);
 
+    const approvalQueue = useMemo(
+        () =>
+            members
+                .filter((member) => !isAccessReady(member))
+                .sort((a, b) => {
+                    const approvalDiff = Number(a.isApproved) - Number(b.isApproved);
+                    if (approvalDiff !== 0) return approvalDiff;
+                    return (a.joinedAt ?? '').localeCompare(b.joinedAt ?? '');
+                }),
+        [members],
+    );
+
+    const viewScopedMembers = useMemo(() => {
+        if (memberView === 'pending') {
+            return approvalQueue;
+        }
+
+        if (memberView === 'approved') {
+            return members.filter((member) => isAccessReady(member));
+        }
+
+        if (memberView === 'inactive') {
+            return members.filter((member) => member.status === 'inactive');
+        }
+
+        return members;
+    }, [approvalQueue, memberView, members]);
+
     const filteredMembers = useMemo(() => {
         const query = searchQuery.trim().toLowerCase();
-        if (!query) return members;
+        if (!query) return viewScopedMembers;
 
-        return members.filter((member) =>
+        return viewScopedMembers.filter((member) =>
             [member.name, member.loginEmail ?? '', member.roleName ?? '', member.teamName ?? '', member.status ?? '']
                 .join(' ')
                 .toLowerCase()
                 .includes(query),
         );
-    }, [members, searchQuery]);
+    }, [searchQuery, viewScopedMembers]);
 
     const handleAddMember = async (event: React.FormEvent) => {
         event.preventDefault();
@@ -226,12 +278,12 @@ export const DashboardTab: React.FC = () => {
                     <div className="mt-2 text-3xl font-bold text-slate-900">{members.length}</div>
                 </div>
                 <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-                    <div className="text-sm text-slate-500">승인 완료</div>
-                    <div className="mt-2 text-3xl font-bold text-slate-900">{members.filter((member) => member.isApproved).length}</div>
+                    <div className="text-sm text-slate-500">승인 대기</div>
+                    <div className="mt-2 text-3xl font-bold text-slate-900">{members.filter((member) => !member.isApproved && member.status !== 'inactive').length}</div>
                 </div>
                 <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-                    <div className="text-sm text-slate-500">활동 중 멤버</div>
-                    <div className="mt-2 text-3xl font-bold text-slate-900">{members.filter((member) => member.status === 'active').length}</div>
+                    <div className="text-sm text-slate-500">즉시 접근 가능</div>
+                    <div className="mt-2 text-3xl font-bold text-slate-900">{members.filter((member) => isAccessReady(member)).length}</div>
                 </div>
                 <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
                     <div className="text-sm text-slate-500">참여 팀 수</div>
@@ -239,9 +291,135 @@ export const DashboardTab: React.FC = () => {
                 </div>
             </div>
 
+            {permissions.canManageMembers && (
+                <section className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+                    <div className="flex flex-col gap-3 border-b border-slate-100 bg-slate-50/70 px-6 py-5 lg:flex-row lg:items-center lg:justify-between">
+                        <div>
+                            <div className="flex items-center gap-2 font-semibold text-slate-900">
+                                <ShieldCheck size={18} className="text-indigo-600" />
+                                승인 대기 큐
+                            </div>
+                            <div className="mt-1 text-sm text-slate-500">
+                                로그인 이메일, 승인 여부, 회원 상태를 확인한 뒤 바로 승인/보류/반려할 수 있습니다.
+                            </div>
+                        </div>
+                        <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600">
+                            <Clock3 size={16} className="text-amber-600" />
+                            처리 대상 {approvalQueue.length}명
+                        </div>
+                    </div>
+
+                    <div className="grid gap-4 p-6 xl:grid-cols-2">
+                        {approvalQueue.slice(0, 6).map((member) => {
+                            const approvalTags = getApprovalTags(member);
+                            const isSavingRow = savingMemberId === member.id;
+                            const canApprove = Boolean(member.loginEmail);
+
+                            return (
+                                <div key={member.id} className="rounded-[24px] border border-slate-200 bg-slate-50 p-5">
+                                    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                                        <div className="space-y-3">
+                                            <div>
+                                                <div className="text-lg font-bold text-slate-900">{member.name}</div>
+                                                <div className="mt-1 text-sm text-slate-500">
+                                                    {member.loginEmail ?? '로그인 이메일이 아직 등록되지 않았습니다.'}
+                                                </div>
+                                            </div>
+
+                                            <div className="flex flex-wrap gap-2">
+                                                {approvalTags.map((tag) => (
+                                                    <span key={tag.label} className={`inline-flex rounded-full border px-3 py-1 text-xs font-semibold ${tag.className}`}>
+                                                        {tag.label}
+                                                    </span>
+                                                ))}
+                                            </div>
+
+                                            <div className="text-sm text-slate-500">
+                                                역할 {member.roleName ?? '미지정'} · 팀 {member.teamName ?? '미지정'} · 가입일 {formatDate(member.joinedAt)}
+                                            </div>
+                                        </div>
+
+                                        <div className="flex min-w-[220px] flex-wrap gap-2 lg:justify-end">
+                                            <button
+                                                type="button"
+                                                disabled={isSavingRow || !canApprove}
+                                                onClick={() => {
+                                                    void handleMemberUpdate(member.id, { isApproved: true, status: 'active' });
+                                                }}
+                                                className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+                                            >
+                                                <CheckCircle2 size={16} />
+                                                즉시 승인
+                                            </button>
+                                            <button
+                                                type="button"
+                                                disabled={isSavingRow}
+                                                onClick={() => {
+                                                    void handleMemberUpdate(member.id, { isApproved: false, status: 'dormant' });
+                                                }}
+                                                className="inline-flex items-center gap-2 rounded-xl border border-violet-200 bg-violet-50 px-4 py-2 text-sm font-semibold text-violet-700 transition-colors hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-60"
+                                            >
+                                                <Clock3 size={16} />
+                                                보류
+                                            </button>
+                                            <button
+                                                type="button"
+                                                disabled={isSavingRow}
+                                                onClick={() => {
+                                                    void handleMemberUpdate(member.id, { isApproved: false, status: 'inactive' });
+                                                }}
+                                                className="inline-flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-sm font-semibold text-rose-700 transition-colors hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
+                                            >
+                                                <XCircle size={16} />
+                                                반려
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    {!canApprove && (
+                                        <div className="mt-4 inline-flex items-center gap-2 rounded-full border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs font-semibold text-sky-700">
+                                            <Mail size={14} />
+                                            로그인 이메일을 먼저 입력해야 승인할 수 있습니다.
+                                        </div>
+                                    )}
+                                </div>
+                            );
+                        })}
+
+                        {approvalQueue.length === 0 && (
+                            <div className="xl:col-span-2 rounded-[24px] border border-emerald-200 bg-emerald-50 px-6 py-10 text-center">
+                                <div className="text-lg font-semibold text-emerald-800">현재 처리할 승인 대기 멤버가 없습니다.</div>
+                                <div className="mt-2 text-sm text-emerald-700">로그인 이메일이 등록되고 승인된 회원은 즉시 서비스에 접근할 수 있습니다.</div>
+                            </div>
+                        )}
+                    </div>
+                </section>
+            )}
+
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
                 <div className="border-b border-slate-100 px-6 py-3 text-sm text-slate-500">
                     화면 폭이 좁으면 표를 좌우로 스크롤해 전체 정보를 확인할 수 있습니다. 로그인 이메일이 등록된 회원만 실제 서비스에 로그인할 수 있습니다.
+                </div>
+                <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 px-6 py-4">
+                    {([
+                        { id: 'all' as const, label: '전체', count: members.length },
+                        { id: 'pending' as const, label: '승인 대기', count: approvalQueue.length },
+                        { id: 'approved' as const, label: '즉시 접근 가능', count: members.filter((member) => isAccessReady(member)).length },
+                        { id: 'inactive' as const, label: '비활성', count: members.filter((member) => member.status === 'inactive').length },
+                    ]).map((option) => (
+                        <button
+                            key={option.id}
+                            type="button"
+                            onClick={() => setMemberView(option.id)}
+                            className={`rounded-full px-3 py-1.5 text-sm font-semibold transition-colors ${
+                                memberView === option.id
+                                    ? 'bg-indigo-600 text-white'
+                                    : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                            }`}
+                        >
+                            {option.label} {option.count}
+                        </button>
+                    ))}
                 </div>
                 <div className="overflow-x-auto pb-2">
                     <table className={`${permissions.canManageMembers ? 'min-w-[1720px]' : 'min-w-[1480px]'} w-max text-left border-collapse`}>

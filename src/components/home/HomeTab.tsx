@@ -1,9 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowRight, CalendarDays, Medal, Sparkles, TrendingUp, Users, Zap } from 'lucide-react';
-import type { ActivityLog, Category, Member, SeasonSummary } from '../../types';
-import { getCategories, getCurrentSeason, getLogs, getMembers } from '../../lib/db';
+import { ArrowRight, CalendarDays, Clock3, Mail, Medal, ShieldCheck, Sparkles, TrendingUp, Users, Zap } from 'lucide-react';
+import type { ActivityLog, AnnouncementItem, Category, Member, ScheduleEventItem, SeasonSummary } from '../../types';
+import { getAnnouncements, getCategories, getCurrentSeason, getLogs, getMembers, getScheduleEvents } from '../../lib/db';
 import { useAuth } from '../auth/auth-context';
 import type { TabType } from '../layout/Sidebar';
+import { NoticeScheduleBoard } from '../shared/NoticeScheduleBoard';
 
 interface HomeTabProps {
     onNavigate: (tab: TabType) => void;
@@ -17,27 +18,46 @@ const formatDate = (value?: string | null) =>
 const formatDateTime = (value: string) =>
     new Intl.DateTimeFormat('ko-KR', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
 
+const getApprovalTags = (member: Member) => {
+    const tags: string[] = [];
+
+    if (!member.loginEmail) tags.push('이메일 미등록');
+    if (!member.isApproved) tags.push('승인 대기');
+    if (member.status === 'dormant') tags.push('보류');
+    if (member.status === 'inactive') tags.push('비활성');
+
+    return tags;
+};
+
+const isAccessReady = (member: Member) => Boolean(member.loginEmail) && member.isApproved && member.status === 'active';
+
 export const HomeTab: React.FC<HomeTabProps> = ({ onNavigate }) => {
     const { permissions } = useAuth();
     const [season, setSeason] = useState<SeasonSummary | null>(null);
     const [members, setMembers] = useState<Member[]>([]);
     const [categories, setCategories] = useState<Category[]>([]);
     const [logs, setLogs] = useState<ActivityLog[]>([]);
+    const [announcements, setAnnouncements] = useState<AnnouncementItem[]>([]);
+    const [scheduleEvents, setScheduleEvents] = useState<ScheduleEventItem[]>([]);
     const [isLoading, setIsLoading] = useState(true);
 
     useEffect(() => {
         const loadData = async () => {
             setIsLoading(true);
-            const [seasonData, memberData, categoryData, logData] = await Promise.all([
+            const [seasonData, memberData, categoryData, logData, announcementData, scheduleData] = await Promise.all([
                 getCurrentSeason(),
                 getMembers(),
                 getCategories(),
                 getLogs(),
+                getAnnouncements(),
+                getScheduleEvents(),
             ]);
             setSeason(seasonData);
             setMembers(memberData);
             setCategories(categoryData);
             setLogs(logData);
+            setAnnouncements(announcementData);
+            setScheduleEvents(scheduleData);
             setIsLoading(false);
         };
 
@@ -89,7 +109,24 @@ export const HomeTab: React.FC<HomeTabProps> = ({ onNavigate }) => {
             .map(([team, summary]) => ({ team, ...summary }))
             .sort((a, b) => b.score - a.score);
 
-        return { topMember, recentLogs, mostConsistent, hottestRule, teamSummary, effectiveLogsCount: effectiveLogs.length };
+        const approvalQueue = members
+            .filter((member) => !isAccessReady(member))
+            .map((member) => ({
+                member,
+                tags: getApprovalTags(member),
+            }))
+            .slice(0, 4);
+
+        return {
+            topMember,
+            recentLogs,
+            mostConsistent,
+            hottestRule,
+            teamSummary,
+            approvalQueue,
+            blockedAccessCount: members.filter((member) => !isAccessReady(member)).length,
+            effectiveLogsCount: effectiveLogs.length,
+        };
     }, [categories, logs, members]);
 
     const quickActions = [
@@ -107,6 +144,14 @@ export const HomeTab: React.FC<HomeTabProps> = ({ onNavigate }) => {
                   label: '일괄 점수 반영',
                   description: '같은 규칙을 여러 회원에게 한 번에 반영합니다.',
                   icon: Users,
+              }
+            : null,
+        permissions.canManageMembers
+            ? {
+                  id: 'dashboard' as const,
+                  label: '승인 대기 검토',
+                  description: '로그인 이메일과 승인 상태를 빠르게 처리합니다.',
+                  icon: ShieldCheck,
               }
             : null,
         {
@@ -216,9 +261,16 @@ export const HomeTab: React.FC<HomeTabProps> = ({ onNavigate }) => {
                 </div>
             </section>
 
+            <NoticeScheduleBoard
+                announcements={announcements}
+                scheduleEvents={scheduleEvents}
+                manageLabel={permissions.canManageSettings ? '설정에서 관리' : undefined}
+                onManage={permissions.canManageSettings ? () => onNavigate('settings') : undefined}
+            />
+
             <section className="grid grid-cols-1 gap-6 xl:grid-cols-[1.15fr_0.85fr]">
                 <div className="space-y-6">
-                    <div className={`grid gap-4 ${quickActions.length >= 3 ? 'md:grid-cols-3' : 'md:grid-cols-2'}`}>
+                    <div className={`grid gap-4 ${quickActions.length >= 4 ? 'md:grid-cols-2 xl:grid-cols-4' : quickActions.length >= 3 ? 'md:grid-cols-3' : 'md:grid-cols-2'}`}>
                         {quickActions.map((action) => {
                             if (!action) {
                                 return null;
@@ -285,6 +337,68 @@ export const HomeTab: React.FC<HomeTabProps> = ({ onNavigate }) => {
                 </div>
 
                 <div className="space-y-6">
+                    {permissions.canManageMembers && (
+                        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+                            <div className="flex items-center justify-between gap-3">
+                                <div className="flex items-center gap-2 font-semibold text-slate-900">
+                                    <ShieldCheck size={18} className="text-indigo-600" />
+                                    승인 대기
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => onNavigate('dashboard')}
+                                    className="text-sm font-medium text-indigo-600 hover:text-indigo-700"
+                                >
+                                    멤버 화면으로 이동
+                                </button>
+                            </div>
+                            <div className="mt-2 text-sm text-slate-500">
+                                로그인 이메일 누락, 승인 대기, 보류 상태를 홈에서도 바로 확인할 수 있습니다.
+                            </div>
+
+                            <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4">
+                                <div className="flex items-center gap-2 text-sm font-semibold text-amber-800">
+                                    <Clock3 size={16} />
+                                    처리 대상 {insights.blockedAccessCount}명
+                                </div>
+                                <div className="mt-2 text-sm text-amber-700">
+                                    승인과 이메일 등록이 끝나야 실제 로그인 후 앱에 접근할 수 있습니다.
+                                </div>
+                            </div>
+
+                            <div className="mt-5 space-y-3">
+                                {insights.approvalQueue.map(({ member, tags }) => (
+                                    <div key={member.id} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                                        <div className="flex items-start justify-between gap-4">
+                                            <div>
+                                                <div className="font-semibold text-slate-900">{member.name}</div>
+                                                <div className="mt-1 text-sm text-slate-500">
+                                                    {member.loginEmail ?? '로그인 이메일이 아직 없습니다.'}
+                                                </div>
+                                            </div>
+                                            {!member.loginEmail && <Mail size={16} className="mt-1 text-sky-600" />}
+                                        </div>
+                                        <div className="mt-3 flex flex-wrap gap-2">
+                                            {tags.map((tag) => (
+                                                <span
+                                                    key={`${member.id}-${tag}`}
+                                                    className="inline-flex rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600"
+                                                >
+                                                    {tag}
+                                                </span>
+                                            ))}
+                                        </div>
+                                    </div>
+                                ))}
+                                {insights.approvalQueue.length === 0 && (
+                                    <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-6 text-center text-sm font-medium text-emerald-700">
+                                        현재 승인 대기 멤버가 없습니다.
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    )}
+
                     <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
                         <div className="flex items-center gap-2 font-semibold text-slate-900">
                             <Medal size={18} className="text-indigo-600" />
