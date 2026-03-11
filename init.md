@@ -146,9 +146,9 @@
 
 ~~PointLedger~~
 
-Badge
+~~Badge~~
 
-MemberBadge
+~~MemberBadge~~
 
 ~~AuditLog~~
 

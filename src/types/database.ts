@@ -327,6 +327,66 @@ export interface Database {
                 };
                 Relationships: [];
             };
+            badges: {
+                Row: {
+                    id: string;
+                    code: string;
+                    name: string;
+                    description: string;
+                    icon_key: string;
+                    tone: string;
+                    sort_order: number;
+                    is_active: boolean;
+                    created_at: string;
+                };
+                Insert: {
+                    id?: string;
+                    code: string;
+                    name: string;
+                    description: string;
+                    icon_key: string;
+                    tone?: string;
+                    sort_order?: number;
+                    is_active?: boolean;
+                    created_at?: string;
+                };
+                Update: {
+                    id?: string;
+                    code?: string;
+                    name?: string;
+                    description?: string;
+                    icon_key?: string;
+                    tone?: string;
+                    sort_order?: number;
+                    is_active?: boolean;
+                    created_at?: string;
+                };
+                Relationships: [];
+            };
+            member_badges: {
+                Row: {
+                    id: string;
+                    member_id: string;
+                    badge_id: string;
+                    awarded_at: string;
+                    season_id: string | null;
+                };
+                Insert: {
+                    id?: string;
+                    member_id: string;
+                    badge_id: string;
+                    awarded_at?: string;
+                    season_id?: string | null;
+                };
+                Update: {
+                    id?: string;
+                    member_id?: string;
+                    badge_id?: string;
+                    awarded_at?: string;
+                    season_id?: string | null;
+                };
+                Relationships: [];
+            };
             user_profiles: {
                 Row: {
                     id: string;
@@ -462,6 +522,21 @@ export interface Database {
                     status: Database['public']['Enums']['member_status'];
                     team_id: string | null;
                     team_name: string | null;
+                }[];
+            };
+            get_my_member_badges: {
+                Args: Record<string, never>;
+                Returns: {
+                    awarded_at: string;
+                    badge_code: string;
+                    badge_description: string;
+                    badge_id: string;
+                    badge_name: string;
+                    icon_key: string;
+                    id: string;
+                    member_id: string;
+                    season_id: string | null;
+                    tone: string;
                 }[];
             };
             reverse_activity_entry: {

@@ -1,4 +1,4 @@
-import type { ActivityLog, AuditLogEntry, Category, CorrectionRequest, CorrectionRequestStatus, Member, RoleSummary, SeasonSummary, TeamSummary, TeamType, SeasonStatus } from '../types';
+import type { ActivityLog, AuditLogEntry, Badge, BadgeTone, Category, CorrectionRequest, CorrectionRequestStatus, Member, MemberBadge, RoleSummary, SeasonSummary, TeamSummary, TeamType, SeasonStatus } from '../types';
 import { isSupabaseConfigured, supabase } from './supabase';
 import type { Database, Json } from '../types/database';
 
@@ -14,6 +14,7 @@ type MemberScoreSummaryRow = Database['public']['Views']['member_score_summary']
 type PointRuleCatalogRow = Database['public']['Views']['point_rule_catalog']['Row'];
 type MyMemberOverviewRow = Database['public']['Functions']['get_my_member_overview']['Returns'][number];
 type MyActivityLogRow = Database['public']['Functions']['get_my_activity_logs']['Returns'][number];
+type MyMemberBadgeRow = Database['public']['Functions']['get_my_member_badges']['Returns'][number];
 
 const createLocalId = (prefix: string) => `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
 const normalizeLoginEmail = (value?: string | null) => {
@@ -229,6 +230,71 @@ const localCorrectionRequests: CorrectionRequest[] = [
     },
 ];
 
+const localBadges: Badge[] = [
+    {
+        id: 'badge_first_step',
+        code: 'first_step',
+        name: '첫 발자국',
+        description: '첫 활동 기록을 남겼습니다.',
+        iconKey: 'bandi-core',
+        tone: 'gold',
+        sortOrder: 10,
+        isActive: true,
+    },
+    {
+        id: 'badge_steady_rhythm',
+        code: 'steady_rhythm',
+        name: '꾸준한 리듬',
+        description: '서로 다른 날짜에 3회 이상 활동을 이어갔습니다.',
+        iconKey: 'bandi-orbit',
+        tone: 'emerald',
+        sortOrder: 20,
+        isActive: true,
+    },
+    {
+        id: 'badge_attendance_radar',
+        code: 'attendance_radar',
+        name: '출석 레이더',
+        description: '출석 계열 활동을 5회 이상 기록했습니다.',
+        iconKey: 'school-signal',
+        tone: 'sky',
+        sortOrder: 30,
+        isActive: true,
+    },
+    {
+        id: 'badge_spotlight',
+        code: 'spotlight',
+        name: '스포트라이트',
+        description: '발표 또는 고점수 기여를 남겼습니다.',
+        iconKey: 'bandi-flash',
+        tone: 'rose',
+        sortOrder: 40,
+        isActive: true,
+    },
+    {
+        id: 'badge_multi_tool',
+        code: 'multi_tool',
+        name: '멀티 플레이어',
+        description: '서로 다른 활동 유형 4개 이상을 경험했습니다.',
+        iconKey: 'didi-toolkit',
+        tone: 'sky',
+        sortOrder: 50,
+        isActive: true,
+    },
+    {
+        id: 'badge_archive_keeper',
+        code: 'archive_keeper',
+        name: '기록 보관자',
+        description: '증빙 링크가 포함된 활동을 2건 이상 남겼습니다.',
+        iconKey: 'didi-archive',
+        tone: 'emerald',
+        sortOrder: 60,
+        isActive: true,
+    },
+];
+
+const localMemberBadges: MemberBadge[] = [];
+
 const localRoles: RoleSummary[] = [
     { id: 'r1', name: '회장', permissionScope: 'super_admin', rankOrder: 10 },
     { id: 'r2', name: '부회장', permissionScope: 'operator', rankOrder: 20 },
@@ -317,6 +383,86 @@ const getLocalCorrectionRequests = (requesterMemberId?: string | null) =>
             .filter((request) => !requesterMemberId || request.requesterMemberId === requesterMemberId)
             .map((request) => ({ ...request })),
     );
+
+const badgeToneByCode: Record<string, BadgeTone> = {
+    first_step: 'gold',
+    steady_rhythm: 'emerald',
+    attendance_radar: 'sky',
+    spotlight: 'rose',
+    multi_tool: 'sky',
+    archive_keeper: 'emerald',
+};
+
+const getEffectiveLocalLogsForMember = (memberId: string) =>
+    enrichLocalLogs().filter((log) => log.memberId === memberId && !log.isReversal && log.recordStatus !== 'reversed');
+
+const getEligibleLocalBadgeCodes = (memberId: string) => {
+    const logs = getEffectiveLocalLogsForMember(memberId);
+    const attendanceCount = logs.filter((log) => /(출석|참석|지각|불참)/.test(log.categoryName ?? log.reason ?? '')).length;
+    const distinctActiveDays = new Set(logs.map((log) => log.timestamp.slice(0, 10))).size;
+    const spotlightCount = logs.filter((log) => log.pointDelta >= 20 || /(발표|세션|리딩)/.test(log.categoryName ?? log.reason ?? '')).length;
+    const uniqueCategoryCount = new Set(logs.map((log) => log.categoryName ?? log.categoryId)).size;
+    const evidenceCount = logs.filter((log) => Boolean(log.evidenceUrl)).length;
+
+    return new Set([
+        ...(logs.length > 0 ? ['first_step'] : []),
+        ...(distinctActiveDays >= 3 ? ['steady_rhythm'] : []),
+        ...(attendanceCount >= 5 ? ['attendance_radar'] : []),
+        ...(spotlightCount >= 1 ? ['spotlight'] : []),
+        ...(uniqueCategoryCount >= 4 ? ['multi_tool'] : []),
+        ...(evidenceCount >= 2 ? ['archive_keeper'] : []),
+    ]);
+};
+
+const syncLocalMemberBadges = (memberId?: string | null) => {
+    const targetIds = memberId ? [memberId] : localMembers.map((member) => member.id);
+    const activeSeasonId = localCurrentSeason.id;
+
+    targetIds.forEach((targetId) => {
+        const eligibleCodes = getEligibleLocalBadgeCodes(targetId);
+
+        for (const badge of localBadges) {
+            if (!eligibleCodes.has(badge.code)) {
+                continue;
+            }
+
+            const alreadyAwarded = localMemberBadges.some((entry) => entry.memberId === targetId && entry.badgeCode === badge.code);
+            if (alreadyAwarded) {
+                continue;
+            }
+
+            localMemberBadges.push({
+                id: createLocalId('member_badge'),
+                memberId: targetId,
+                badgeId: badge.id,
+                badgeCode: badge.code,
+                badgeName: badge.name,
+                badgeDescription: badge.description,
+                iconKey: badge.iconKey,
+                tone: badge.tone ?? badgeToneByCode[badge.code] ?? 'sky',
+                awardedAt: new Date().toISOString(),
+                seasonId: activeSeasonId,
+            });
+        }
+    });
+};
+
+const getLocalMemberBadges = (memberId?: string | null) => {
+    const targetId = memberId ?? getLocalSelfMember()?.id;
+    if (!targetId) {
+        return [] as MemberBadge[];
+    }
+
+    syncLocalMemberBadges(targetId);
+
+    return [...localMemberBadges]
+        .filter((entry) => entry.memberId === targetId)
+        .sort((a, b) => {
+            const badgeA = localBadges.find((badge) => badge.id === a.badgeId);
+            const badgeB = localBadges.find((badge) => badge.id === b.badgeId);
+            return (badgeA?.sortOrder ?? 999) - (badgeB?.sortOrder ?? 999) || b.awardedAt.localeCompare(a.awardedAt);
+        });
+};
 
 const parseJsonObject = (value: Json): Record<string, unknown> | null => {
     if (!value || Array.isArray(value) || typeof value !== 'object') {
@@ -575,6 +721,19 @@ const mapMyActivityLogRow = (row: MyActivityLogRow): ActivityLog => ({
     recordStatus: row.record_status,
 });
 
+const mapMyMemberBadgeRow = (row: MyMemberBadgeRow): MemberBadge => ({
+    id: row.id,
+    memberId: row.member_id,
+    badgeId: row.badge_id,
+    badgeCode: row.badge_code,
+    badgeName: row.badge_name,
+    badgeDescription: row.badge_description,
+    iconKey: row.icon_key,
+    tone: (row.tone as BadgeTone | null) ?? 'sky',
+    awardedAt: row.awarded_at,
+    seasonId: row.season_id,
+});
+
 const mapCorrectionRequestRow = (
     row: CorrectionRequestRow,
     logs: ActivityLog[],
@@ -643,6 +802,25 @@ export const getMyActivityLogs = async (memberId?: string | null): Promise<Activ
         return ((data ?? []) as MyActivityLogRow[]).map(mapMyActivityLogRow);
     } catch (error) {
         return fallback('getMyActivityLogs', () => getLocalSelfLogs(memberId), error);
+    }
+};
+
+export const getMyMemberBadges = async (memberId?: string | null): Promise<MemberBadge[]> => {
+    if (!isSupabaseConfigured) {
+        return getLocalMemberBadges(memberId);
+    }
+
+    try {
+        const client = getSupabaseClient();
+        const { data, error } = await client.rpc('get_my_member_badges');
+
+        if (error) {
+            throw error;
+        }
+
+        return ((data ?? []) as MyMemberBadgeRow[]).map(mapMyMemberBadgeRow);
+    } catch (error) {
+        return fallback('getMyMemberBadges', () => getLocalMemberBadges(memberId), error);
     }
 };
 
@@ -1399,6 +1577,7 @@ export const createActivityEntry = async (
                 evidenceUrl,
             },
         });
+        syncLocalMemberBadges(memberId);
         return;
     }
 
@@ -1452,6 +1631,7 @@ export const createActivityEntry = async (
                     evidenceUrl,
                 },
             });
+            syncLocalMemberBadges(memberId);
         }
 
         fallback('createActivityEntry', () => undefined, error);
@@ -1564,6 +1744,7 @@ export const reverseActivityEntry = async (recordId: string, note?: string): Pro
                 reason: trimmedNote ?? `기록 취소 · ${originalLog.reason ?? originalLog.categoryName ?? '원본 기록'}`,
             },
         });
+        syncLocalMemberBadges(originalLog.memberId);
     };
 
     if (!isSupabaseConfigured) {

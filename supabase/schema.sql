@@ -138,6 +138,26 @@ create table if not exists public.correction_requests (
     updated_at timestamptz not null default now()
 );
 
+create table if not exists public.badges (
+    id uuid primary key default gen_random_uuid(),
+    code text not null unique,
+    name text not null,
+    description text not null,
+    icon_key text not null,
+    tone text not null default 'sky',
+    sort_order integer not null default 100,
+    is_active boolean not null default true,
+    created_at timestamptz not null default now()
+);
+
+create table if not exists public.member_badges (
+    id uuid primary key default gen_random_uuid(),
+    member_id uuid not null references public.members(id) on delete cascade,
+    badge_id uuid not null references public.badges(id) on delete cascade,
+    awarded_at timestamptz not null default now(),
+    season_id uuid references public.seasons(id) on delete set null
+);
+
 create or replace function public.current_actor_member_id()
 returns uuid
 language sql
@@ -475,6 +495,8 @@ begin
         )
     );
 
+    perform public.award_member_badges(p_member_id);
+
     return v_record_id;
 end;
 $$;
@@ -514,6 +536,181 @@ begin
     end loop;
 
     return v_record_ids;
+end;
+$$;
+
+create or replace function public.award_member_badges(
+    p_member_id uuid default public.current_actor_member_id()
+)
+returns integer
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+    v_activity_count integer := 0;
+    v_attendance_count integer := 0;
+    v_spotlight_count integer := 0;
+    v_unique_activity_types integer := 0;
+    v_evidence_count integer := 0;
+    v_active_days integer := 0;
+    v_active_season_id uuid;
+    v_awarded integer := 0;
+    v_row_count integer := 0;
+begin
+    if p_member_id is null then
+        return 0;
+    end if;
+
+    if not public.can_access_member(p_member_id) and not public.can_manage_activities() then
+        raise exception '해당 회원의 배지를 갱신할 권한이 없습니다.';
+    end if;
+
+    select seasons.id
+    into v_active_season_id
+    from public.seasons
+    where seasons.status = 'active'
+    order by seasons.start_date desc
+    limit 1;
+
+    select
+        count(*)::integer,
+        count(*) filter (where activity_types.name ~* '(출석|참석|지각|불참)')::integer,
+        count(*) filter (where point_ledgers.delta >= 20 or activity_types.name ~* '(발표|세션|리딩)')::integer,
+        count(distinct activity_records.activity_type_id)::integer,
+        count(*) filter (where nullif(btrim(coalesce(activity_records.evidence_url, '')), '') is not null)::integer,
+        count(distinct (activity_records.occurred_at::date))::integer
+    into
+        v_activity_count,
+        v_attendance_count,
+        v_spotlight_count,
+        v_unique_activity_types,
+        v_evidence_count,
+        v_active_days
+    from public.activity_records
+    join public.point_ledgers on point_ledgers.record_id = activity_records.id
+        and point_ledgers.member_id = activity_records.member_id
+        and point_ledgers.reversal_of is null
+    join public.point_rules on point_rules.id = point_ledgers.point_rule_id
+    join public.activity_types on activity_types.id = point_rules.activity_type_id
+    where activity_records.member_id = p_member_id
+      and coalesce(activity_records.status, 'confirmed') <> 'reversed';
+
+    if v_activity_count > 0 then
+        insert into public.member_badges (member_id, badge_id, season_id)
+        select p_member_id, badges.id, v_active_season_id
+        from public.badges
+        where badges.code = 'first_step'
+          and badges.is_active = true
+        on conflict (member_id, badge_id) do nothing;
+        get diagnostics v_row_count = row_count;
+        v_awarded := v_awarded + v_row_count;
+    end if;
+
+    if v_active_days >= 3 then
+        insert into public.member_badges (member_id, badge_id, season_id)
+        select p_member_id, badges.id, v_active_season_id
+        from public.badges
+        where badges.code = 'steady_rhythm'
+          and badges.is_active = true
+        on conflict (member_id, badge_id) do nothing;
+        get diagnostics v_row_count = row_count;
+        v_awarded := v_awarded + v_row_count;
+    end if;
+
+    if v_attendance_count >= 5 then
+        insert into public.member_badges (member_id, badge_id, season_id)
+        select p_member_id, badges.id, v_active_season_id
+        from public.badges
+        where badges.code = 'attendance_radar'
+          and badges.is_active = true
+        on conflict (member_id, badge_id) do nothing;
+        get diagnostics v_row_count = row_count;
+        v_awarded := v_awarded + v_row_count;
+    end if;
+
+    if v_spotlight_count >= 1 then
+        insert into public.member_badges (member_id, badge_id, season_id)
+        select p_member_id, badges.id, v_active_season_id
+        from public.badges
+        where badges.code = 'spotlight'
+          and badges.is_active = true
+        on conflict (member_id, badge_id) do nothing;
+        get diagnostics v_row_count = row_count;
+        v_awarded := v_awarded + v_row_count;
+    end if;
+
+    if v_unique_activity_types >= 4 then
+        insert into public.member_badges (member_id, badge_id, season_id)
+        select p_member_id, badges.id, v_active_season_id
+        from public.badges
+        where badges.code = 'multi_tool'
+          and badges.is_active = true
+        on conflict (member_id, badge_id) do nothing;
+        get diagnostics v_row_count = row_count;
+        v_awarded := v_awarded + v_row_count;
+    end if;
+
+    if v_evidence_count >= 2 then
+        insert into public.member_badges (member_id, badge_id, season_id)
+        select p_member_id, badges.id, v_active_season_id
+        from public.badges
+        where badges.code = 'archive_keeper'
+          and badges.is_active = true
+        on conflict (member_id, badge_id) do nothing;
+        get diagnostics v_row_count = row_count;
+        v_awarded := v_awarded + v_row_count;
+    end if;
+
+    return v_awarded;
+end;
+$$;
+
+create or replace function public.get_my_member_badges()
+returns table (
+    id uuid,
+    member_id uuid,
+    badge_id uuid,
+    badge_code text,
+    badge_name text,
+    badge_description text,
+    icon_key text,
+    tone text,
+    awarded_at timestamptz,
+    season_id uuid
+)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+    v_member_id uuid;
+begin
+    v_member_id := public.current_actor_member_id();
+
+    if v_member_id is null then
+        return;
+    end if;
+
+    perform public.award_member_badges(v_member_id);
+
+    return query
+    select
+        member_badges.id,
+        member_badges.member_id,
+        member_badges.badge_id,
+        badges.code as badge_code,
+        badges.name as badge_name,
+        badges.description as badge_description,
+        badges.icon_key,
+        badges.tone,
+        member_badges.awarded_at,
+        member_badges.season_id
+    from public.member_badges
+    join public.badges on badges.id = member_badges.badge_id
+    where member_badges.member_id = v_member_id
+      and badges.is_active = true
+    order by badges.sort_order asc, member_badges.awarded_at desc;
 end;
 $$;
 
@@ -704,6 +901,8 @@ begin
             'reason', coalesce(p_note, concat('기록 취소 · ', coalesce(v_original_ledger.reason, '원본 기록')))
         )
     );
+
+    perform public.award_member_badges(v_original_ledger.member_id);
 
     return v_reversal_ledger_id;
 end;
@@ -901,6 +1100,26 @@ create index if not exists idx_audit_logs_entity on public.audit_logs (entity_ty
 create index if not exists idx_audit_logs_created_at on public.audit_logs (created_at desc);
 create unique index if not exists idx_correction_requests_open_unique on public.correction_requests (requester_member_id, activity_record_id) where status in ('pending', 'reviewing');
 create index if not exists idx_correction_requests_created_at on public.correction_requests (created_at desc);
+create unique index if not exists idx_badges_code_unique on public.badges (code);
+create unique index if not exists idx_member_badges_member_badge_unique on public.member_badges (member_id, badge_id);
+create index if not exists idx_member_badges_member on public.member_badges (member_id, awarded_at desc);
+
+insert into public.badges (code, name, description, icon_key, tone, sort_order, is_active)
+values
+    ('first_step', '첫 발자국', '첫 활동 기록을 남겼습니다.', 'bandi-core', 'gold', 10, true),
+    ('steady_rhythm', '꾸준한 리듬', '서로 다른 날짜에 3회 이상 활동을 이어갔습니다.', 'bandi-orbit', 'emerald', 20, true),
+    ('attendance_radar', '출석 레이더', '출석 계열 활동을 5회 이상 기록했습니다.', 'school-signal', 'sky', 30, true),
+    ('spotlight', '스포트라이트', '발표 또는 고점수 기여를 남겼습니다.', 'bandi-flash', 'rose', 40, true),
+    ('multi_tool', '멀티 플레이어', '서로 다른 활동 유형 4개 이상을 경험했습니다.', 'didi-toolkit', 'sky', 50, true),
+    ('archive_keeper', '기록 보관자', '증빙 링크가 포함된 활동을 2건 이상 남겼습니다.', 'didi-archive', 'emerald', 60, true)
+on conflict (code) do update
+set
+    name = excluded.name,
+    description = excluded.description,
+    icon_key = excluded.icon_key,
+    tone = excluded.tone,
+    sort_order = excluded.sort_order,
+    is_active = excluded.is_active;
 
 create or replace view public.member_score_summary
 with (security_invoker = true) as

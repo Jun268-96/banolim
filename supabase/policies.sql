@@ -14,10 +14,14 @@ grant select on public.activity_records to anon, authenticated;
 grant select on public.point_ledgers to anon, authenticated;
 grant select on public.audit_logs to authenticated;
 grant select on public.correction_requests to authenticated;
+grant select on public.badges to authenticated;
+grant select on public.member_badges to authenticated;
+grant execute on function public.award_member_badges(uuid) to authenticated;
 grant execute on function public.create_activity_entry(uuid, uuid, text, text, timestamptz, text) to authenticated;
 grant execute on function public.create_batch_activity_entries(uuid[], uuid, text, text, timestamptz, text) to authenticated;
 grant execute on function public.create_point_rule_version(uuid, integer, integer, jsonb) to authenticated;
 grant execute on function public.get_my_activity_logs() to authenticated;
+grant execute on function public.get_my_member_badges() to authenticated;
 grant execute on function public.get_my_member_overview() to authenticated;
 grant execute on function public.reverse_activity_entry(uuid, text) to authenticated;
 grant execute on function public.submit_correction_request(uuid, text) to authenticated;
@@ -33,6 +37,8 @@ alter table public.activity_records enable row level security;
 alter table public.point_ledgers enable row level security;
 alter table public.audit_logs enable row level security;
 alter table public.correction_requests enable row level security;
+alter table public.badges enable row level security;
+alter table public.member_badges enable row level security;
 
 drop policy if exists roles_select_all on public.roles;
 create policy roles_select_all on public.roles for select to anon, authenticated using (true);
@@ -98,3 +104,17 @@ using (
     requester_member_id = public.current_actor_member_id()
     or (public.can_manage_activities() and public.can_access_member(requester_member_id))
 );
+
+drop policy if exists badges_select_authenticated on public.badges;
+create policy badges_select_authenticated
+on public.badges
+for select
+to authenticated
+using (true);
+
+drop policy if exists member_badges_select_authenticated on public.member_badges;
+create policy member_badges_select_authenticated
+on public.member_badges
+for select
+to authenticated
+using (public.can_access_member(member_id));

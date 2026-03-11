@@ -1,18 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Activity, BadgeCheck, Flame, Link2, Medal, MessageSquareWarning, Send, ShieldCheck, Sparkles, TrendingUp, TriangleAlert, UserRound, Zap } from 'lucide-react';
-import type { ActivityLog, CorrectionRequest, CorrectionRequestStatus, Member, MemberStatus, SeasonSummary } from '../../types';
-import { getCorrectionRequests, getCurrentSeason, getMyActivityLogs, getMyMemberOverview, submitCorrectionRequest } from '../../lib/db';
+import type { ActivityLog, CorrectionRequest, CorrectionRequestStatus, Member, MemberBadge, MemberStatus, SeasonSummary } from '../../types';
+import { getCorrectionRequests, getCurrentSeason, getMyActivityLogs, getMyMemberBadges, getMyMemberOverview, submitCorrectionRequest } from '../../lib/db';
 import { roleLabels } from '../../lib/permissions';
 import { useAuth } from '../auth/auth-context';
 
 type TimelineRange = '30d' | '90d' | 'all';
-
-interface HighlightBadge {
-    id: string;
-    title: string;
-    detail: string;
-    tone: 'gold' | 'sky' | 'emerald' | 'rose';
-}
 
 const memberStatusLabels: Record<MemberStatus, string> = {
     active: '활동 중',
@@ -44,12 +37,20 @@ const timelineRangeOptions: Array<{ id: TimelineRange; label: string }> = [
     { id: '90d', label: '최근 90일' },
     { id: 'all', label: '전체' },
 ];
-const badgeToneClasses: Record<HighlightBadge['tone'], string> = {
+const badgeToneClasses: Record<NonNullable<MemberBadge['tone']>, string> = {
     gold: 'border-amber-200 bg-amber-50 text-amber-800',
     sky: 'border-sky-200 bg-sky-50 text-sky-800',
     emerald: 'border-emerald-200 bg-emerald-50 text-emerald-800',
     rose: 'border-rose-200 bg-rose-50 text-rose-800',
 };
+const bandiMascotUrl = new URL('../../../반디.png', import.meta.url).href;
+const didiMascotUrl = new URL('../../../디디.png', import.meta.url).href;
+const banollimSchoolLogoUrl = new URL('../../../반디스쿨 로고1.png', import.meta.url).href;
+
+const getBadgeMascotUrl = (iconKey: string) =>
+    iconKey.startsWith('didi')
+        ? didiMascotUrl
+        : bandiMascotUrl;
 
 const formatDate = (value?: string | null) =>
     value
@@ -80,6 +81,7 @@ export const MemberHomeTab: React.FC = () => {
     const [season, setSeason] = useState<SeasonSummary | null>(null);
     const [member, setMember] = useState<Member | null>(null);
     const [logs, setLogs] = useState<ActivityLog[]>([]);
+    const [memberBadges, setMemberBadges] = useState<MemberBadge[]>([]);
     const [correctionRequests, setCorrectionRequests] = useState<CorrectionRequest[]>([]);
     const [selectedRequestLog, setSelectedRequestLog] = useState<ActivityLog | null>(null);
     const [timelineRange, setTimelineRange] = useState<TimelineRange>('90d');
@@ -93,10 +95,11 @@ export const MemberHomeTab: React.FC = () => {
 
         const loadData = async () => {
             setIsLoading(true);
-            const [seasonData, memberData, logData, correctionRequestData] = await Promise.all([
+            const [seasonData, memberData, logData, memberBadgeData, correctionRequestData] = await Promise.all([
                 getCurrentSeason(),
                 getMyMemberOverview(profile?.memberId ?? null),
                 getMyActivityLogs(profile?.memberId ?? null),
+                getMyMemberBadges(profile?.memberId ?? null),
                 getCorrectionRequests({ requesterMemberId: profile?.memberId ?? null }),
             ]);
 
@@ -107,6 +110,7 @@ export const MemberHomeTab: React.FC = () => {
             setSeason(seasonData);
             setMember(memberData);
             setLogs(logData);
+            setMemberBadges(memberBadgeData);
             setCorrectionRequests(correctionRequestData);
             setIsLoading(false);
         };
@@ -267,85 +271,15 @@ export const MemberHomeTab: React.FC = () => {
         [timelineLogs],
     );
 
-    const earnedBadges = useMemo<HighlightBadge[]>(() => {
-        const badges: HighlightBadge[] = [];
-        const attendanceCount = effectiveLogs.filter((log) => /(출석|참석|지각|불참)/.test(log.categoryName ?? log.reason ?? '')).length;
-        const presentationCount = effectiveLogs.filter((log) => /(발표|세션|리딩)/.test(log.categoryName ?? log.reason ?? '')).length;
-        const uniqueCategoryCount = new Set(effectiveLogs.map((log) => log.categoryName ?? log.categoryId)).size;
-        const evidenceTotal = effectiveLogs.filter((log) => Boolean(log.evidenceUrl)).length;
-
-        if (effectiveLogs.length > 0) {
-            badges.push({
-                id: 'first-step',
-                title: '첫 발자국',
-                detail: '첫 활동 기록이 누적되었습니다.',
-                tone: 'gold',
-            });
-        }
-
-        if (recentSnapshot.streakDays >= 3) {
-            badges.push({
-                id: 'steady-rhythm',
-                title: '꾸준한 리듬',
-                detail: `${recentSnapshot.streakDays}일 연속으로 활동 흐름을 이어가고 있습니다.`,
-                tone: 'emerald',
-            });
-        }
-
-        if (attendanceCount >= 5) {
-            badges.push({
-                id: 'attendance-radar',
-                title: '출석 레이더',
-                detail: `출석 계열 기록이 ${attendanceCount}회 쌓였습니다.`,
-                tone: 'sky',
-            });
-        }
-
-        if (presentationCount >= 1 || effectiveLogs.some((log) => log.pointDelta >= 20)) {
-            badges.push({
-                id: 'spotlight',
-                title: '스포트라이트',
-                detail: '임팩트가 큰 발표 또는 기여 기록이 포착되었습니다.',
-                tone: 'rose',
-            });
-        }
-
-        if (uniqueCategoryCount >= 4) {
-            badges.push({
-                id: 'multi-tool',
-                title: '멀티 플레이어',
-                detail: `서로 다른 활동 유형 ${uniqueCategoryCount}개를 경험했습니다.`,
-                tone: 'sky',
-            });
-        }
-
-        if (evidenceTotal >= 2) {
-            badges.push({
-                id: 'archive-keeper',
-                title: '기록 보관자',
-                detail: `증빙 링크가 포함된 기록이 ${evidenceTotal}건 있습니다.`,
-                tone: 'emerald',
-            });
-        }
-
-        if (recentSnapshot.recentPoints > recentSnapshot.previousPoints && recentSnapshot.recentPoints > 0) {
-            badges.push({
-                id: 'momentum',
-                title: '가속 페이스',
-                detail: '직전 30일보다 더 빠른 속도로 점수가 쌓이고 있습니다.',
-                tone: 'gold',
-            });
-        }
-
-        return badges.slice(0, 4);
-    }, [effectiveLogs, recentSnapshot]);
-
     const latestLog = effectiveLogs[0] ?? null;
     const approvedLabel = member?.isApproved ? '승인 완료' : '승인 대기';
     const status = member?.status ?? 'active';
     const statusClass = member ? memberStatusClasses[status] : memberStatusClasses.active;
     const seasonScore = seasonLogs.reduce((sum, log) => sum + log.pointDelta, 0);
     const seasonLogCount = seasonLogs.length;
+    const badgeChallengeCopy = memberBadges.length >= 4
+        ? '이제 희귀 배지 단계입니다. 증빙 기록과 다양한 역할 참여를 더 쌓아 보세요.'
+        : '출석, 발표, 증빙 기록이 쌓일수록 반디와 디디가 새로운 배지를 열어 줍니다.';
     const growthDescription = recentSnapshot.growthRate === null
         ? '직전 30일 기록이 없어 이번 달 흐름이 새로 시작되었습니다.'
         : recentSnapshot.growthRate > 0
@@ -693,26 +627,91 @@ export const MemberHomeTab: React.FC = () => {
                         </div>
                     </div>
 
-                    <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-                        <div className="flex items-center gap-2 font-semibold text-slate-900">
-                            <Medal size={18} className="text-indigo-600" />
-                            누적 하이라이트
-                        </div>
-                        <div className="mt-5 space-y-3">
-                            {earnedBadges.map((badge) => (
-                                <div key={badge.id} className={`rounded-2xl border px-4 py-4 ${badgeToneClasses[badge.tone]}`}>
-                                    <div className="flex items-center gap-2 text-sm font-semibold">
-                                        <BadgeCheck size={16} />
-                                        {badge.title}
+                    <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
+                        <div className="relative border-b border-slate-100 bg-gradient-to-br from-amber-50 via-white to-rose-50 px-6 py-5">
+                            <img
+                                src={banollimSchoolLogoUrl}
+                                alt="반디스쿨 로고"
+                                className="pointer-events-none absolute right-4 top-4 h-16 w-auto opacity-20 saturate-50 sm:h-20"
+                            />
+                            <div className="relative flex items-start justify-between gap-4">
+                                <div>
+                                    <div className="flex items-center gap-2 font-semibold text-slate-900">
+                                        <Medal size={18} className="text-indigo-600" />
+                                        공식 배지 컬렉션
                                     </div>
-                                    <div className="mt-2 text-sm leading-6">{badge.detail}</div>
+                                    <div className="mt-2 text-sm leading-6 text-slate-600">
+                                        활동 누적치가 기준을 넘으면 배지가 자동으로 열립니다. 반디는 공식 성취, 디디는 희귀·기록형 배지를 맡습니다.
+                                    </div>
                                 </div>
-                            ))}
-                            {earnedBadges.length === 0 && (
-                                <div className="rounded-2xl border border-dashed border-slate-200 px-4 py-8 text-center text-sm text-slate-500">
-                                    활동 기록이 쌓이면 이곳에 누적 하이라이트가 표시됩니다.
+                                <img
+                                    src={bandiMascotUrl}
+                                    alt="반디 마스코트"
+                                    className="h-16 w-auto shrink-0 drop-shadow-[0_12px_24px_rgba(15,23,42,0.18)] sm:h-20"
+                                />
+                            </div>
+                        </div>
+
+                        <div className="space-y-5 p-6">
+                            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                                {memberBadges.map((badge) => (
+                                    <div key={badge.id} className={`overflow-hidden rounded-[24px] border p-4 ${badgeToneClasses[badge.tone ?? 'sky']}`}>
+                                        <div className="flex items-start justify-between gap-4">
+                                            <div className="flex items-center gap-3">
+                                                <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-white/70 bg-white/80 shadow-sm">
+                                                    <img
+                                                        src={getBadgeMascotUrl(badge.iconKey)}
+                                                        alt={badge.badgeName}
+                                                        className="h-10 w-auto object-contain"
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <div className="flex items-center gap-2 text-sm font-semibold">
+                                                        <BadgeCheck size={16} />
+                                                        {badge.badgeName}
+                                                    </div>
+                                                    <div className="mt-1 text-xs opacity-80">{new Date(badge.awardedAt).toLocaleDateString('ko-KR')} 획득</div>
+                                                </div>
+                                            </div>
+                                            <div className="rounded-full border border-white/70 bg-white/80 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] opacity-90">
+                                                {badge.badgeCode.replace(/_/g, ' ')}
+                                            </div>
+                                        </div>
+                                        <div className="mt-4 text-sm leading-6">
+                                            {badge.badgeDescription}
+                                        </div>
+                                    </div>
+                                ))}
+
+                                {memberBadges.length === 0 && (
+                                    <div className="rounded-[24px] border border-dashed border-slate-200 bg-slate-50 px-5 py-8 text-center text-sm text-slate-500 sm:col-span-2">
+                                        <img
+                                            src={didiMascotUrl}
+                                            alt="디디 마스코트"
+                                            className="mx-auto h-16 w-auto opacity-90"
+                                        />
+                                        <div className="mt-4 font-medium text-slate-700">첫 배지를 기다리는 중입니다.</div>
+                                        <div className="mt-2 leading-6">
+                                            활동 기록이 누적되면 이곳에 실시간으로 획득 배지가 추가됩니다.
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+
+                            <div className="rounded-[24px] border border-slate-900 bg-slate-950 px-5 py-4 text-white">
+                                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                                    <div>
+                                        <div className="text-xs uppercase tracking-[0.16em] text-slate-400">다음 챌린지</div>
+                                        <div className="mt-2 text-lg font-semibold text-white">{memberBadges.length}개 배지 획득</div>
+                                        <div className="mt-2 max-w-xl text-sm leading-6 text-slate-300">{badgeChallengeCopy}</div>
+                                    </div>
+                                    <img
+                                        src={didiMascotUrl}
+                                        alt="디디 마스코트"
+                                        className="h-20 w-auto shrink-0 self-end drop-shadow-[0_14px_24px_rgba(0,0,0,0.25)]"
+                                    />
                                 </div>
-                            )}
+                            </div>
                         </div>
                     </div>
 
@@ -822,10 +821,10 @@ export const MemberHomeTab: React.FC = () => {
                                 <span className="text-sm font-medium text-slate-900">{profile?.email ?? '-'}</span>
                             </div>
                             <div className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                                <span className="text-sm text-slate-500">누적 하이라이트</span>
+                                <span className="text-sm text-slate-500">획득 배지</span>
                                 <span className="flex items-center gap-2 text-sm font-medium text-slate-900">
                                     <Zap size={16} className="text-indigo-500" />
-                                    {earnedBadges.length}개
+                                    {memberBadges.length}개
                                 </span>
                             </div>
                         </div>

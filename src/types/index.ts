@@ -3,6 +3,7 @@ export type TeamType = 'core' | 'study' | 'project';
 export type SeasonStatus = 'planned' | 'active' | 'closed';
 export type AppRole = 'super_admin' | 'operator' | 'team_lead' | 'member';
 export type CorrectionRequestStatus = 'pending' | 'reviewing' | 'resolved' | 'rejected';
+export type BadgeTone = 'gold' | 'sky' | 'emerald' | 'rose';
 
 export interface SeasonSummary {
     id: string;
@@ -61,6 +62,30 @@ export interface Category {
     groupName?: string | null;
     version?: number;
     isActive?: boolean;
+}
+
+export interface Badge {
+    id: string;
+    code: string;
+    name: string;
+    description: string;
+    iconKey: string;
+    tone?: BadgeTone;
+    sortOrder?: number;
+    isActive?: boolean;
+}
+
+export interface MemberBadge {
+    id: string;
+    memberId: string;
+    badgeId: string;
+    badgeCode: string;
+    badgeName: string;
+    badgeDescription: string;
+    iconKey: string;
+    tone?: BadgeTone;
+    awardedAt: string;
+    seasonId?: string | null;
 }
 
 export interface ActivityLog {
