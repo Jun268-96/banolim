@@ -25,6 +25,7 @@ grant execute on function public.award_member_badges(uuid) to authenticated;
 grant execute on function public.create_attendance_session(text, uuid, timestamptz, timestamptz, text) to authenticated;
 grant execute on function public.create_activity_entry(uuid, uuid, text, text, timestamptz, text) to authenticated;
 grant execute on function public.create_batch_activity_entries(uuid[], uuid, text, text, timestamptz, text) to authenticated;
+grant execute on function public.complete_my_password_setup() to authenticated;
 grant execute on function public.create_point_rule_version(uuid, integer, integer, jsonb) to authenticated;
 grant execute on function public.get_my_activity_logs() to authenticated;
 grant execute on function public.get_my_member_badges() to authenticated;

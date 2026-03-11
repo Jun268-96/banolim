@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import type { AuthChangeEvent, Session, User } from '@supabase/supabase-js';
 import type { AppRole, UserProfile } from '../../types';
-import { isRegisteredLoginEmail } from '../../lib/db';
+import { completeMyPasswordSetup, isRegisteredLoginEmail } from '../../lib/db';
 import { buildPermissions } from '../../lib/permissions';
 import { isAuthBypassed, isSupabaseConfigured, supabase } from '../../lib/supabase';
 import type { Database } from '../../types/database';
@@ -14,6 +14,7 @@ const defaultDemoProfile: UserProfile = {
     appRole: 'operator',
     displayName: '로컬 데모',
     isActive: true,
+    mustResetPassword: false,
 };
 
 const defaultBypassProfile: UserProfile = {
@@ -23,6 +24,7 @@ const defaultBypassProfile: UserProfile = {
     appRole: 'super_admin',
     displayName: import.meta.env.VITE_BYPASS_AUTH_NAME?.trim() || '개발 최고 관리자',
     isActive: true,
+    mustResetPassword: false,
 };
 
 const validRoles: AppRole[] = ['super_admin', 'operator', 'team_lead', 'member'];
@@ -31,14 +33,7 @@ type SyncedProfileRow = Database['public']['Functions']['sync_my_profile']['Retu
 const normalizeAppRole = (value: string | null | undefined): AppRole | null =>
     validRoles.includes(value as AppRole) ? (value as AppRole) : null;
 
-const mapProfileRow = (data: {
-    id: string;
-    email: string;
-    member_id: string | null;
-    app_role: string;
-    display_name: string | null;
-    is_active: boolean;
-}): UserProfile => {
+const mapProfileRow = (data: SyncedProfileRow): UserProfile => {
     const appRole = normalizeAppRole(data.app_role);
 
     if (!appRole) {
@@ -52,6 +47,7 @@ const mapProfileRow = (data: {
         appRole,
         displayName: data.display_name,
         isActive: data.is_active,
+        mustResetPassword: data.must_reset_password,
     };
 };
 
@@ -95,53 +91,60 @@ const getProfileAccessMessage = (profile: UserProfile) => {
     return null;
 };
 
-const getEmailOtpRequestErrorMessage = (error: unknown) => {
+const getPasswordSignInErrorMessage = (error: unknown) => {
     const status =
         typeof error === 'object' && error !== null && 'status' in error
             ? Number((error as { status?: number }).status)
             : null;
 
     if (status === 429) {
-        return '요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.';
+        return '로그인 시도가 너무 많습니다. 잠시 후 다시 시도해 주세요.';
     }
 
     if (error instanceof Error && error.message) {
         const normalizedMessage = error.message.toLowerCase();
-        if (
-            normalizedMessage.includes('signups not allowed for otp')
-            || normalizedMessage.includes('user not found')
-            || normalizedMessage.includes('email not found')
-            || normalizedMessage.includes('for security purposes')
-        ) {
-            return '등록되지 않은 이메일입니다. 운영진에게 로그인 이메일 등록을 요청해 주세요.';
+        if (normalizedMessage.includes('invalid login credentials')) {
+            return '이메일 또는 비밀번호가 올바르지 않습니다.';
         }
 
         return error.message;
     }
 
-    return '인증 코드를 보내지 못했습니다. 잠시 후 다시 시도해 주세요.';
+    return '로그인하지 못했습니다. 잠시 후 다시 시도해 주세요.';
 };
 
-const getEmailOtpVerifyErrorMessage = (error: unknown) => {
+const getPasswordUpdateErrorMessage = (error: unknown) => {
     const status =
         typeof error === 'object' && error !== null && 'status' in error
             ? Number((error as { status?: number }).status)
             : null;
 
     if (status === 429) {
-        return '인증 시도가 너무 많습니다. 잠시 후 다시 시도해 주세요.';
+        return '비밀번호 변경 시도가 너무 많습니다. 잠시 후 다시 시도해 주세요.';
     }
 
     if (error instanceof Error && error.message) {
-        const normalizedMessage = error.message.toLowerCase();
-        if (normalizedMessage.includes('expired') || normalizedMessage.includes('invalid')) {
-            return '인증 코드가 올바르지 않거나 만료되었습니다. 새 코드를 받아 다시 시도해 주세요.';
-        }
-
         return error.message;
     }
 
-    return '인증 코드를 확인하지 못했습니다. 새 코드를 받아 다시 시도해 주세요.';
+    return '비밀번호를 변경하지 못했습니다. 잠시 후 다시 시도해 주세요.';
+};
+
+const getPasswordResetRequestErrorMessage = (error: unknown) => {
+    const status =
+        typeof error === 'object' && error !== null && 'status' in error
+            ? Number((error as { status?: number }).status)
+            : null;
+
+    if (status === 429) {
+        return '재설정 요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.';
+    }
+
+    if (error instanceof Error && error.message) {
+        return error.message;
+    }
+
+    return '비밀번호 재설정 메일을 보내지 못했습니다. 잠시 후 다시 시도해 주세요.';
 };
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -152,6 +155,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     );
     const [isLoading, setIsLoading] = useState(isSupabaseConfigured && !isAuthBypassed);
     const [authError, setAuthError] = useState<string | null>(null);
+    const [requiresPasswordSetup, setRequiresPasswordSetup] = useState(false);
 
     useEffect(() => {
         const client = supabase;
@@ -161,6 +165,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
 
         let isMounted = true;
+
+        const isRecoveryHash = typeof window !== 'undefined' && window.location.hash.includes('type=recovery');
+        if (isRecoveryHash) {
+            setRequiresPasswordSetup(true);
+        }
 
         const resolveProfile = async (nextUser: User | null) => {
             if (!nextUser) {
@@ -208,9 +217,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         const {
             data: { subscription },
-        } = client.auth.onAuthStateChange((_event: AuthChangeEvent, nextSession: Session | null) => {
+        } = client.auth.onAuthStateChange((event: AuthChangeEvent, nextSession: Session | null) => {
             setSession(nextSession);
             setUser(nextSession?.user ?? null);
+            if (event === 'PASSWORD_RECOVERY') {
+                setRequiresPasswordSetup(true);
+            }
+            if (event === 'SIGNED_OUT') {
+                setRequiresPasswordSetup(false);
+            }
 
             void resolveProfile(nextSession?.user ?? null);
 
@@ -231,14 +246,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const value = useMemo<AuthContextValue>(
         () => ({
             isLoading,
-            isAuthenticated: Boolean(profile && profile.isActive && profile.memberId),
+            isAuthenticated: Boolean(profile && profile.isActive && profile.memberId && !profile.mustResetPassword && !requiresPasswordSetup),
             authError,
             user,
             session,
             profile,
+            requiresPasswordSetup,
             role,
             permissions,
-            signInWithEmailOtp: async (email: string) => {
+            signInWithPassword: async (email: string, password: string) => {
                 if (!supabase) {
                     return {};
                 }
@@ -258,29 +274,57 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                     return { error: '로그인 이메일 확인에 실패했습니다. 잠시 후 다시 시도해 주세요.' };
                 }
 
-                const { error } = await supabase.auth.signInWithOtp({
+                const { error } = await supabase.auth.signInWithPassword({
                     email,
-                    options: {
-                        shouldCreateUser: true,
-                    },
+                    password,
                 });
 
-                return error ? { error: getEmailOtpRequestErrorMessage(error) } : {};
+                return error ? { error: getPasswordSignInErrorMessage(error) } : {};
             },
-            verifyEmailOtp: async (email: string, token: string) => {
+            updatePassword: async (password: string) => {
                 if (!supabase) {
                     return {};
                 }
 
                 setAuthError(null);
 
-                const { error } = await supabase.auth.verifyOtp({
-                    email,
-                    token,
-                    type: 'email',
-                });
+                const { error } = await supabase.auth.updateUser({ password });
 
-                return error ? { error: getEmailOtpVerifyErrorMessage(error) } : {};
+                if (error) {
+                    return { error: getPasswordUpdateErrorMessage(error) };
+                }
+
+                try {
+                    await completeMyPasswordSetup();
+
+                    if (user) {
+                        const resolvedProfile = await fetchProfile(user);
+                        setProfile(resolvedProfile);
+                        setAuthError(getProfileAccessMessage(resolvedProfile));
+                    }
+
+                    setRequiresPasswordSetup(false);
+
+                    return {};
+                } catch (completionError) {
+                    if (completionError instanceof Error && completionError.message) {
+                        return { error: completionError.message };
+                    }
+
+                    return { error: '비밀번호는 변경됐지만 계정 상태를 갱신하지 못했습니다. 다시 로그인해 주세요.' };
+                }
+            },
+            requestPasswordReset: async (email: string) => {
+                if (!supabase) {
+                    return {};
+                }
+
+                setAuthError(null);
+
+                const redirectTo = typeof window !== 'undefined' ? window.location.origin : undefined;
+                const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
+
+                return error ? { error: getPasswordResetRequestErrorMessage(error) } : {};
             },
             refreshProfile: async () => {
                 if (!supabase || !user) return;
@@ -302,10 +346,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             signOut: async () => {
                 if (isAuthBypassed || !supabase) return;
                 setAuthError(null);
+                setRequiresPasswordSetup(false);
                 await supabase.auth.signOut();
             },
         }),
-        [authError, isLoading, permissions, profile, role, session, user],
+        [authError, isLoading, permissions, profile, requiresPasswordSetup, role, session, user],
     );
 
     return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

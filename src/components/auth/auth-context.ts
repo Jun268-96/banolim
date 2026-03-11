@@ -10,10 +10,12 @@ export interface AuthContextValue {
     user: User | null;
     session: Session | null;
     profile: UserProfile | null;
+    requiresPasswordSetup: boolean;
     role: AppRole;
     permissions: AppPermissions;
-    signInWithEmailOtp: (email: string) => Promise<{ error?: string }>;
-    verifyEmailOtp: (email: string, token: string) => Promise<{ error?: string }>;
+    signInWithPassword: (email: string, password: string) => Promise<{ error?: string }>;
+    updatePassword: (password: string) => Promise<{ error?: string }>;
+    requestPasswordReset: (email: string) => Promise<{ error?: string }>;
     refreshProfile: () => Promise<void>;
     signOut: () => Promise<void>;
 }

@@ -1,11 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowUpDown, CheckCircle2, CircleHelp, Clock3, FileText, History, LayoutGrid, Mail, Network, Search, ShieldAlert, TableProperties, Trash2, Upload, UserPlus, Users, XCircle } from 'lucide-react';
+import { ArrowUpDown, CheckCircle2, CircleHelp, Clock3, FileText, History, KeyRound, LayoutGrid, Mail, Network, Search, ShieldAlert, TableProperties, Trash2, Upload, UserPlus, Users, XCircle } from 'lucide-react';
 import type { AppRole, AuditLogEntry, Member, MemberStatus, RoleSummary, TeamSummary } from '../../types';
 import {
     addMember,
     deleteMember,
     getAuditLogs,
     getMembers,
+    provisionMemberPasswordAuth,
     getRoles,
     getTeams,
     updateMember,
@@ -198,6 +199,22 @@ const getApprovalTags = (member: Member) => {
 
 const isAccessReady = (member: Member) => Boolean(member.loginEmail) && member.isApproved && member.status === 'active';
 
+const getAccountProvisionLabel = (member: Member) => {
+    if (!member.loginEmail) {
+        return { label: '이메일 필요', className: 'bg-slate-100 text-slate-600 border-slate-200' };
+    }
+
+    if (!member.authUserId) {
+        return { label: '계정 미발급', className: 'bg-amber-50 text-amber-700 border-amber-200' };
+    }
+
+    if (member.passwordResetRequired) {
+        return { label: '첫 로그인 대기', className: 'bg-sky-50 text-sky-700 border-sky-200' };
+    }
+
+    return { label: '계정 활성', className: 'bg-emerald-50 text-emerald-700 border-emerald-200' };
+};
+
 const formatDateTime = (value?: string | null) => {
     if (!value) return '-';
     return new Intl.DateTimeFormat('ko-KR', {
@@ -361,6 +378,13 @@ export const DashboardTab: React.FC = () => {
     const [isLoading, setIsLoading] = useState(true);
     const [savingMemberId, setSavingMemberId] = useState<string | null>(null);
     const [isImportingMembers, setIsImportingMembers] = useState(false);
+    const [provisioningMemberId, setProvisioningMemberId] = useState<string | null>(null);
+    const [provisionedAccount, setProvisionedAccount] = useState<{
+        memberName: string;
+        email: string;
+        temporaryPassword: string;
+        isExistingAccount: boolean;
+    } | null>(null);
     const [isGuideDialogOpen, setIsGuideDialogOpen] = useState(false);
     const [isBulkImportDialogOpen, setIsBulkImportDialogOpen] = useState(false);
     const [isQueueDialogOpen, setIsQueueDialogOpen] = useState(false);
@@ -578,6 +602,21 @@ export const DashboardTab: React.FC = () => {
             await refreshData();
         } finally {
             setSavingMemberId(null);
+        }
+    };
+
+    const handleProvisionMemberAccount = async (member: Member) => {
+        if (!member.loginEmail) {
+            return;
+        }
+
+        setProvisioningMemberId(member.id);
+        try {
+            const result = await provisionMemberPasswordAuth(member.id);
+            setProvisionedAccount(result);
+            await refreshData();
+        } finally {
+            setProvisioningMemberId(null);
         }
     };
 
@@ -908,6 +947,11 @@ export const DashboardTab: React.FC = () => {
                                             </td>
                                             {permissions.canManageMembers && (
                                                 <td className="py-4 px-6 align-middle whitespace-nowrap">
+                                                    {(() => {
+                                                        const accountProvision = getAccountProvisionLabel(member);
+
+                                                        return (
+                                                            <>
                                                     <input
                                                         key={`${member.id}-${member.loginEmail ?? ''}`}
                                                         type="email"
@@ -932,6 +976,19 @@ export const DashboardTab: React.FC = () => {
                                                         }}
                                                         className="min-w-[220px] rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
                                                     />
+                                                            <div className="mt-2 flex items-center gap-2">
+                                                                <span className={`inline-flex rounded-full border px-2.5 py-1 text-[11px] font-semibold ${accountProvision.className}`}>
+                                                                    {accountProvision.label}
+                                                                </span>
+                                                                {member.authProvisionedAt && (
+                                                                    <span className="text-[11px] text-slate-500">
+                                                                        발급 {formatDateTime(member.authProvisionedAt)}
+                                                                    </span>
+                                                                )}
+                                                            </div>
+                                                            </>
+                                                        );
+                                                    })()}
                                                 </td>
                                             )}
                                             <td className="py-4 px-6 align-middle whitespace-nowrap">
@@ -1038,16 +1095,36 @@ export const DashboardTab: React.FC = () => {
                                             <td className="py-4 px-6 align-middle whitespace-nowrap text-sm text-slate-600">{formatDate(member.joinedAt)}</td>
                                             <td className="py-4 px-6 align-middle whitespace-nowrap text-center">
                                                 {permissions.canManageMembers ? (
-                                                    <button
-                                                        onClick={(event) => {
-                                                            event.stopPropagation();
-                                                            void handleDeleteMember(member.id);
-                                                        }}
-                                                        className="p-2 text-slate-400 hover:bg-rose-50 hover:text-rose-600 rounded-lg transition-colors opacity-0 group-hover:opacity-100"
-                                                        title="멤버 숨기기"
+                                                    <div
+                                                        className="flex items-center justify-center gap-1"
+                                                        onClick={(event) => event.stopPropagation()}
                                                     >
-                                                        <Trash2 size={16} />
-                                                    </button>
+                                                        <button
+                                                            type="button"
+                                                            disabled={!member.loginEmail || provisioningMemberId === member.id}
+                                                            onClick={() => {
+                                                                void handleProvisionMemberAccount(member);
+                                                            }}
+                                                            className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:border-slate-100 disabled:text-slate-300"
+                                                            title={member.authUserId ? '임시 비밀번호 재발급' : '계정 발급'}
+                                                        >
+                                                            <KeyRound size={14} />
+                                                            {provisioningMemberId === member.id
+                                                                ? '발급 중'
+                                                                : member.authUserId
+                                                                    ? '재발급'
+                                                                    : '계정 발급'}
+                                                        </button>
+                                                        <button
+                                                            onClick={() => {
+                                                                void handleDeleteMember(member.id);
+                                                            }}
+                                                            className="p-2 text-slate-400 hover:bg-rose-50 hover:text-rose-600 rounded-lg transition-colors opacity-0 group-hover:opacity-100"
+                                                            title="멤버 숨기기"
+                                                        >
+                                                            <Trash2 size={16} />
+                                                        </button>
+                                                    </div>
                                                 ) : (
                                                     <span className="text-xs text-slate-400">-</span>
                                                 )}
@@ -1306,19 +1383,19 @@ export const DashboardTab: React.FC = () => {
                 <div className="grid gap-4 md:grid-cols-2">
                     <div className="rounded-[24px] border border-slate-200 bg-slate-50 px-5 py-5">
                         <div className="font-semibold text-slate-900">1. 로그인 이메일 등록</div>
-                        <div className="mt-2 text-sm leading-7 text-slate-600">실제로 OTP를 받을 이메일을 입력해야 회원 매칭과 로그인 준비가 완료됩니다.</div>
+                        <div className="mt-2 text-sm leading-7 text-slate-600">실제로 로그인에 사용할 이메일을 입력합니다. 저장만으로는 접근이 열리지 않고, 계정 발급까지 해야 비밀번호 로그인이 가능합니다.</div>
                     </div>
                     <div className="rounded-[24px] border border-slate-200 bg-slate-50 px-5 py-5">
                         <div className="font-semibold text-slate-900">2. 직책 선택</div>
                         <div className="mt-2 text-sm leading-7 text-slate-600">직책 이름과 시스템 권한은 분리되어 있습니다. 회장과 개발 관리자는 서로 다른 이름이어도 같은 최고 권한을 가질 수 있습니다.</div>
                     </div>
                     <div className="rounded-[24px] border border-slate-200 bg-slate-50 px-5 py-5">
-                        <div className="font-semibold text-slate-900">3. 승인 상태 확인</div>
-                        <div className="mt-2 text-sm leading-7 text-slate-600">승인 체크가 꺼져 있으면 로그인 이메일이 있어도 실제 접근은 막힙니다.</div>
+                        <div className="font-semibold text-slate-900">3. 계정 발급</div>
+                        <div className="mt-2 text-sm leading-7 text-slate-600">관리 열의 `계정 발급` 버튼으로 임시 비밀번호를 만듭니다. 기존 계정이 있으면 새 임시 비밀번호로 재발급됩니다.</div>
                     </div>
                     <div className="rounded-[24px] border border-slate-200 bg-slate-50 px-5 py-5">
-                        <div className="font-semibold text-slate-900">4. 회원 상태 확인</div>
-                        <div className="mt-2 text-sm leading-7 text-slate-600">휴면이나 비활성 상태면 접근이 제한됩니다. 운영 중 멤버는 보통 `활동 중`으로 둡니다.</div>
+                        <div className="font-semibold text-slate-900">4. 승인 및 상태 확인</div>
+                        <div className="mt-2 text-sm leading-7 text-slate-600">승인 체크가 꺼져 있거나 휴면/비활성 상태면 로그인은 되더라도 실제 접근이 제한됩니다.</div>
                     </div>
                 </div>
                 <div className="mt-4 rounded-[24px] border border-indigo-200 bg-indigo-50 px-5 py-4 text-sm leading-7 text-indigo-900">
@@ -1451,6 +1528,36 @@ export const DashboardTab: React.FC = () => {
                         </div>
                     </div>
                 </div>
+            </AppDialog>
+
+            <AppDialog
+                isOpen={Boolean(provisionedAccount)}
+                title="임시 비밀번호 발급 완료"
+                description="아래 비밀번호를 회원에게 안전하게 전달해 주세요. 첫 로그인 뒤에는 새 비밀번호 설정이 강제됩니다."
+                size="md"
+                onClose={() => setProvisionedAccount(null)}
+            >
+                {provisionedAccount && (
+                    <div className="space-y-4">
+                        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                            <div className="text-sm text-slate-500">회원</div>
+                            <div className="mt-1 font-semibold text-slate-900">{provisionedAccount.memberName}</div>
+                        </div>
+                        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                            <div className="text-sm text-slate-500">로그인 이메일</div>
+                            <div className="mt-1 font-semibold text-slate-900">{provisionedAccount.email}</div>
+                        </div>
+                        <div className="rounded-2xl border border-indigo-200 bg-indigo-50 p-4">
+                            <div className="text-sm text-indigo-700">임시 비밀번호</div>
+                            <div className="mt-2 break-all font-mono text-lg font-bold text-indigo-950">{provisionedAccount.temporaryPassword}</div>
+                        </div>
+                        <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm leading-7 text-slate-600">
+                            {provisionedAccount.isExistingAccount
+                                ? '기존 계정의 비밀번호를 새 임시 비밀번호로 재설정했습니다.'
+                                : '새 계정을 만들고 임시 비밀번호를 발급했습니다.'}
+                        </div>
+                    </div>
+                )}
             </AppDialog>
 
             <AppDialog

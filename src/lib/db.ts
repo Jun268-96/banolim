@@ -48,6 +48,11 @@ type GetAuditLogsOptions = {
 
 const createLocalId = (prefix: string) => `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
 const createAttendanceCode = () => Math.random().toString(36).replace(/[^a-z0-9]/gi, '').toUpperCase().slice(0, 8);
+const createTemporaryPassword = () => {
+    const base = Math.random().toString(36).slice(2, 8);
+    const suffix = Math.random().toString(36).slice(2, 6).toUpperCase();
+    return `Ban!${base}${suffix}`;
+};
 const normalizeLoginEmail = (value?: string | null) => {
     const normalized = value?.trim().toLowerCase() ?? '';
     return normalized.length > 0 ? normalized : null;
@@ -75,6 +80,9 @@ let localMembers: Member[] = [
         name: '이동섭',
         score: 180,
         loginEmail: 'leader@banollim.app',
+        authUserId: 'auth_m1',
+        authProvisionedAt: '2026-03-01T09:00:00.000Z',
+        passwordResetRequired: false,
         isApproved: true,
         roleId: 'r1',
         roleName: '회장',
@@ -89,6 +97,9 @@ let localMembers: Member[] = [
         name: '김주영',
         score: 135,
         loginEmail: 'vice@banollim.app',
+        authUserId: 'auth_m2',
+        authProvisionedAt: '2026-03-01T09:10:00.000Z',
+        passwordResetRequired: false,
         isApproved: true,
         roleId: 'r2',
         roleName: '부회장',
@@ -103,6 +114,9 @@ let localMembers: Member[] = [
         name: '김세현',
         score: 95,
         loginEmail: 'plan@banollim.app',
+        authUserId: null,
+        authProvisionedAt: null,
+        passwordResetRequired: false,
         isApproved: true,
         roleId: 'r3',
         roleName: '기획팀장',
@@ -117,6 +131,9 @@ let localMembers: Member[] = [
         name: '이민희',
         score: 40,
         loginEmail: null,
+        authUserId: null,
+        authProvisionedAt: null,
+        passwordResetRequired: false,
         isApproved: false,
         roleId: null,
         roleName: '홍보팀장',
@@ -740,11 +757,11 @@ export const getMembers = async (options?: { includeLoginEmail?: boolean }): Pro
         const memberQuery = includeLoginEmail
             ? client
                 .from('members')
-                .select('id, name, login_email, role_id, team_id, status, joined_at, is_approved, is_visible')
+                .select('id, name, login_email, role_id, team_id, status, joined_at, is_approved, is_visible, auth_user_id, auth_provisioned_at, password_reset_required')
                 .eq('is_visible', true)
             : client
                 .from('members')
-                .select('id, name, role_id, team_id, status, joined_at, is_approved, is_visible')
+                .select('id, name, role_id, team_id, status, joined_at, is_approved, is_visible, auth_user_id, auth_provisioned_at, password_reset_required')
                 .eq('is_visible', true);
         const [summaryResult, memberResult, roleResult, teamResult] = await Promise.all([
             client.from('member_score_summary').select('id, name, is_approved, score'),
@@ -760,7 +777,7 @@ export const getMembers = async (options?: { includeLoginEmail?: boolean }): Pro
 
         const summaryRows = (summaryResult.data ?? []) as MemberScoreSummaryRow[];
         const memberRows = (memberResult.data ?? []) as Array<
-            Pick<MemberRow, 'id' | 'name' | 'role_id' | 'team_id' | 'status' | 'joined_at' | 'is_approved' | 'is_visible'> & {
+            Pick<MemberRow, 'id' | 'name' | 'role_id' | 'team_id' | 'status' | 'joined_at' | 'is_approved' | 'is_visible' | 'auth_user_id' | 'auth_provisioned_at' | 'password_reset_required'> & {
                 login_email?: string | null;
             }
         >;
@@ -780,6 +797,9 @@ export const getMembers = async (options?: { includeLoginEmail?: boolean }): Pro
                     name: member.name,
                     score: summary?.score ?? 0,
                     loginEmail: includeLoginEmail ? member.login_email ?? null : null,
+                    authUserId: member.auth_user_id ?? null,
+                    authProvisionedAt: member.auth_provisioned_at ?? null,
+                    passwordResetRequired: member.password_reset_required ?? false,
                     isApproved: member.is_approved,
                     roleId: member.role_id,
                     roleName: member.role_id ? roleMap.get(member.role_id) ?? null : null,
@@ -831,6 +851,71 @@ export const isRegisteredLoginEmail = async (email: string): Promise<boolean> =>
     } catch (error) {
         console.warn('[data] isRegisteredLoginEmail failed.', error);
         throw new Error('로그인 이메일 확인에 실패했습니다. 운영진에게 인증 설정을 확인해 달라고 요청해 주세요.');
+    }
+};
+
+export const provisionMemberPasswordAuth = async (memberId: string): Promise<{
+    email: string;
+    temporaryPassword: string;
+    memberName: string;
+    isExistingAccount: boolean;
+}> => {
+    const member = localMembers.find((entry) => entry.id === memberId) ?? null;
+
+    if (!isSupabaseConfigured) {
+        if (!member?.loginEmail) {
+            throw new Error('로그인 이메일이 등록된 멤버만 계정을 발급할 수 있습니다.');
+        }
+
+        const temporaryPassword = createTemporaryPassword();
+        const provisionedAt = new Date().toISOString();
+
+        localMembers = localMembers.map((entry) =>
+            entry.id === memberId
+                ? {
+                    ...entry,
+                    authUserId: entry.authUserId ?? createLocalId('auth'),
+                    authProvisionedAt: provisionedAt,
+                    passwordResetRequired: true,
+                }
+                : entry,
+        );
+
+        return {
+            email: member.loginEmail,
+            temporaryPassword,
+            memberName: member.name,
+            isExistingAccount: Boolean(member.authUserId),
+        };
+    }
+
+    const client = getSupabaseClient();
+    const { data, error } = await client.functions.invoke('provision-member-auth', {
+        body: { memberId },
+    });
+
+    if (error) {
+        throw new Error(error.message || '계정을 발급하지 못했습니다.');
+    }
+
+    return {
+        email: String(data?.email ?? ''),
+        temporaryPassword: String(data?.temporaryPassword ?? ''),
+        memberName: String(data?.memberName ?? ''),
+        isExistingAccount: Boolean(data?.isExistingAccount),
+    };
+};
+
+export const completeMyPasswordSetup = async (): Promise<void> => {
+    if (!isSupabaseConfigured) {
+        return;
+    }
+
+    const client = getSupabaseClient();
+    const { error } = await client.rpc('complete_my_password_setup');
+
+    if (error) {
+        throw error;
     }
 };
 
@@ -1367,6 +1452,9 @@ export const addMember = async (name: string, loginEmail?: string | null): Promi
             name,
             score: 0,
             loginEmail: normalizedLoginEmail,
+            authUserId: null,
+            authProvisionedAt: null,
+            passwordResetRequired: false,
             isApproved: false,
             roleName: null,
             teamName: null,
@@ -1416,6 +1504,9 @@ export const addMember = async (name: string, loginEmail?: string | null): Promi
             name: data.name,
             score: 0,
             loginEmail: data.login_email,
+            authUserId: null,
+            authProvisionedAt: null,
+            passwordResetRequired: false,
             isApproved: data.is_approved,
             roleId: null,
             roleName: null,
@@ -1431,6 +1522,9 @@ export const addMember = async (name: string, loginEmail?: string | null): Promi
             name,
             score: 0,
             loginEmail: normalizedLoginEmail,
+            authUserId: null,
+            authProvisionedAt: null,
+            passwordResetRequired: false,
             isApproved: false,
             roleId: null,
             roleName: null,

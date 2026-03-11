@@ -86,9 +86,12 @@ export interface Database {
             };
             members: {
                 Row: {
+                    auth_provisioned_at: string | null;
+                    auth_user_id: string | null;
                     id: string;
                     name: string;
                     login_email: string | null;
+                    password_reset_required: boolean;
                     role_id: string | null;
                     team_id: string | null;
                     status: Database['public']['Enums']['member_status'];
@@ -99,9 +102,12 @@ export interface Database {
                     created_at: string;
                 };
                 Insert: {
+                    auth_provisioned_at?: string | null;
+                    auth_user_id?: string | null;
                     id?: string;
                     name: string;
                     login_email?: string | null;
+                    password_reset_required?: boolean;
                     role_id?: string | null;
                     team_id?: string | null;
                     status?: Database['public']['Enums']['member_status'];
@@ -112,9 +118,12 @@ export interface Database {
                     created_at?: string;
                 };
                 Update: {
+                    auth_provisioned_at?: string | null;
+                    auth_user_id?: string | null;
                     id?: string;
                     name?: string;
                     login_email?: string | null;
+                    password_reset_required?: boolean;
                     role_id?: string | null;
                     team_id?: string | null;
                     status?: Database['public']['Enums']['member_status'];
@@ -700,6 +709,10 @@ export interface Database {
                 };
                 Returns: string;
             };
+            complete_my_password_setup: {
+                Args: Record<string, never>;
+                Returns: undefined;
+            };
             is_registered_login_email: {
                 Args: {
                     p_email: string;
@@ -785,6 +798,7 @@ export interface Database {
                     id: string;
                     is_active: boolean;
                     member_id: string | null;
+                    must_reset_password: boolean;
                 }[];
             };
             update_correction_request_status: {

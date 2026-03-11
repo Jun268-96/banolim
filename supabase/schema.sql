@@ -61,6 +61,9 @@ create table if not exists public.members (
     id uuid primary key default gen_random_uuid(),
     name text not null,
     login_email text,
+    auth_user_id uuid,
+    auth_provisioned_at timestamptz,
+    password_reset_required boolean not null default false,
     role_id uuid references public.roles(id) on delete set null,
     team_id uuid references public.teams(id) on delete set null,
     status public.member_status not null default 'active',
@@ -1577,6 +1580,7 @@ $$;
 
 create index if not exists idx_members_visible on public.members (is_visible, status);
 create unique index if not exists idx_members_login_email_unique on public.members (lower(login_email)) where login_email is not null;
+create unique index if not exists idx_members_auth_user_id_unique on public.members (auth_user_id) where auth_user_id is not null;
 create index if not exists idx_activity_records_member on public.activity_records (member_id, occurred_at desc);
 create index if not exists idx_point_ledgers_member on public.point_ledgers (member_id, created_at desc);
 create index if not exists idx_point_rules_activity_type on public.point_rules (activity_type_id, is_active);

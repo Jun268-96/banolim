@@ -76,6 +76,7 @@ export interface UserProfile {
     appRole: AppRole;
     displayName?: string | null;
     isActive: boolean;
+    mustResetPassword?: boolean;
 }
 
 export interface Member {
@@ -91,6 +92,9 @@ export interface Member {
     status?: MemberStatus;
     joinedAt?: string | null;
     isVisible?: boolean;
+    authUserId?: string | null;
+    authProvisionedAt?: string | null;
+    passwordResetRequired?: boolean;
 }
 
 export interface Category {
