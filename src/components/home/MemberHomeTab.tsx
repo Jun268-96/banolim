@@ -1,9 +1,18 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { BadgeCheck, CalendarDays, Clock3, Link2, MessageSquareWarning, Send, ShieldCheck, Sparkles, TriangleAlert, UserRound } from 'lucide-react';
+import { Activity, BadgeCheck, Flame, Link2, Medal, MessageSquareWarning, Send, ShieldCheck, Sparkles, TrendingUp, TriangleAlert, UserRound, Zap } from 'lucide-react';
 import type { ActivityLog, CorrectionRequest, CorrectionRequestStatus, Member, MemberStatus, SeasonSummary } from '../../types';
 import { getCorrectionRequests, getCurrentSeason, getMyActivityLogs, getMyMemberOverview, submitCorrectionRequest } from '../../lib/db';
 import { roleLabels } from '../../lib/permissions';
 import { useAuth } from '../auth/auth-context';
+
+type TimelineRange = '30d' | '90d' | 'all';
+
+interface HighlightBadge {
+    id: string;
+    title: string;
+    detail: string;
+    tone: 'gold' | 'sky' | 'emerald' | 'rose';
+}
 
 const memberStatusLabels: Record<MemberStatus, string> = {
     active: '활동 중',
@@ -30,6 +39,17 @@ const correctionRequestStatusClasses: Record<CorrectionRequestStatus, string> = 
     resolved: 'border-emerald-200 bg-emerald-50 text-emerald-700',
     rejected: 'border-rose-200 bg-rose-50 text-rose-700',
 };
+const timelineRangeOptions: Array<{ id: TimelineRange; label: string }> = [
+    { id: '30d', label: '최근 30일' },
+    { id: '90d', label: '최근 90일' },
+    { id: 'all', label: '전체' },
+];
+const badgeToneClasses: Record<HighlightBadge['tone'], string> = {
+    gold: 'border-amber-200 bg-amber-50 text-amber-800',
+    sky: 'border-sky-200 bg-sky-50 text-sky-800',
+    emerald: 'border-emerald-200 bg-emerald-50 text-emerald-800',
+    rose: 'border-rose-200 bg-rose-50 text-rose-800',
+};
 
 const formatDate = (value?: string | null) =>
     value
@@ -41,6 +61,20 @@ const formatDateTime = (value?: string | null) =>
         ? new Intl.DateTimeFormat('ko-KR', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
         : '-';
 
+const formatMonthLabel = (value: string) =>
+    new Intl.DateTimeFormat('ko-KR', { year: 'numeric', month: 'long' }).format(new Date(value));
+
+const formatDayLabel = (value: string) =>
+    new Intl.DateTimeFormat('ko-KR', { month: 'long', day: 'numeric', weekday: 'short' }).format(new Date(value));
+
+const toLocalDayKey = (value: string) => {
+    const date = new Date(value);
+    const year = date.getFullYear();
+    const month = `${date.getMonth() + 1}`.padStart(2, '0');
+    const day = `${date.getDate()}`.padStart(2, '0');
+    return `${year}-${month}-${day}`;
+};
+
 export const MemberHomeTab: React.FC = () => {
     const { profile } = useAuth();
     const [season, setSeason] = useState<SeasonSummary | null>(null);
@@ -48,6 +82,7 @@ export const MemberHomeTab: React.FC = () => {
     const [logs, setLogs] = useState<ActivityLog[]>([]);
     const [correctionRequests, setCorrectionRequests] = useState<CorrectionRequest[]>([]);
     const [selectedRequestLog, setSelectedRequestLog] = useState<ActivityLog | null>(null);
+    const [timelineRange, setTimelineRange] = useState<TimelineRange>('90d');
     const [requestReason, setRequestReason] = useState('');
     const [isLoading, setIsLoading] = useState(true);
     const [isSubmittingRequest, setIsSubmittingRequest] = useState(false);
@@ -101,10 +136,118 @@ export const MemberHomeTab: React.FC = () => {
         [correctionRequests],
     );
 
-    const topCategories = useMemo(
+    const seasonLogs = useMemo(() => {
+        if (!season) {
+            return effectiveLogs;
+        }
+
+        const seasonStart = new Date(`${season.startDate}T00:00:00`);
+        const seasonEnd = season.endDate ? new Date(`${season.endDate}T23:59:59`) : null;
+
+        return effectiveLogs.filter((log) => {
+            const occurredAt = new Date(log.timestamp);
+            if (occurredAt < seasonStart) {
+                return false;
+            }
+
+            if (seasonEnd && occurredAt > seasonEnd) {
+                return false;
+            }
+
+            return true;
+        });
+    }, [effectiveLogs, season]);
+
+    const recentSnapshot = useMemo(() => {
+        const now = new Date();
+        const recentStart = new Date(now);
+        recentStart.setDate(recentStart.getDate() - 30);
+        const previousStart = new Date(now);
+        previousStart.setDate(previousStart.getDate() - 60);
+
+        const recentLogs = effectiveLogs.filter((log) => new Date(log.timestamp) >= recentStart);
+        const previousLogs = effectiveLogs.filter((log) => {
+            const occurredAt = new Date(log.timestamp);
+            return occurredAt >= previousStart && occurredAt < recentStart;
+        });
+
+        const recentPoints = recentLogs.reduce((sum, log) => sum + log.pointDelta, 0);
+        const previousPoints = previousLogs.reduce((sum, log) => sum + log.pointDelta, 0);
+        const activeDays = new Set(recentLogs.map((log) => toLocalDayKey(log.timestamp))).size;
+        const evidenceCount = recentLogs.filter((log) => Boolean(log.evidenceUrl)).length;
+
+        const daySet = new Set(effectiveLogs.map((log) => toLocalDayKey(log.timestamp)));
+        const today = new Date();
+        const todayKey = toLocalDayKey(today.toISOString());
+        const yesterday = new Date();
+        yesterday.setDate(yesterday.getDate() - 1);
+        const yesterdayKey = toLocalDayKey(yesterday.toISOString());
+        const streakAnchor = daySet.has(todayKey) ? new Date(today) : daySet.has(yesterdayKey) ? new Date(yesterday) : null;
+
+        let streakDays = 0;
+        if (streakAnchor) {
+            while (daySet.has(toLocalDayKey(streakAnchor.toISOString()))) {
+                streakDays += 1;
+                streakAnchor.setDate(streakAnchor.getDate() - 1);
+            }
+        }
+
+        const growthRate = previousPoints === 0
+            ? recentPoints > 0 ? null : 0
+            : Math.round(((recentPoints - previousPoints) / Math.abs(previousPoints)) * 100);
+
+        return {
+            recentPoints,
+            previousPoints,
+            activeDays,
+            evidenceCount,
+            streakDays,
+            growthRate,
+            recentLogs,
+        };
+    }, [effectiveLogs]);
+
+    const timelineLogs = useMemo(() => {
+        if (timelineRange === 'all') {
+            return effectiveLogs;
+        }
+
+        const now = new Date();
+        const rangeStart = new Date(now);
+        rangeStart.setDate(rangeStart.getDate() - (timelineRange === '30d' ? 30 : 90));
+
+        return effectiveLogs.filter((log) => new Date(log.timestamp) >= rangeStart);
+    }, [effectiveLogs, timelineRange]);
+
+    const timelineGroups = useMemo(() => {
+        const grouped = new Map<string, { monthLabel: string; items: ActivityLog[] }>();
+
+        timelineLogs.forEach((log) => {
+            const monthKey = log.timestamp.slice(0, 7);
+            const existing = grouped.get(monthKey);
+
+            if (existing) {
+                existing.items.push(log);
+                return;
+            }
+
+            grouped.set(monthKey, {
+                monthLabel: formatMonthLabel(log.timestamp),
+                items: [log],
+            });
+        });
+
+        return Array.from(grouped.entries()).map(([monthKey, group]) => ({
+            monthKey,
+            monthLabel: group.monthLabel,
+            items: group.items,
+        }));
+    }, [timelineLogs]);
+
+    const filteredTopCategories = useMemo(
         () =>
             Object.values(
-                effectiveLogs.reduce<Record<string, { name: string; count: number; totalDelta: number }>>((acc, log) => {
+                timelineLogs.reduce<Record<string, { name: string; count: number; totalDelta: number }>>((acc, log) => {
                     const key = log.categoryId;
                     const current = acc[key] ?? {
                         name: log.categoryName ?? '알 수 없는 규칙',
@@ -121,13 +264,95 @@ export const MemberHomeTab: React.FC = () => {
                     return acc;
                 }, {}),
             ).sort((a, b) => b.count - a.count || b.totalDelta - a.totalDelta).slice(0, 3),
-        [effectiveLogs],
+        [timelineLogs],
     );
+
+    const earnedBadges = useMemo<HighlightBadge[]>(() => {
+        const badges: HighlightBadge[] = [];
+        const attendanceCount = effectiveLogs.filter((log) => /(출석|참석|지각|불참)/.test(log.categoryName ?? log.reason ?? '')).length;
+        const presentationCount = effectiveLogs.filter((log) => /(발표|세션|리딩)/.test(log.categoryName ?? log.reason ?? '')).length;
+        const uniqueCategoryCount = new Set(effectiveLogs.map((log) => log.categoryName ?? log.categoryId)).size;
+        const evidenceTotal = effectiveLogs.filter((log) => Boolean(log.evidenceUrl)).length;
+
+        if (effectiveLogs.length > 0) {
+            badges.push({
+                id: 'first-step',
+                title: '첫 발자국',
+                detail: '첫 활동 기록이 누적되었습니다.',
+                tone: 'gold',
+            });
+        }
+
+        if (recentSnapshot.streakDays >= 3) {
+            badges.push({
+                id: 'steady-rhythm',
+                title: '꾸준한 리듬',
+                detail: `${recentSnapshot.streakDays}일 연속으로 활동 흐름을 이어가고 있습니다.`,
+                tone: 'emerald',
+            });
+        }
+
+        if (attendanceCount >= 5) {
+            badges.push({
+                id: 'attendance-radar',
+                title: '출석 레이더',
+                detail: `출석 계열 기록이 ${attendanceCount}회 쌓였습니다.`,
+                tone: 'sky',
+            });
+        }
+
+        if (presentationCount >= 1 || effectiveLogs.some((log) => log.pointDelta >= 20)) {
+            badges.push({
+                id: 'spotlight',
+                title: '스포트라이트',
+                detail: '임팩트가 큰 발표 또는 기여 기록이 포착되었습니다.',
+                tone: 'rose',
+            });
+        }
+
+        if (uniqueCategoryCount >= 4) {
+            badges.push({
+                id: 'multi-tool',
+                title: '멀티 플레이어',
+                detail: `서로 다른 활동 유형 ${uniqueCategoryCount}개를 경험했습니다.`,
+                tone: 'sky',
+            });
+        }
+
+        if (evidenceTotal >= 2) {
+            badges.push({
+                id: 'archive-keeper',
+                title: '기록 보관자',
+                detail: `증빙 링크가 포함된 기록이 ${evidenceTotal}건 있습니다.`,
+                tone: 'emerald',
+            });
+        }
+
+        if (recentSnapshot.recentPoints > recentSnapshot.previousPoints && recentSnapshot.recentPoints > 0) {
+            badges.push({
+                id: 'momentum',
+                title: '가속 페이스',
+                detail: '직전 30일보다 더 빠른 속도로 점수가 쌓이고 있습니다.',
+                tone: 'gold',
+            });
+        }
+
+        return badges.slice(0, 4);
+    }, [effectiveLogs, recentSnapshot]);
 
     const latestLog = effectiveLogs[0] ?? null;
     const approvedLabel = member?.isApproved ? '승인 완료' : '승인 대기';
     const status = member?.status ?? 'active';
     const statusClass = member ? memberStatusClasses[status] : memberStatusClasses.active;
+    const seasonScore = seasonLogs.reduce((sum, log) => sum + log.pointDelta, 0);
+    const seasonLogCount = seasonLogs.length;
+    const growthDescription = recentSnapshot.growthRate === null
+        ? '직전 30일 기록이 없어 이번 달 흐름이 새로 시작되었습니다.'
+        : recentSnapshot.growthRate > 0
+            ? `직전 30일 대비 ${recentSnapshot.growthRate}% 상승했습니다.`
+            : recentSnapshot.growthRate < 0
+                ? `직전 30일 대비 ${Math.abs(recentSnapshot.growthRate)}% 낮아졌습니다.`
+                : '직전 30일과 비슷한 흐름을 유지하고 있습니다.';
 
     const handleSubmitCorrectionRequest = async (event: React.FormEvent) => {
         event.preventDefault();
@@ -200,31 +425,42 @@ export const MemberHomeTab: React.FC = () => {
                     <div className="space-y-5">
                         <div className="inline-flex items-center gap-2 rounded-full border border-sky-200 bg-white/90 px-3 py-1 text-sm font-medium text-sky-700">
                             <Sparkles size={15} />
-                            내 활동 현황
+                            개인 성장 대시보드
                         </div>
 
                         <div>
-                            <h2 className="text-3xl font-bold tracking-tight text-slate-950 lg:text-4xl">{member.name}님의 현재 상태</h2>
+                            <h2 className="text-3xl font-bold tracking-tight text-slate-950 lg:text-4xl">{member.name}님의 활동 흐름</h2>
                             <p className="mt-3 max-w-3xl text-base text-slate-600 lg:text-lg">
-                                일반 회원 화면에서는 본인 점수와 최근 활동만 표시됩니다. 다른 회원 정보와 운영 화면은 노출하지 않습니다.
+                                최근 30일의 변화, 시즌 점수, 연속 활동 흐름을 한 화면에서 읽을 수 있게 정리했습니다.
                             </p>
                         </div>
 
-                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
                             <div className="rounded-2xl border border-slate-200 bg-white/90 p-4">
-                                <div className="text-sm text-slate-500">현재 시즌</div>
-                                <div className="mt-2 text-xl font-bold text-slate-900">{season?.name ?? '활성 시즌 없음'}</div>
-                                <div className="mt-1 text-sm text-slate-500">{season ? `${formatDate(season.startDate)} - ${formatDate(season.endDate)}` : '운영진이 시즌을 설정하면 표시됩니다.'}</div>
+                                <div className="text-sm text-slate-500">현재 시즌 점수</div>
+                                <div className="mt-2 text-2xl font-bold text-slate-950">
+                                    {seasonScore > 0 ? '+' : ''}
+                                    {seasonScore}점
+                                </div>
+                                <div className="mt-1 text-sm text-slate-500">{season ? `${season.name} · ${seasonLogCount}건` : '시즌 기준 없음'}</div>
                             </div>
                             <div className="rounded-2xl border border-slate-200 bg-white/90 p-4">
-                                <div className="text-sm text-slate-500">누적 점수</div>
-                                <div className="mt-2 text-xl font-bold text-indigo-600">{member.score}점</div>
-                                <div className="mt-1 text-sm text-slate-500">{approvedLabel}</div>
+                                <div className="text-sm text-slate-500">최근 30일</div>
+                                <div className={`mt-2 text-2xl font-bold ${recentSnapshot.recentPoints >= 0 ? 'text-indigo-600' : 'text-rose-600'}`}>
+                                    {recentSnapshot.recentPoints > 0 ? '+' : ''}
+                                    {recentSnapshot.recentPoints}점
+                                </div>
+                                <div className="mt-1 text-sm text-slate-500">{recentSnapshot.recentLogs.length}건 기록</div>
                             </div>
                             <div className="rounded-2xl border border-slate-200 bg-white/90 p-4">
-                                <div className="text-sm text-slate-500">최근 활동</div>
-                                <div className="mt-2 text-xl font-bold text-slate-900">{effectiveLogs.length}건</div>
-                                <div className="mt-1 text-sm text-slate-500">{latestLog ? formatDateTime(latestLog.timestamp) : '아직 기록이 없습니다.'}</div>
+                                <div className="text-sm text-slate-500">연속 활동</div>
+                                <div className="mt-2 text-2xl font-bold text-slate-950">{recentSnapshot.streakDays}일</div>
+                                <div className="mt-1 text-sm text-slate-500">최근 흐름이 이어진 일수</div>
+                            </div>
+                            <div className="rounded-2xl border border-slate-200 bg-white/90 p-4">
+                                <div className="text-sm text-slate-500">증빙 포함 기록</div>
+                                <div className="mt-2 text-2xl font-bold text-slate-950">{recentSnapshot.evidenceCount}건</div>
+                                <div className="mt-1 text-sm text-slate-500">최근 30일 기준</div>
                             </div>
                         </div>
                     </div>
@@ -247,110 +483,236 @@ export const MemberHomeTab: React.FC = () => {
                                 <div className="text-xs uppercase tracking-[0.16em] text-slate-400">가입일</div>
                                 <div className="mt-2 font-semibold text-white">{formatDate(member.joinedAt)}</div>
                             </div>
+                            <div className="rounded-2xl border border-indigo-400/30 bg-indigo-400/10 p-4">
+                                <div className="flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-indigo-200">
+                                    <TrendingUp size={14} />
+                                    최근 모멘텀
+                                </div>
+                                <div className="mt-3 text-lg font-semibold text-white">
+                                    {latestLog ? `${formatDateTime(latestLog.timestamp)} 이후 흐름 유지 중` : '아직 첫 활동을 준비 중입니다.'}
+                                </div>
+                                <div className="mt-2 text-sm leading-6 text-slate-300">{growthDescription}</div>
+                            </div>
                         </div>
                     </div>
                 </div>
             </section>
 
-            <section className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.8fr)]">
-                <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
-                    <div className="border-b border-slate-100 px-6 py-4">
-                        <div className="flex items-center gap-2 font-semibold text-slate-900">
-                            <Clock3 size={18} className="text-indigo-600" />
-                            최근 내 활동
-                        </div>
-                        <div className="mt-1 text-sm text-slate-500">최근 저장된 활동 기록과 정정 요청 버튼을 함께 보여줍니다.</div>
-                    </div>
-
-                    <div className="divide-y divide-slate-100">
-                        {effectiveLogs.slice(0, 8).map((log) => (
-                            <div key={log.id} className="flex flex-col gap-4 px-6 py-4">
-                                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                                    <div>
-                                        <div className="font-medium text-slate-900">{log.categoryName ?? '알 수 없는 규칙'}</div>
-                                        <div className="mt-1 text-sm text-slate-500">
-                                            {log.reason ?? '기록 사유 없음'}
-                                            {log.note ? <span className="text-slate-300"> · {log.note}</span> : null}
-                                        </div>
-                                        {log.evidenceUrl && (
-                                            <a
-                                                href={log.evidenceUrl}
-                                                target="_blank"
-                                                rel="noreferrer"
-                                                className="mt-3 inline-flex items-center gap-1 rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-medium text-sky-700 transition-colors hover:bg-sky-100"
-                                            >
-                                                <Link2 size={13} />
-                                                증빙 링크
-                                            </a>
-                                        )}
+            <section className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1.22fr)_minmax(320px,0.78fr)]">
+                <div className="space-y-6">
+                    <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
+                        <div className="border-b border-slate-100 px-6 py-5">
+                            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                                <div>
+                                    <div className="flex items-center gap-2 font-semibold text-slate-900">
+                                        <Activity size={18} className="text-indigo-600" />
+                                        개인 활동 타임라인
                                     </div>
-                                    <div className="flex flex-wrap items-center gap-3">
-                                        <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${log.pointDelta >= 0 ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-rose-200 bg-rose-50 text-rose-700'}`}>
-                                            {log.pointDelta > 0 ? '+' : ''}
-                                            {log.pointDelta}점
-                                        </span>
-                                        <span className="text-sm text-slate-500">{formatDateTime(log.timestamp)}</span>
-                                    </div>
+                                    <div className="mt-1 text-sm text-slate-500">저장된 활동을 시간순으로 묶어 보고, 바로 정정 요청까지 이어집니다.</div>
                                 </div>
-
-                                <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                                    <div className="text-sm text-slate-600">
-                                        {openCorrectionRequestsByRecordId[log.recordId ?? ''] ? '이미 정정 요청이 접수되어 운영진이 확인 중입니다.' : '기록이 잘못 반영되었다면 바로 정정 요청을 남길 수 있습니다.'}
-                                    </div>
-                                    {openCorrectionRequestsByRecordId[log.recordId ?? ''] ? (
-                                        <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${correctionRequestStatusClasses[openCorrectionRequestsByRecordId[log.recordId ?? ''].status]}`}>
-                                            {correctionRequestStatusLabels[openCorrectionRequestsByRecordId[log.recordId ?? ''].status]}
-                                        </span>
-                                    ) : (
+                                <div className="inline-flex rounded-2xl border border-slate-200 bg-slate-50 p-1">
+                                    {timelineRangeOptions.map((option) => (
                                         <button
+                                            key={option.id}
                                             type="button"
-                                            onClick={() => {
-                                                setSelectedRequestLog(log);
-                                                setRequestReason(`${log.categoryName ?? '활동'} 기록에 대한 정정 요청입니다. `);
-                                                setRequestError(null);
-                                            }}
-                                            disabled={!log.recordId}
-                                            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 disabled:opacity-50"
+                                            onClick={() => setTimelineRange(option.id)}
+                                            className={`rounded-xl px-3 py-2 text-sm font-semibold transition-colors ${
+                                                timelineRange === option.id
+                                                    ? 'bg-white text-slate-900 shadow-sm'
+                                                    : 'text-slate-500 hover:text-slate-800'
+                                            }`}
                                         >
-                                            <MessageSquareWarning size={16} />
-                                            정정 요청
+                                            {option.label}
                                         </button>
-                                    )}
+                                    ))}
                                 </div>
                             </div>
-                        ))}
 
-                        {effectiveLogs.length === 0 && (
-                            <div className="px-6 py-12 text-center text-slate-500">
-                                아직 본인 활동 기록이 없습니다.
+                            <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                                    <div className="text-xs uppercase tracking-[0.16em] text-slate-500">선택 기간 기록</div>
+                                    <div className="mt-2 text-lg font-bold text-slate-950">{timelineLogs.length}건</div>
+                                </div>
+                                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                                    <div className="text-xs uppercase tracking-[0.16em] text-slate-500">활동 유형</div>
+                                    <div className="mt-2 text-lg font-bold text-slate-950">{new Set(timelineLogs.map((log) => log.categoryId)).size}개</div>
+                                </div>
+                                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                                    <div className="text-xs uppercase tracking-[0.16em] text-slate-500">증빙 링크</div>
+                                    <div className="mt-2 text-lg font-bold text-slate-950">{timelineLogs.filter((log) => Boolean(log.evidenceUrl)).length}건</div>
+                                </div>
                             </div>
-                        )}
+                        </div>
+
+                        <div className="space-y-8 px-6 py-6">
+                            {timelineGroups.map((group) => (
+                                <div key={group.monthKey} className="space-y-3">
+                                    <div className="flex items-center gap-3">
+                                        <div className="text-sm font-semibold text-slate-900">{group.monthLabel}</div>
+                                        <div className="h-px flex-1 bg-slate-200" />
+                                    </div>
+
+                                    <div className="space-y-3">
+                                        {group.items.map((log) => {
+                                            const openRequest = openCorrectionRequestsByRecordId[log.recordId ?? ''];
+
+                                            return (
+                                                <div
+                                                    key={log.id}
+                                                    className="rounded-[24px] border border-slate-200 bg-gradient-to-r from-white via-white to-slate-50 p-5 shadow-sm"
+                                                >
+                                                    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                                                        <div className="space-y-3">
+                                                            <div className="flex flex-wrap items-center gap-2">
+                                                                <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700">
+                                                                    {formatDayLabel(log.timestamp)}
+                                                                </span>
+                                                                {log.evidenceUrl && (
+                                                                    <a
+                                                                        href={log.evidenceUrl}
+                                                                        target="_blank"
+                                                                        rel="noreferrer"
+                                                                        className="inline-flex items-center gap-1 rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-medium text-sky-700 transition-colors hover:bg-sky-100"
+                                                                    >
+                                                                        <Link2 size={13} />
+                                                                        증빙 링크
+                                                                    </a>
+                                                                )}
+                                                            </div>
+
+                                                            <div>
+                                                                <div className="font-semibold text-slate-950">{log.categoryName ?? '알 수 없는 규칙'}</div>
+                                                                <div className="mt-1 text-sm leading-6 text-slate-600">
+                                                                    {log.reason ?? '기록 사유 없음'}
+                                                                    {log.note ? <span className="text-slate-300"> · {log.note}</span> : null}
+                                                                </div>
+                                                            </div>
+                                                        </div>
+
+                                                        <div className="flex flex-col items-start gap-3 lg:items-end">
+                                                            <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${log.pointDelta >= 0 ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-rose-200 bg-rose-50 text-rose-700'}`}>
+                                                                {log.pointDelta > 0 ? '+' : ''}
+                                                                {log.pointDelta}점
+                                                            </span>
+                                                            <div className="text-sm text-slate-500">{formatDateTime(log.timestamp)}</div>
+                                                        </div>
+                                                    </div>
+
+                                                    <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                                                        <div className="text-sm text-slate-600">
+                                                            {openRequest ? '이미 정정 요청이 접수되어 운영진이 확인 중입니다.' : '기록이 다르면 바로 정정 요청을 보낼 수 있습니다.'}
+                                                        </div>
+                                                        {openRequest ? (
+                                                            <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${correctionRequestStatusClasses[openRequest.status]}`}>
+                                                                {correctionRequestStatusLabels[openRequest.status]}
+                                                            </span>
+                                                        ) : (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => {
+                                                                    setSelectedRequestLog(log);
+                                                                    setRequestReason(`${log.categoryName ?? '활동'} 기록에 대한 정정 요청입니다. `);
+                                                                    setRequestError(null);
+                                                                }}
+                                                                disabled={!log.recordId}
+                                                                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 disabled:opacity-50"
+                                                            >
+                                                                <MessageSquareWarning size={16} />
+                                                                정정 요청
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            ))}
+
+                            {timelineLogs.length === 0 && (
+                                <div className="rounded-[24px] border border-dashed border-slate-200 bg-slate-50 px-6 py-14 text-center">
+                                    <div className="text-base font-semibold text-slate-900">아직 타임라인에 표시할 활동이 없습니다.</div>
+                                    <div className="mt-2 text-sm text-slate-500">기록이 저장되면 이곳에 월별 흐름과 정정 요청 버튼이 함께 표시됩니다.</div>
+                                </div>
+                            )}
+                        </div>
                     </div>
                 </div>
 
                 <div className="space-y-6">
                     <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
                         <div className="flex items-center gap-2 font-semibold text-slate-900">
-                            <ShieldCheck size={18} className="text-indigo-600" />
-                            계정 상태
+                            <TrendingUp size={18} className="text-indigo-600" />
+                            성장 스냅샷
                         </div>
-                        <div className="mt-5 space-y-4">
-                            <div className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                                <span className="text-sm text-slate-500">회원 상태</span>
-                                <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${statusClass}`}>
-                                    {memberStatusLabels[status]}
-                                </span>
+                        <div className="mt-5 grid grid-cols-2 gap-3">
+                            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                                <div className="text-sm text-slate-500">활동 일수</div>
+                                <div className="mt-2 text-xl font-bold text-slate-950">{recentSnapshot.activeDays}일</div>
                             </div>
-                            <div className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                                <span className="text-sm text-slate-500">승인 여부</span>
-                                <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${member.isApproved ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-amber-200 bg-amber-50 text-amber-700'}`}>
-                                    {approvedLabel}
-                                </span>
+                            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                                <div className="text-sm text-slate-500">연속 활동</div>
+                                <div className="mt-2 flex items-center gap-2 text-xl font-bold text-slate-950">
+                                    <Flame size={18} className="text-amber-500" />
+                                    {recentSnapshot.streakDays}일
+                                </div>
                             </div>
-                            <div className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                                <span className="text-sm text-slate-500">로그인 이메일</span>
-                                <span className="text-sm font-medium text-slate-900">{profile?.email ?? '-'}</span>
+                            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                                <div className="text-sm text-slate-500">직전 30일</div>
+                                <div className="mt-2 text-xl font-bold text-slate-950">
+                                    {recentSnapshot.previousPoints > 0 ? '+' : ''}
+                                    {recentSnapshot.previousPoints}점
+                                </div>
                             </div>
+                            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                                <div className="text-sm text-slate-500">누적 점수</div>
+                                <div className="mt-2 text-xl font-bold text-indigo-600">{member.score}점</div>
+                            </div>
+                        </div>
+                        <div className="mt-4 rounded-2xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm leading-6 text-indigo-900">
+                            {growthDescription}
+                        </div>
+                        <div className="mt-5 space-y-3">
+                            {filteredTopCategories.map((category) => (
+                                <div key={category.name} className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                                    <div>
+                                        <div className="font-medium text-slate-900">{category.name}</div>
+                                        <div className="mt-1 text-sm text-slate-500">{category.count}회 기록</div>
+                                    </div>
+                                    <div className={`text-sm font-bold ${category.totalDelta >= 0 ? 'text-indigo-600' : 'text-rose-600'}`}>
+                                        {category.totalDelta > 0 ? '+' : ''}
+                                        {category.totalDelta}점
+                                    </div>
+                                </div>
+                            ))}
+                            {filteredTopCategories.length === 0 && (
+                                <div className="rounded-2xl border border-dashed border-slate-200 px-4 py-8 text-center text-sm text-slate-500">
+                                    선택한 기간에는 아직 대표 활동이 없습니다.
+                                </div>
+                            )}
+                        </div>
+                    </div>
+
+                    <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+                        <div className="flex items-center gap-2 font-semibold text-slate-900">
+                            <Medal size={18} className="text-indigo-600" />
+                            누적 하이라이트
+                        </div>
+                        <div className="mt-5 space-y-3">
+                            {earnedBadges.map((badge) => (
+                                <div key={badge.id} className={`rounded-2xl border px-4 py-4 ${badgeToneClasses[badge.tone]}`}>
+                                    <div className="flex items-center gap-2 text-sm font-semibold">
+                                        <BadgeCheck size={16} />
+                                        {badge.title}
+                                    </div>
+                                    <div className="mt-2 text-sm leading-6">{badge.detail}</div>
+                                </div>
+                            ))}
+                            {earnedBadges.length === 0 && (
+                                <div className="rounded-2xl border border-dashed border-slate-200 px-4 py-8 text-center text-sm text-slate-500">
+                                    활동 기록이 쌓이면 이곳에 누적 하이라이트가 표시됩니다.
+                                </div>
+                            )}
                         </div>
                     </div>
 
@@ -439,38 +801,33 @@ export const MemberHomeTab: React.FC = () => {
 
                     <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
                         <div className="flex items-center gap-2 font-semibold text-slate-900">
-                            <BadgeCheck size={18} className="text-indigo-600" />
-                            자주 기록된 활동
+                            <ShieldCheck size={18} className="text-indigo-600" />
+                            계정 상태
                         </div>
-                        <div className="mt-5 space-y-3">
-                            {topCategories.map((category) => (
-                                <div key={category.name} className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                                    <div>
-                                        <div className="font-medium text-slate-900">{category.name}</div>
-                                        <div className="mt-1 text-sm text-slate-500">{category.count}회 기록</div>
-                                    </div>
-                                    <div className={`text-sm font-bold ${category.totalDelta >= 0 ? 'text-indigo-600' : 'text-rose-600'}`}>
-                                        {category.totalDelta > 0 ? '+' : ''}
-                                        {category.totalDelta}점
-                                    </div>
-                                </div>
-                            ))}
-
-                            {topCategories.length === 0 && (
-                                <div className="rounded-2xl border border-dashed border-slate-200 px-4 py-8 text-center text-sm text-slate-500">
-                                    아직 누적된 활동 유형이 없습니다.
-                                </div>
-                            )}
-                        </div>
-                    </div>
-
-                    <div className="rounded-2xl border border-sky-200 bg-sky-50 p-5 text-sm text-sky-900 shadow-sm">
-                        <div className="flex items-center gap-2 font-semibold">
-                            <CalendarDays size={16} />
-                            안내
-                        </div>
-                        <div className="mt-2 leading-6">
-                            기록이 잘못 반영되었다면 최근 활동 카드에서 정정 요청을 바로 제출할 수 있습니다.
+                        <div className="mt-5 space-y-4">
+                            <div className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                                <span className="text-sm text-slate-500">회원 상태</span>
+                                <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${statusClass}`}>
+                                    {memberStatusLabels[status]}
+                                </span>
+                            </div>
+                            <div className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                                <span className="text-sm text-slate-500">승인 여부</span>
+                                <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${member.isApproved ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-amber-200 bg-amber-50 text-amber-700'}`}>
+                                    {approvedLabel}
+                                </span>
+                            </div>
+                            <div className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                                <span className="text-sm text-slate-500">로그인 이메일</span>
+                                <span className="text-sm font-medium text-slate-900">{profile?.email ?? '-'}</span>
+                            </div>
+                            <div className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                                <span className="text-sm text-slate-500">누적 하이라이트</span>
+                                <span className="flex items-center gap-2 text-sm font-medium text-slate-900">
+                                    <Zap size={16} className="text-indigo-500" />
+                                    {earnedBadges.length}개
+                                </span>
+                            </div>
                         </div>
                     </div>
                 </div>

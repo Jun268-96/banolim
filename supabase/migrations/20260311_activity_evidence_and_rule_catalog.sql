@@ -308,11 +308,11 @@ select
     pr.id,
     pr.activity_type_id,
     at.name as category_name,
-    at.group_name,
     pr.base_point as point_value,
-    pr.penalty_point,
-    pr.condition_json,
     pr.is_active,
-    pr.version
+    pr.version,
+    at.group_name,
+    pr.penalty_point,
+    pr.condition_json
 from public.point_rules pr
 join public.activity_types at on at.id = pr.activity_type_id;

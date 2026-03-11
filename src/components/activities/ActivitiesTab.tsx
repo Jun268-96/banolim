@@ -29,8 +29,13 @@ import {
     updateCorrectionRequestStatus,
 } from '../../lib/db';
 
-type EntryMode = 'attendance' | 'single';
+type EntryMode = 'attendance' | 'single' | 'mixed';
 type AttendanceStatus = 'present' | 'late' | 'absent';
+type MixedDraftRow = {
+    selected: boolean;
+    categoryId: string;
+    note: string;
+};
 
 const attendanceStatuses: AttendanceStatus[] = ['present', 'late', 'absent'];
 const attendanceStatusLabels: Record<AttendanceStatus, string> = {
@@ -152,6 +157,14 @@ export const ActivitiesTab: React.FC = () => {
     const [selectedTeamFilter, setSelectedTeamFilter] = useState('all');
     const [attendanceDraft, setAttendanceDraft] = useState<Record<string, AttendanceStatus>>({});
 
+    const [mixedDate, setMixedDate] = useState(new Date().toISOString().slice(0, 10));
+    const [mixedTitle, setMixedTitle] = useState('운영 활동');
+    const [mixedNote, setMixedNote] = useState('');
+    const [mixedEvidenceUrl, setMixedEvidenceUrl] = useState('');
+    const [selectedMixedTeamFilter, setSelectedMixedTeamFilter] = useState('all');
+    const [mixedBulkCategoryId, setMixedBulkCategoryId] = useState('');
+    const [mixedDraft, setMixedDraft] = useState<Record<string, MixedDraftRow>>({});
+
     const [isLoading, setIsLoading] = useState(true);
     const [isSaving, setIsSaving] = useState(false);
     const [reversingRecordId, setReversingRecordId] = useState<string | null>(null);
@@ -177,6 +190,7 @@ export const ActivitiesTab: React.FC = () => {
         setCorrectionRequests(correctionRequestData);
         setSelectedMemberId((current) => current || firstActiveMemberId);
         setSelectedCategoryId((current) => current || categoriesData[0]?.id || '');
+        setMixedBulkCategoryId((current) => current || categoriesData[0]?.id || '');
         setIsLoading(false);
     };
 
@@ -206,6 +220,7 @@ export const ActivitiesTab: React.FC = () => {
             setCorrectionRequests(correctionRequestData);
             setSelectedMemberId((current) => current || firstActiveMemberId);
             setSelectedCategoryId((current) => current || categoriesData[0]?.id || '');
+            setMixedBulkCategoryId((current) => current || categoriesData[0]?.id || '');
             setIsLoading(false);
         };
 
@@ -260,6 +275,22 @@ export const ActivitiesTab: React.FC = () => {
         [activeMembers, selectedTeamFilter],
     );
 
+    const filteredMixedMembers = useMemo(
+        () =>
+            activeMembers.filter((member) => {
+                if (selectedMixedTeamFilter === 'all') {
+                    return true;
+                }
+
+                if (selectedMixedTeamFilter === 'ungrouped') {
+                    return !member.teamId;
+                }
+
+                return member.teamId === selectedMixedTeamFilter;
+            }),
+        [activeMembers, selectedMixedTeamFilter],
+    );
+
     const attendanceRules = useMemo(
         () => ({
             present: getAttendanceRule(categories, 'present'),
@@ -272,6 +303,72 @@ export const ActivitiesTab: React.FC = () => {
     const selectedCategory = useMemo(
         () => categories.find((category) => category.id === selectedCategoryId) ?? null,
         [categories, selectedCategoryId],
+    );
+
+    const mixedPreviewRows = useMemo(
+        () =>
+            filteredMixedMembers.flatMap((member) => {
+                const row = mixedDraft[member.id];
+                if (!row?.selected || !row.categoryId) {
+                    return [];
+                }
+
+                const category = categories.find((item) => item.id === row.categoryId);
+                if (!category) {
+                    return [];
+                }
+
+                return [{
+                    member,
+                    row,
+                    category,
+                }];
+            }),
+        [categories, filteredMixedMembers, mixedDraft],
+    );
+
+    const incompleteMixedMembers = useMemo(
+        () =>
+            filteredMixedMembers.filter((member) => {
+                const row = mixedDraft[member.id];
+                return Boolean(row?.selected && !row.categoryId);
+            }),
+        [filteredMixedMembers, mixedDraft],
+    );
+
+    const mixedExpectedDelta = useMemo(
+        () => mixedPreviewRows.reduce((sum, row) => sum + row.category.pointValue, 0),
+        [mixedPreviewRows],
+    );
+
+    const mixedCategorySummary = useMemo(
+        () =>
+            mixedPreviewRows.reduce<Array<{
+                categoryId: string;
+                categoryName: string;
+                count: number;
+                delta: number;
+                version: number;
+            }>>((acc, row) => {
+                const existing = acc.find((item) => item.categoryId === row.category.id);
+                if (existing) {
+                    existing.count += 1;
+                    existing.delta += row.category.pointValue;
+                    return acc;
+                }
+
+                return [
+                    ...acc,
+                    {
+                        categoryId: row.category.id,
+                        categoryName: row.category.categoryName,
+                        count: 1,
+                        delta: row.category.pointValue,
+                        version: row.category.version ?? 1,
+                    },
+                ];
+            }, []).sort((a, b) => b.count - a.count || a.categoryName.localeCompare(b.categoryName)),
+        [mixedPreviewRows],
     );
 
     const attendancePreviewRows = useMemo(
@@ -362,6 +459,77 @@ export const ActivitiesTab: React.FC = () => {
         });
     };
 
+    const handleMixedTeamFilterChange = (value: string) => {
+        setSelectedMixedTeamFilter(value);
+        setMixedDraft({});
+    };
+
+    const updateMixedRow = (memberId: string, updater: (current: MixedDraftRow) => MixedDraftRow) => {
+        setMixedDraft((current) => {
+            const baseRow = current[memberId] ?? {
+                selected: false,
+                categoryId: '',
+                note: '',
+            };
+
+            return {
+                ...current,
+                [memberId]: updater(baseRow),
+            };
+        });
+    };
+
+    const handleMixedMemberToggle = (memberId: string) => {
+        updateMixedRow(memberId, (current) => ({
+            ...current,
+            selected: !current.selected,
+            categoryId: current.categoryId || mixedBulkCategoryId || '',
+        }));
+    };
+
+    const handleMixedCategoryChange = (memberId: string, categoryId: string) => {
+        updateMixedRow(memberId, (current) => ({
+            ...current,
+            selected: true,
+            categoryId,
+        }));
+    };
+
+    const handleMixedNoteChange = (memberId: string, value: string) => {
+        updateMixedRow(memberId, (current) => ({
+            ...current,
+            note: value,
+        }));
+    };
+
+    const applyBulkCategoryToFilteredMembers = () => {
+        if (!mixedBulkCategoryId) {
+            return;
+        }
+
+        setMixedDraft((current) => {
+            const next = { ...current };
+            filteredMixedMembers.forEach((member) => {
+                next[member.id] = {
+                    selected: true,
+                    categoryId: mixedBulkCategoryId,
+                    note: current[member.id]?.note ?? '',
+                };
+            });
+            return next;
+        });
+    };
+
+    const clearMixedFilteredMembers = () => {
+        setMixedDraft((current) => {
+            const next = { ...current };
+            filteredMixedMembers.forEach((member) => {
+                delete next[member.id];
+            });
+            return next;
+        });
+    };
+
     const handleAttendanceSubmit = async (event: React.FormEvent) => {
         event.preventDefault();
         if (attendancePreviewRows.length === 0 || missingAttendanceRules.length > 0) {
@@ -414,6 +582,38 @@ export const ActivitiesTab: React.FC = () => {
         setSingleEvidenceUrl('');
         await refreshData();
         setIsSaving(false);
+    };
+
+    const handleMixedSubmit = async (event: React.FormEvent) => {
+        event.preventDefault();
+        if (mixedPreviewRows.length === 0 || incompleteMixedMembers.length > 0) {
+            return;
+        }
+
+        setIsSaving(true);
+
+        try {
+            const occurredAt = toOccurredAt(mixedDate);
+            const baseTitle = mixedTitle.trim() || '운영 활동';
+            const sharedNote = mixedNote.trim();
+
+            for (const preview of mixedPreviewRows) {
+                const memberNote = preview.row.note.trim();
+                const mergedNote = [sharedNote, memberNote].filter(Boolean).join(' · ');
+                await createActivityEntry(preview.member.id, preview.category.id, mergedNote || undefined, {
+                    occurredAt,
+                    reason: `${baseTitle} · ${preview.category.categoryName}`,
+                    evidenceUrl: mixedEvidenceUrl,
+                });
+            }
+
+            setMixedDraft({});
+            setMixedNote('');
+            setMixedEvidenceUrl('');
+            await refreshData();
+        } finally {
+            setIsSaving(false);
+        }
     };
 
     const handleReverseLog = async (log: ActivityLog) => {
@@ -471,7 +671,7 @@ export const ActivitiesTab: React.FC = () => {
                         <ClipboardList className="text-indigo-600" />
                         활동 기록
                     </h2>
-                    <p className="text-slate-500 mt-1">정기모임 출석을 먼저 빠르게 처리하고, 필요한 경우 개별 활동을 이어서 기록합니다.</p>
+                    <p className="text-slate-500 mt-1">출석 일괄 입력, 회원별 혼합 배치, 개별 활동 기록까지 운영 흐름에 맞춰 한 화면에서 처리합니다.</p>
                 </div>
 
                 <div className="inline-flex rounded-2xl border border-slate-200 bg-white p-1 shadow-sm">
@@ -485,6 +685,17 @@ export const ActivitiesTab: React.FC = () => {
                         }`}
                     >
                         정기모임 출석
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => setEntryMode('mixed')}
+                        className={`rounded-xl px-4 py-2 text-sm font-semibold transition-colors ${
+                            entryMode === 'mixed'
+                                ? 'bg-indigo-600 text-white'
+                                : 'text-slate-600 hover:bg-slate-50'
+                        }`}
+                    >
+                        혼합 배치
                     </button>
                     <button
                         type="button"
@@ -703,6 +914,257 @@ export const ActivitiesTab: React.FC = () => {
                                 </button>
                             </form>
                         </div>
+                    ) : entryMode === 'mixed' ? (
+                        <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
+                            <div className="border-b border-slate-200 bg-gradient-to-br from-violet-50 via-white to-indigo-50 p-6">
+                                <div className="inline-flex items-center gap-2 rounded-full border border-violet-200 bg-white/90 px-3 py-1 text-xs font-semibold text-violet-700">
+                                    <Sparkles size={14} />
+                                    운영 입력 확장
+                                </div>
+                                <h3 className="mt-4 text-xl font-bold text-slate-950">혼합 배치 입력</h3>
+                                <p className="mt-2 text-sm text-slate-600">
+                                    하나의 활동 안에서 회원별로 서로 다른 규칙과 메모를 적용합니다. 공통 정보는 공유하고, 결과는 각 행에서 세밀하게 조정합니다.
+                                </p>
+
+                                <div className="mt-5 rounded-2xl border border-violet-200 bg-white/90 p-4">
+                                    <div className="text-xs font-semibold tracking-wide text-violet-700">활용 예시</div>
+                                    <div className="mt-2 text-sm leading-6 text-slate-600">
+                                        같은 세션에서 발표자, 참여자, 운영 지원, 불참자를 동시에 기록할 수 있습니다.
+                                    </div>
+                                </div>
+                            </div>
+
+                            <form className="space-y-5 p-6" onSubmit={handleMixedSubmit}>
+                                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                                    <label className="space-y-1.5">
+                                        <span className="text-xs font-medium text-slate-600">활동 날짜</span>
+                                        <input
+                                            type="date"
+                                            value={mixedDate}
+                                            onChange={(event) => setMixedDate(event.target.value)}
+                                            className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                                        />
+                                    </label>
+                                    <label className="space-y-1.5">
+                                        <span className="text-xs font-medium text-slate-600">대상 그룹</span>
+                                        <select
+                                            value={selectedMixedTeamFilter}
+                                            onChange={(event) => handleMixedTeamFilterChange(event.target.value)}
+                                            className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                                        >
+                                            <option value="all">전체 멤버</option>
+                                            <option value="ungrouped">팀 미지정</option>
+                                            {teamOptions.map((team) => (
+                                                <option key={team.id} value={team.id}>
+                                                    {team.name}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </label>
+                                </div>
+
+                                <label className="space-y-1.5">
+                                    <span className="text-xs font-medium text-slate-600">공통 활동 제목</span>
+                                    <input
+                                        type="text"
+                                        value={mixedTitle}
+                                        onChange={(event) => setMixedTitle(event.target.value)}
+                                        placeholder="예: 3월 기획 회의 / 스터디 데모데이"
+                                        className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                                    />
+                                </label>
+
+                                <label className="space-y-1.5">
+                                    <span className="text-xs font-medium text-slate-600">공통 메모</span>
+                                    <textarea
+                                        value={mixedNote}
+                                        onChange={(event) => setMixedNote(event.target.value)}
+                                        rows={3}
+                                        placeholder="예: 월간 데모데이, 발표 4건과 운영 지원 2건 반영"
+                                        className="w-full resize-none rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                                    />
+                                </label>
+
+                                <label className="space-y-1.5">
+                                    <span className="text-xs font-medium text-slate-600">공통 증빙 링크</span>
+                                    <input
+                                        type="url"
+                                        value={mixedEvidenceUrl}
+                                        onChange={(event) => setMixedEvidenceUrl(event.target.value)}
+                                        placeholder="예: 회의록, 발표 자료 모음, 출석 시트"
+                                        className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                                    />
+                                </label>
+
+                                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                                    <div className="flex flex-col gap-3 lg:flex-row lg:items-end">
+                                        <label className="flex-1 space-y-1.5">
+                                            <span className="text-xs font-medium text-slate-600">현재 범위 기본 규칙</span>
+                                            <select
+                                                value={mixedBulkCategoryId}
+                                                onChange={(event) => setMixedBulkCategoryId(event.target.value)}
+                                                className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                                            >
+                                                {categories.map((category) => (
+                                                    <option key={category.id} value={category.id}>
+                                                        {category.categoryName} ({category.pointValue > 0 ? '+' : ''}
+                                                        {category.pointValue})
+                                                    </option>
+                                                ))}
+                                            </select>
+                                        </label>
+                                        <div className="flex flex-wrap gap-2">
+                                            <button
+                                                type="button"
+                                                onClick={applyBulkCategoryToFilteredMembers}
+                                                className="inline-flex items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm font-medium text-indigo-700 transition-colors hover:bg-indigo-100"
+                                            >
+                                                현재 범위 기본 적용
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={clearMixedFilteredMembers}
+                                                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 transition-colors hover:bg-white"
+                                            >
+                                                현재 범위 초기화
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {incompleteMixedMembers.length > 0 && (
+                                    <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+                                        <div className="flex items-start gap-2">
+                                            <TriangleAlert size={18} className="mt-0.5" />
+                                            <div>
+                                                <div className="font-semibold">아직 규칙이 비어 있는 선택 항목이 있습니다.</div>
+                                                <div className="mt-1">
+                                                    {incompleteMixedMembers.map((member) => member.name).join(', ')}
+                                                    {' '}행에 활동 규칙을 지정한 뒤 저장해 주세요.
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+
+                                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                                    <div className="flex items-center justify-between gap-3">
+                                        <div>
+                                            <div className="font-semibold text-slate-900">회원별 결과 입력</div>
+                                            <div className="mt-1 text-sm text-slate-500">선택한 회원에게만 기록이 저장됩니다. 각 행에서 규칙과 세부 메모를 따로 지정할 수 있습니다.</div>
+                                        </div>
+                                        <div className="rounded-full bg-white px-3 py-1 text-sm font-semibold text-slate-700">
+                                            {filteredMixedMembers.length}명
+                                        </div>
+                                    </div>
+
+                                    <div className="mt-4 space-y-3 max-h-[520px] overflow-auto pr-1">
+                                        {filteredMixedMembers.map((member) => {
+                                            const row = mixedDraft[member.id] ?? {
+                                                selected: false,
+                                                categoryId: '',
+                                                note: '',
+                                            };
+                                            const category = categories.find((item) => item.id === row.categoryId) ?? null;
+
+                                            return (
+                                                <div key={member.id} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                                                    <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                                                        <div className="min-w-0">
+                                                            <label className="inline-flex items-center gap-3 text-sm font-semibold text-slate-900">
+                                                                <input
+                                                                    type="checkbox"
+                                                                    checked={row.selected}
+                                                                    onChange={() => handleMixedMemberToggle(member.id)}
+                                                                    className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                                                                />
+                                                                <span>{member.name}</span>
+                                                            </label>
+                                                            <div className="mt-1 text-sm text-slate-500">
+                                                                {member.teamName || '팀 미지정'}
+                                                                <span className="text-slate-300"> · </span>
+                                                                {member.roleName || '역할 없음'}
+                                                                <span className="text-slate-300"> · </span>
+                                                                현재 {member.score}점
+                                                            </div>
+                                                        </div>
+
+                                                        {category && row.selected && (
+                                                            <div className="flex flex-wrap gap-2">
+                                                                <span className="rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700">
+                                                                    v{category.version ?? 1}
+                                                                </span>
+                                                                <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${
+                                                                    category.pointValue >= 0
+                                                                        ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                                                        : 'border-rose-200 bg-rose-50 text-rose-700'
+                                                                }`}>
+                                                                    {category.pointValue > 0 ? '+' : ''}
+                                                                    {category.pointValue}점
+                                                                </span>
+                                                            </div>
+                                                        )}
+                                                    </div>
+
+                                                    <div className="mt-4 grid grid-cols-1 gap-3 xl:grid-cols-[minmax(0,260px)_minmax(0,1fr)]">
+                                                        <label className="space-y-1.5">
+                                                            <span className="text-xs font-medium text-slate-600">활동 규칙</span>
+                                                            <select
+                                                                value={row.categoryId}
+                                                                onChange={(event) => handleMixedCategoryChange(member.id, event.target.value)}
+                                                                className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                                                            >
+                                                                <option value="">규칙 선택</option>
+                                                                {categories.map((categoryOption) => (
+                                                                    <option key={categoryOption.id} value={categoryOption.id}>
+                                                                        {categoryOption.categoryName} ({categoryOption.pointValue > 0 ? '+' : ''}
+                                                                        {categoryOption.pointValue})
+                                                                    </option>
+                                                                ))}
+                                                            </select>
+                                                        </label>
+
+                                                        <label className="space-y-1.5">
+                                                            <span className="text-xs font-medium text-slate-600">개별 메모</span>
+                                                            <input
+                                                                type="text"
+                                                                value={row.note}
+                                                                onChange={(event) => handleMixedNoteChange(member.id, event.target.value)}
+                                                                placeholder="예: 발표 담당, 운영 지원, 현장 정리"
+                                                                className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                                                            />
+                                                        </label>
+                                                    </div>
+
+                                                    {category && (
+                                                        <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                                                            <div className="font-medium text-slate-900">{category.categoryName}</div>
+                                                            <div className="mt-1">
+                                                                {category.conditionSummary ?? '추가 조건 요약이 아직 등록되지 않았습니다.'}
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            );
+                                        })}
+
+                                        {filteredMixedMembers.length === 0 && (
+                                            <div className="rounded-2xl border border-dashed border-slate-200 bg-white px-4 py-10 text-center text-sm text-slate-500">
+                                                현재 범위에 표시할 멤버가 없습니다.
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+
+                                <button
+                                    type="submit"
+                                    disabled={mixedPreviewRows.length === 0 || incompleteMixedMembers.length > 0 || isSaving}
+                                    className="w-full rounded-2xl bg-indigo-600 px-4 py-3 font-semibold text-white transition-colors hover:bg-indigo-700 disabled:opacity-50"
+                                >
+                                    {isSaving ? '혼합 기록 저장 중...' : '혼합 활동 저장'}
+                                </button>
+                            </form>
+                        </div>
                     ) : (
                         <section className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
                             <div className="flex items-center gap-2 text-slate-900 font-semibold mb-5">
@@ -886,6 +1348,106 @@ export const ActivitiesTab: React.FC = () => {
                                                     아직 저장할 출석 선택이 없습니다. 왼쪽에서 멤버별 상태를 지정해 주세요.
                                                 </div>
                                             )}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </>
+                    ) : entryMode === 'mixed' ? (
+                        <>
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+                                    <div className="text-sm text-slate-500">현재 범위 멤버</div>
+                                    <div className="mt-2 text-3xl font-bold text-slate-900">{filteredMixedMembers.length}</div>
+                                </div>
+                                <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+                                    <div className="text-sm text-slate-500">저장 예정 행</div>
+                                    <div className="mt-2 text-3xl font-bold text-slate-900">{mixedPreviewRows.length}</div>
+                                </div>
+                                <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+                                    <div className="text-sm text-slate-500">예상 총점</div>
+                                    <div className={`mt-2 text-3xl font-bold ${mixedExpectedDelta >= 0 ? 'text-indigo-600' : 'text-rose-600'}`}>
+                                        {mixedExpectedDelta > 0 ? '+' : ''}
+                                        {mixedExpectedDelta}점
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+                                <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
+                                    <div>
+                                        <div className="font-semibold text-slate-900">저장 미리보기</div>
+                                        <div className="mt-1 text-sm text-slate-500">회원별로 어떤 규칙이 적용되는지와 총점을 함께 확인합니다.</div>
+                                    </div>
+                                    <div className="rounded-full bg-slate-50 px-3 py-1 text-sm font-semibold text-slate-700">
+                                        {mixedPreviewRows.length}건
+                                    </div>
+                                </div>
+
+                                <div className="space-y-4 p-6">
+                                    <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+                                        {mixedCategorySummary.map((summary) => (
+                                            <div key={summary.categoryId} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                                                <div className="flex items-center gap-2">
+                                                    <span className="rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-xs font-semibold text-indigo-700">
+                                                        v{summary.version}
+                                                    </span>
+                                                    <div className="text-sm font-semibold text-slate-900">{summary.categoryName}</div>
+                                                </div>
+                                                <div className="mt-3 text-2xl font-bold text-slate-900">{summary.count}명</div>
+                                                <div className="mt-1 text-sm text-slate-500">
+                                                    예상 {summary.delta > 0 ? '+' : ''}
+                                                    {summary.delta}점
+                                                </div>
+                                            </div>
+                                        ))}
+
+                                        {mixedCategorySummary.length === 0 && (
+                                            <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-10 text-center text-sm text-slate-500 md:col-span-2 xl:col-span-3">
+                                                아직 저장할 혼합 활동 선택이 없습니다. 왼쪽에서 회원별 결과를 지정해 주세요.
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                                        <div className="flex items-center gap-2 text-slate-900 font-semibold">
+                                            <Users2 size={16} className="text-indigo-600" />
+                                            저장 예정 멤버
+                                        </div>
+                                        <div className="mt-4 space-y-3 max-h-[360px] overflow-auto pr-1">
+                                            {mixedPreviewRows.map((preview) => (
+                                                <div
+                                                    key={preview.member.id}
+                                                    className="rounded-2xl border border-slate-200 bg-white px-4 py-3"
+                                                >
+                                                    <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+                                                        <div>
+                                                            <div className="font-medium text-slate-900">{preview.member.name}</div>
+                                                            <div className="mt-1 text-sm text-slate-500">
+                                                                {preview.category.categoryName}
+                                                                <span className="text-slate-300"> · </span>
+                                                                {preview.member.teamName || '팀 미지정'}
+                                                            </div>
+                                                            {preview.row.note && (
+                                                                <div className="mt-2 text-sm text-slate-600">{preview.row.note}</div>
+                                                            )}
+                                                        </div>
+                                                        <div className="flex flex-wrap gap-2">
+                                                            <span className="rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700">
+                                                                v{preview.category.version ?? 1}
+                                                            </span>
+                                                            <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${
+                                                                preview.category.pointValue >= 0
+                                                                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                                                    : 'border-rose-200 bg-rose-50 text-rose-700'
+                                                            }`}>
+                                                                {preview.category.pointValue > 0 ? '+' : ''}
+                                                                {preview.category.pointValue}점
+                                                            </span>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            ))}
                                         </div>
                                     </div>
                                 </div>
