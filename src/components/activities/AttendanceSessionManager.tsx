@@ -583,7 +583,7 @@ export const AttendanceSessionManager: React.FC<AttendanceSessionManagerProps> =
                             카드를 누르면 출석 → 지각 → 결석 순서로 바뀌고, <span className="font-semibold text-slate-900">저장</span>을 눌렀을 때만 실제 출석 기록에 반영됩니다.
                         </div>
 
-                        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+                        <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
                             {sessionEntries.map((entry) => {
                                 const statusTone = attendanceStatusStyles[entry.draftStatus];
 
@@ -593,7 +593,7 @@ export const AttendanceSessionManager: React.FC<AttendanceSessionManagerProps> =
                                         type="button"
                                         onClick={() => handleCycleMemberStatus(entry)}
                                         disabled={!selectedSession.isActive || isSavingStatuses}
-                                        className={`min-h-[72px] rounded-[20px] border px-3 py-3 text-center text-sm font-semibold shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-70 ${statusTone}`}
+                                        className={`min-h-[58px] rounded-[18px] border px-2 py-2 text-center text-sm font-semibold shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-70 ${statusTone}`}
                                         aria-label={`${entry.memberName} ${attendanceStatusLabels[entry.draftStatus]}`}
                                     >
                                         {entry.memberName}
