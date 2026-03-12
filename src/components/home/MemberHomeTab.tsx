@@ -21,7 +21,6 @@ import {
     getMyMemberOverview,
     getRecapSnapshots,
     getScheduleEvents,
-    submitAttendanceCheckin,
     submitCorrectionRequest,
 } from '../../lib/db';
 import { roleLabels } from '../../lib/permissions';
@@ -117,40 +116,9 @@ export const MemberHomeTab: React.FC = () => {
     const [timelineRange, setTimelineRange] = useState<TimelineRange>('90d');
     const [selectedRecapPeriod, setSelectedRecapPeriod] = useState<MemberRecapPeriod | null>(null);
     const [requestReason, setRequestReason] = useState('');
-    const [attendanceCode, setAttendanceCode] = useState('');
-    const [attendancePrefilled, setAttendancePrefilled] = useState(false);
     const [isLoading, setIsLoading] = useState(true);
     const [isSubmittingRequest, setIsSubmittingRequest] = useState(false);
-    const [isCheckingIn, setIsCheckingIn] = useState(false);
     const [requestError, setRequestError] = useState<string | null>(null);
-    const [attendanceCheckinError, setAttendanceCheckinError] = useState<string | null>(null);
-    const [attendanceCheckinSuccess, setAttendanceCheckinSuccess] = useState<string | null>(null);
-
-    const loadDashboardData = async (memberId: string | null | undefined) => {
-        setIsLoading(true);
-        const [seasonData, memberData, logData, memberBadgeData, correctionRequestData, announcementData, scheduleData] = await Promise.all([
-            getCurrentSeason(),
-            getMyMemberOverview(memberId ?? null),
-            getMyActivityLogs(memberId ?? null),
-            getMyMemberBadges(memberId ?? null),
-            getCorrectionRequests({ requesterMemberId: memberId ?? null }),
-            getAnnouncements(),
-            getScheduleEvents(),
-        ]);
-        const recapSnapshotData = memberData
-            ? await getRecapSnapshots({ scope: 'member', memberId: memberData.id, limit: 4 })
-            : [];
-
-        setSeason(seasonData);
-        setMember(memberData);
-        setLogs(logData);
-        setMemberBadges(memberBadgeData);
-        setRecapSnapshots(recapSnapshotData);
-        setCorrectionRequests(correctionRequestData);
-        setAnnouncements(announcementData);
-        setScheduleEvents(scheduleData);
-        setIsLoading(false);
-    };
 
     useEffect(() => {
         let isMounted = true;
@@ -190,18 +158,6 @@ export const MemberHomeTab: React.FC = () => {
             isMounted = false;
         };
     }, [profile?.memberId]);
-
-    useEffect(() => {
-        const params = new URLSearchParams(window.location.search);
-        const prefilledCode = params.get('attendance');
-
-        if (!prefilledCode) {
-            return;
-        }
-
-        setAttendanceCode(prefilledCode.toUpperCase());
-        setAttendancePrefilled(true);
-    }, []);
 
     const effectiveLogs = useMemo(
         () => logs.filter((log) => !log.isReversal && log.recordStatus !== 'reversed'),
@@ -391,36 +347,6 @@ export const MemberHomeTab: React.FC = () => {
         }
     };
 
-    const handleAttendanceCheckin = async (event: React.FormEvent) => {
-        event.preventDefault();
-        if (!attendanceCode.trim()) {
-            return;
-        }
-
-        setIsCheckingIn(true);
-        setAttendanceCheckinError(null);
-        setAttendanceCheckinSuccess(null);
-
-        try {
-            await submitAttendanceCheckin(attendanceCode);
-            await loadDashboardData(profile?.memberId ?? null);
-            setAttendanceCheckinSuccess('출석 체크가 완료되었습니다. 점수와 최근 활동이 바로 갱신되었습니다.');
-            setAttendancePrefilled(false);
-
-            if (window.location.search.includes('attendance=')) {
-                const params = new URLSearchParams(window.location.search);
-                params.delete('attendance');
-                const search = params.toString();
-                const nextPath = `${window.location.origin}${search ? `/?${search}` : '/'}${window.location.hash || '#'}`;
-                window.history.replaceState({}, document.title, nextPath);
-            }
-        } catch (error) {
-            setAttendanceCheckinError(error instanceof Error ? error.message : '출석 체크를 처리하지 못했습니다.');
-        } finally {
-            setIsCheckingIn(false);
-        }
-    };
-
     if (isLoading) {
         return (
             <div className="flex h-64 items-center justify-center">
@@ -556,104 +482,6 @@ export const MemberHomeTab: React.FC = () => {
                                     {latestLog ? `${formatDateTime(latestLog.timestamp)} 이후 흐름 유지 중` : '아직 첫 활동을 준비 중입니다.'}
                                 </div>
                                 <div className="mt-2 text-sm leading-6 text-slate-300">{growthDescription}</div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </section>
-
-            <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
-                <div className="border-b border-slate-100 bg-gradient-to-br from-indigo-50 via-white to-sky-50 px-6 py-5">
-                    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                        <div>
-                            <div className="inline-flex items-center gap-2 rounded-full border border-indigo-200 bg-white px-3 py-1 text-xs font-semibold text-indigo-700">
-                                <Link2 size={14} />
-                                링크/코드 출석
-                            </div>
-                            <div className="mt-3 text-xl font-bold text-slate-950">셀프 체크인</div>
-                            <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
-                                운영진이 공유한 링크를 열거나 출석 코드를 입력하면 바로 출석이 반영됩니다. 이미 체크인한 세션은 자동으로 중복 제출이 막힙니다.
-                            </p>
-                        </div>
-                        <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600">
-                            <div className="font-semibold text-slate-900">로그인 이메일</div>
-                            <div className="mt-1">{profile?.email ?? '알 수 없음'}</div>
-                        </div>
-                    </div>
-                </div>
-
-                <div className="grid grid-cols-1 gap-6 px-6 py-6 2xl:grid-cols-[minmax(0,1fr)_320px]">
-                    <form onSubmit={handleAttendanceCheckin} className="space-y-4">
-                        <label className="block space-y-1.5">
-                            <span className="text-xs font-medium text-slate-600">출석 코드</span>
-                            <input
-                                type="text"
-                                value={attendanceCode}
-                                onChange={(event) => setAttendanceCode(event.target.value.replace(/\s+/g, '').toUpperCase())}
-                                placeholder="메일 또는 공지에서 받은 출석 코드를 입력해 주세요."
-                                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-lg font-semibold tracking-[0.22em] text-slate-900 outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                            />
-                        </label>
-
-                        {attendancePrefilled && (
-                            <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-700">
-                                링크에서 출석 코드가 자동 입력되었습니다. 아래 버튼만 누르면 체크인이 완료됩니다.
-                            </div>
-                        )}
-
-                        {attendanceCheckinError && (
-                            <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-                                {attendanceCheckinError}
-                            </div>
-                        )}
-
-                        {attendanceCheckinSuccess && (
-                            <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
-                                {attendanceCheckinSuccess}
-                            </div>
-                        )}
-
-                        <div className="flex flex-wrap gap-2">
-                            <button
-                                type="submit"
-                                disabled={!attendanceCode.trim() || isCheckingIn}
-                                className="inline-flex items-center gap-2 rounded-2xl bg-indigo-600 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-indigo-700 disabled:opacity-50"
-                            >
-                                <BadgeCheck size={16} />
-                                {isCheckingIn ? '체크인 처리 중...' : '출석 체크'}
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => {
-                                    setAttendanceCode('');
-                                    setAttendancePrefilled(false);
-                                    setAttendanceCheckinError(null);
-                                    setAttendanceCheckinSuccess(null);
-                                }}
-                                className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
-                            >
-                                초기화
-                            </button>
-                        </div>
-                    </form>
-
-                    <div className="space-y-4 rounded-[24px] border border-slate-200 bg-slate-50 p-5">
-                        <div>
-                            <div className="text-sm font-semibold text-slate-900">이용 안내</div>
-                            <div className="mt-2 text-sm leading-6 text-slate-600">
-                                출석 링크를 열면 코드가 자동 입력되고, 공지로 받은 코드가 있다면 직접 입력해도 됩니다.
-                            </div>
-                        </div>
-                        <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
-                            <div className="text-xs uppercase tracking-[0.16em] text-slate-500">체크인 후 반영</div>
-                            <div className="mt-2 text-sm leading-6 text-slate-700">
-                                최근 활동, 시즌 점수, 배지 조건이 즉시 다시 계산됩니다.
-                            </div>
-                        </div>
-                        <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
-                            <div className="text-xs uppercase tracking-[0.16em] text-slate-500">문제가 있을 때</div>
-                            <div className="mt-2 text-sm leading-6 text-slate-700">
-                                세션이 종료되었거나 이미 체크인한 경우에는 제출이 막힙니다. 필요하면 운영진에게 정정 요청을 보내 주세요.
                             </div>
                         </div>
                     </div>

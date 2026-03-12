@@ -21,6 +21,7 @@ grant select, insert, update on public.announcements to authenticated;
 grant select, insert, update on public.schedule_events to authenticated;
 grant select, insert on public.recap_snapshots to authenticated;
 grant select, insert, update on public.attendance_sessions to authenticated;
+grant select, insert, update, delete on public.attendance_session_members to authenticated;
 grant select on public.attendance_checkins to authenticated;
 grant execute on function public.award_member_badges(uuid) to authenticated;
 grant execute on function public.create_attendance_session(text, uuid, timestamptz, timestamptz, text) to authenticated;
@@ -54,6 +55,7 @@ alter table public.announcements enable row level security;
 alter table public.schedule_events enable row level security;
 alter table public.recap_snapshots enable row level security;
 alter table public.attendance_sessions enable row level security;
+alter table public.attendance_session_members enable row level security;
 alter table public.attendance_checkins enable row level security;
 
 drop policy if exists roles_select_all on public.roles;
@@ -244,6 +246,35 @@ for update
 to authenticated
 using (public.can_manage_activities())
 with check (public.can_manage_activities());
+
+drop policy if exists attendance_session_members_select_authenticated on public.attendance_session_members;
+create policy attendance_session_members_select_authenticated
+on public.attendance_session_members
+for select
+to authenticated
+using (public.can_access_member(member_id));
+
+drop policy if exists attendance_session_members_insert_authenticated on public.attendance_session_members;
+create policy attendance_session_members_insert_authenticated
+on public.attendance_session_members
+for insert
+to authenticated
+with check (public.can_manage_activities() and public.can_access_member(member_id));
+
+drop policy if exists attendance_session_members_update_authenticated on public.attendance_session_members;
+create policy attendance_session_members_update_authenticated
+on public.attendance_session_members
+for update
+to authenticated
+using (public.can_manage_activities() and public.can_access_member(member_id))
+with check (public.can_manage_activities() and public.can_access_member(member_id));
+
+drop policy if exists attendance_session_members_delete_authenticated on public.attendance_session_members;
+create policy attendance_session_members_delete_authenticated
+on public.attendance_session_members
+for delete
+to authenticated
+using (public.can_manage_activities() and public.can_access_member(member_id));
 
 drop policy if exists attendance_checkins_select_authenticated on public.attendance_checkins;
 create policy attendance_checkins_select_authenticated

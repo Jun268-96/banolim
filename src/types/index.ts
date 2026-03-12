@@ -8,6 +8,8 @@ export type RecapSnapshotScope = 'member' | 'overall';
 export type RecapSnapshotPeriod = 'month' | 'season';
 export type RecapSnapshotTheme = 'member' | 'overall';
 export type RecapSnapshotMascot = 'bandi' | 'didi';
+export type AttendanceStatus = 'present' | 'late' | 'absent';
+export type AttendanceTargetGroup = 'all' | 'team' | 'ungrouped';
 
 export interface SeasonSummary {
     id: string;
@@ -66,7 +68,25 @@ export interface AttendanceSession {
     note?: string | null;
     isActive: boolean;
     createdAt: string;
-    checkInCount?: number;
+    targetGroupType: AttendanceTargetGroup;
+    targetTeamId?: string | null;
+    targetGroupLabel: string;
+    memberCount: number;
+    statusCounts: Record<AttendanceStatus, number>;
+    entries: AttendanceSessionMember[];
+}
+
+export interface AttendanceSessionMember {
+    id: string;
+    sessionId: string;
+    memberId: string;
+    memberName: string;
+    roleName?: string | null;
+    teamNames: string[];
+    status: AttendanceStatus;
+    activityRecordId?: string | null;
+    createdAt: string;
+    updatedAt: string;
 }
 
 export interface UserProfile {

@@ -223,6 +223,8 @@ create table if not exists public.attendance_sessions (
     ends_at timestamptz,
     note text,
     is_active boolean not null default true,
+    target_group_type text not null default 'all' check (target_group_type in ('all', 'team', 'ungrouped')),
+    target_team_id uuid references public.teams(id) on delete set null,
     created_by uuid references public.members(id) on delete set null,
     created_at timestamptz not null default now()
 );
@@ -234,6 +236,16 @@ create table if not exists public.attendance_checkins (
     activity_record_id uuid not null references public.activity_records(id) on delete cascade,
     point_ledger_id uuid not null references public.point_ledgers(id) on delete cascade,
     checked_in_at timestamptz not null default now()
+);
+
+create table if not exists public.attendance_session_members (
+    id uuid primary key default gen_random_uuid(),
+    session_id uuid not null references public.attendance_sessions(id) on delete cascade,
+    member_id uuid not null references public.members(id) on delete cascade,
+    attendance_status text not null default 'present' check (attendance_status in ('present', 'late', 'absent')),
+    activity_record_id uuid references public.activity_records(id) on delete set null,
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now()
 );
 
 create or replace function public.current_actor_member_id()
@@ -1614,6 +1626,8 @@ create index if not exists idx_recap_snapshots_scope_created on public.recap_sna
 create index if not exists idx_recap_snapshots_member_created on public.recap_snapshots (member_id, created_at desc);
 create unique index if not exists idx_attendance_checkins_session_member_unique on public.attendance_checkins (session_id, member_id);
 create index if not exists idx_attendance_sessions_active on public.attendance_sessions (is_active, starts_at desc);
+create unique index if not exists idx_attendance_session_members_unique on public.attendance_session_members (session_id, member_id);
+create index if not exists idx_attendance_session_members_member on public.attendance_session_members (member_id, updated_at desc);
 
 insert into public.badges (code, name, description, icon_key, tone, sort_order, is_active)
 values

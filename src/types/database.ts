@@ -593,6 +593,8 @@ export interface Database {
                     ends_at: string | null;
                     note: string | null;
                     is_active: boolean;
+                    target_group_type: string;
+                    target_team_id: string | null;
                     created_by: string | null;
                     created_at: string;
                 };
@@ -606,6 +608,8 @@ export interface Database {
                     ends_at?: string | null;
                     note?: string | null;
                     is_active?: boolean;
+                    target_group_type?: string;
+                    target_team_id?: string | null;
                     created_by?: string | null;
                     created_at?: string;
                 };
@@ -619,8 +623,40 @@ export interface Database {
                     ends_at?: string | null;
                     note?: string | null;
                     is_active?: boolean;
+                    target_group_type?: string;
+                    target_team_id?: string | null;
                     created_by?: string | null;
                     created_at?: string;
+                };
+                Relationships: [];
+            };
+            attendance_session_members: {
+                Row: {
+                    id: string;
+                    session_id: string;
+                    member_id: string;
+                    attendance_status: string;
+                    activity_record_id: string | null;
+                    created_at: string;
+                    updated_at: string;
+                };
+                Insert: {
+                    id?: string;
+                    session_id: string;
+                    member_id: string;
+                    attendance_status?: string;
+                    activity_record_id?: string | null;
+                    created_at?: string;
+                    updated_at?: string;
+                };
+                Update: {
+                    id?: string;
+                    session_id?: string;
+                    member_id?: string;
+                    attendance_status?: string;
+                    activity_record_id?: string | null;
+                    created_at?: string;
+                    updated_at?: string;
                 };
                 Relationships: [];
             };

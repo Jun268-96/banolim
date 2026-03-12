@@ -1,6 +1,9 @@
 import type {
     ActivityLog,
     AttendanceSession,
+    AttendanceSessionMember,
+    AttendanceStatus,
+    AttendanceTargetGroup,
     AnnouncementItem,
     AuditLogEntry,
     Badge,
@@ -35,7 +38,7 @@ type AuditLogRow = Database['public']['Tables']['audit_logs']['Row'];
 type CorrectionRequestRow = Database['public']['Tables']['correction_requests']['Row'];
 type RecapSnapshotRow = Database['public']['Tables']['recap_snapshots']['Row'];
 type AttendanceSessionRow = Database['public']['Tables']['attendance_sessions']['Row'];
-type AttendanceCheckinRow = Database['public']['Tables']['attendance_checkins']['Row'];
+type AttendanceSessionMemberRow = Database['public']['Tables']['attendance_session_members']['Row'];
 type MemberScoreSummaryRow = Database['public']['Views']['member_score_summary']['Row'];
 type PointRuleCatalogRow = Database['public']['Views']['point_rule_catalog']['Row'];
 type MyMemberOverviewRow = Database['public']['Functions']['get_my_member_overview']['Returns'][number];
@@ -62,6 +65,16 @@ const createTemporaryPassword = () => {
 const normalizeLoginEmail = (value?: string | null) => {
     const normalized = value?.trim().toLowerCase() ?? '';
     return normalized.length > 0 ? normalized : null;
+};
+const attendanceStatusLabels: Record<AttendanceStatus, string> = {
+    present: '참석',
+    late: '지각',
+    absent: '결석',
+};
+const attendanceRuleMatchers: Record<AttendanceStatus, RegExp> = {
+    present: /(정기모임\s*출석|출석|참석|attendance|present)/i,
+    late: /(지각|late)/i,
+    absent: /(불참|결석|absence|absent)/i,
 };
 
 const dedupeTeamIds = (teamIds: Array<string | null | undefined>) => [...new Set(teamIds.filter((teamId): teamId is string => Boolean(teamId)))];
@@ -106,6 +119,25 @@ const getErrorMessage = (error: unknown) => {
     }
 
     return '알 수 없는 오류';
+};
+
+const isMissingSupabaseRelationError = (error: unknown, relationNames: string[]) => {
+    const message = getErrorMessage(error).toLowerCase();
+    const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
+        ? error.code.toUpperCase()
+        : '';
+
+    const mentionsRelation = relationNames.some((relationName) => {
+        const normalizedName = relationName.toLowerCase();
+        return message.includes(`public.${normalizedName}`) || message.includes(`'${normalizedName}'`);
+    });
+
+    return mentionsRelation && (
+        code === 'PGRST205'
+        || message.includes('schema cache')
+        || message.includes('could not find the table')
+        || message.includes('does not exist')
+    );
 };
 
 const reportDataFallback = (task: string, error: unknown) => {
@@ -547,14 +579,7 @@ let localScheduleEvents: ScheduleEventItem[] = [
 
 let localRecapSnapshots: RecapSnapshot[] = [];
 let localAttendanceSessions: AttendanceSession[] = [];
-const localAttendanceCheckins: Array<{
-    id: string;
-    sessionId: string;
-    memberId: string;
-    activityRecordId: string;
-    pointLedgerId: string;
-    checkedInAt: string;
-}> = [];
+let localAttendanceSessionMembers: AttendanceSessionMember[] = [];
 
 const sortMembers = (members: Member[]) => [...members].sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
 const sortAnnouncements = (items: AnnouncementItem[]) =>
@@ -784,23 +809,117 @@ const mapRecapSnapshot = (
     };
 };
 
+const getAttendanceRule = (categories: Category[], status: AttendanceStatus) =>
+    categories.find((category) => {
+        if (!attendanceRuleMatchers[status].test(category.categoryName)) {
+            return false;
+        }
+
+        if (status === 'present') {
+            return !attendanceRuleMatchers.late.test(category.categoryName)
+                && !attendanceRuleMatchers.absent.test(category.categoryName);
+        }
+
+        return true;
+    }) ?? null;
+
+const filterMembersForAttendanceGroup = (
+    members: Member[],
+    targetGroupType: AttendanceTargetGroup,
+    targetTeamId?: string | null,
+) =>
+    members.filter((member) => {
+        if (member.status === 'inactive') {
+            return false;
+        }
+
+        if (targetGroupType === 'all') {
+            return true;
+        }
+
+        if (targetGroupType === 'ungrouped') {
+            return (member.teamIds ?? []).length === 0 && !member.teamId;
+        }
+
+        return (member.teamIds ?? []).includes(targetTeamId ?? '') || member.teamId === targetTeamId;
+    });
+
+const getAttendanceTargetGroupLabel = (
+    targetGroupType: AttendanceTargetGroup,
+    targetTeamId: string | null | undefined,
+    teamMap: Map<string, string>,
+) => {
+    if (targetGroupType === 'all') {
+        return '전체 멤버';
+    }
+
+    if (targetGroupType === 'ungrouped') {
+        return '팀 미지정';
+    }
+
+    return targetTeamId ? teamMap.get(targetTeamId) ?? '선택 팀' : '선택 팀';
+};
+
+const mapAttendanceSessionMember = (
+    row: Pick<AttendanceSessionMemberRow, 'id' | 'session_id' | 'member_id' | 'attendance_status' | 'activity_record_id' | 'created_at' | 'updated_at'>,
+    memberMap: Map<string, Member>,
+): AttendanceSessionMember => {
+    const member = memberMap.get(row.member_id);
+    const teamNames = member?.teamNames ?? (member?.teamName ? [member.teamName] : []);
+
+    return {
+        id: row.id,
+        sessionId: row.session_id,
+        memberId: row.member_id,
+        memberName: member?.name ?? '알 수 없는 멤버',
+        roleName: member?.roleName ?? null,
+        teamNames,
+        status: (row.attendance_status as AttendanceStatus) ?? 'present',
+        activityRecordId: row.activity_record_id ?? null,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+    };
+};
+
+const buildAttendanceStatusCounts = (entries: AttendanceSessionMember[]) =>
+    entries.reduce<Record<AttendanceStatus, number>>((acc, entry) => {
+        acc[entry.status] += 1;
+        return acc;
+    }, {
+        present: 0,
+        late: 0,
+        absent: 0,
+    });
+
 const mapAttendanceSession = (
-    row: Pick<AttendanceSessionRow, 'id' | 'title' | 'session_code' | 'point_rule_id' | 'season_id' | 'starts_at' | 'ends_at' | 'note' | 'is_active' | 'created_at'>,
-    pointRuleName?: string | null,
-    checkInCount?: number,
+    row: Pick<
+        AttendanceSessionRow,
+        'id' | 'title' | 'session_code' | 'point_rule_id' | 'season_id' | 'starts_at' | 'ends_at' | 'note' | 'is_active' | 'created_at' | 'target_group_type' | 'target_team_id'
+    >,
+    entries: AttendanceSessionMember[],
+    teamMap: Map<string, string>,
 ): AttendanceSession => ({
     id: row.id,
     title: row.title,
     sessionCode: row.session_code,
     pointRuleId: row.point_rule_id,
-    pointRuleName: pointRuleName ?? null,
+    pointRuleName: null,
     seasonId: row.season_id,
     startsAt: row.starts_at,
     endsAt: row.ends_at,
     note: row.note,
     isActive: row.is_active,
     createdAt: row.created_at,
-    checkInCount: checkInCount ?? 0,
+    targetGroupType: (row.target_group_type as AttendanceTargetGroup) ?? 'all',
+    targetTeamId: row.target_team_id ?? null,
+    targetGroupLabel: getAttendanceTargetGroupLabel(
+        (row.target_group_type as AttendanceTargetGroup) ?? 'all',
+        row.target_team_id,
+        teamMap,
+    ),
+    memberCount: entries.length,
+    statusCounts: buildAttendanceStatusCounts(entries),
+    entries,
 });
 
 const fallback = <T>(task: string, getLocalValue: () => T, error?: unknown): T => {
@@ -844,6 +963,214 @@ interface ActivityEntryOptions {
     reason?: string;
     evidenceUrl?: string;
 }
+
+const createLocalActivityEntryRecord = (
+    memberId: string,
+    categoryId: string,
+    note?: string | null,
+    options?: ActivityEntryOptions,
+) => {
+    const trimmedNote = note?.trim() || null;
+    const occurredAt = options?.occurredAt ?? new Date().toISOString();
+    const evidenceUrl = options?.evidenceUrl?.trim() || null;
+    const recordId = createLocalId('record');
+    const category = localCategories.find((item) => item.id === categoryId);
+    const member = localMembers.find((item) => item.id === memberId);
+
+    if (!category || !member) {
+        throw new Error('활동 기록에 필요한 멤버 또는 규칙을 찾지 못했습니다.');
+    }
+
+    member.score += category.pointValue;
+    localLogs.push({
+        id: createLocalId('log'),
+        recordId,
+        timestamp: occurredAt,
+        memberId,
+        categoryId,
+        pointDelta: category.pointValue,
+        reason: options?.reason ?? trimmedNote ?? category.categoryName,
+        note: trimmedNote,
+        evidenceUrl,
+        memberName: member.name,
+        categoryName: category.categoryName,
+        recordStatus: 'confirmed',
+    });
+    logLocalAuditEntry({
+        actorId: null,
+        actorName: '로컬 운영자',
+        entityType: 'activity_record',
+        entityId: recordId,
+        action: 'created',
+        summary: `${member.name} · ${category.categoryName} 기록 생성`,
+        diff: {
+            memberId,
+            memberName: member.name,
+            pointRuleId: categoryId,
+            ruleName: category.categoryName,
+            delta: category.pointValue,
+            reason: options?.reason ?? trimmedNote ?? category.categoryName,
+            occurredAt,
+            evidenceUrl,
+        },
+    });
+    syncLocalMemberBadges(memberId);
+    return recordId;
+};
+
+const reverseLocalActivityEntryRecord = (recordId: string, note?: string | null) => {
+    const trimmedNote = note?.trim() || null;
+    const originalLog = localLogs.find((log) => log.recordId === recordId && !log.reversalOf);
+    const hasReversal = localLogs.some((log) => log.reversalOf === originalLog?.id);
+
+    if (!originalLog || hasReversal) {
+        return;
+    }
+
+    const category = localCategories.find((item) => item.id === originalLog.categoryId);
+    const member = localMembers.find((item) => item.id === originalLog.memberId);
+
+    if (member) {
+        member.score -= originalLog.pointDelta;
+    }
+
+    const reversalTimestamp = new Date().toISOString();
+
+    localLogs = localLogs.map((log) =>
+        log.recordId === recordId
+            ? {
+                ...log,
+                recordStatus: 'reversed',
+            }
+            : log,
+    );
+
+    localLogs.push({
+        id: createLocalId('log'),
+        recordId,
+        timestamp: reversalTimestamp,
+        memberId: originalLog.memberId,
+        categoryId: originalLog.categoryId,
+        pointDelta: originalLog.pointDelta * -1,
+        reason: trimmedNote ?? `기록 취소 · ${originalLog.reason ?? originalLog.categoryName ?? '원본 기록'}`,
+        note: originalLog.note ?? null,
+        evidenceUrl: originalLog.evidenceUrl ?? null,
+        memberName: member?.name ?? originalLog.memberName ?? null,
+        categoryName: category?.categoryName ?? originalLog.categoryName ?? null,
+        reversalOf: originalLog.id,
+        isReversal: true,
+        recordStatus: 'reversed',
+    });
+    logLocalAuditEntry({
+        actorId: null,
+        actorName: '로컬 운영자',
+        entityType: 'activity_record',
+        entityId: recordId,
+        action: 'reversed',
+        summary: `${member?.name ?? originalLog.memberName ?? '알 수 없는 멤버'} · ${category?.categoryName ?? originalLog.categoryName ?? '활동'} 기록 취소`,
+        createdAt: reversalTimestamp,
+        diff: {
+            memberId: originalLog.memberId,
+            memberName: member?.name ?? originalLog.memberName ?? null,
+            pointRuleId: originalLog.categoryId,
+            ruleName: category?.categoryName ?? originalLog.categoryName ?? null,
+            reversalOf: originalLog.id,
+            delta: originalLog.pointDelta * -1,
+            reason: trimmedNote ?? `기록 취소 · ${originalLog.reason ?? originalLog.categoryName ?? '원본 기록'}`,
+        },
+    });
+    syncLocalMemberBadges(originalLog.memberId);
+};
+
+export const createActivityEntryRecord = async (
+    memberId: string,
+    categoryId: string,
+    note?: string,
+    options?: ActivityEntryOptions,
+): Promise<string> => {
+    const trimmedNote = note?.trim() || null;
+    const occurredAt = options?.occurredAt ?? new Date().toISOString();
+    const evidenceUrl = options?.evidenceUrl?.trim() || null;
+
+    if (!isSupabaseConfigured) {
+        return createLocalActivityEntryRecord(memberId, categoryId, trimmedNote, options);
+    }
+
+    const client = getSupabaseClient();
+    const { data, error } = await client.rpc('create_activity_entry', {
+        p_member_id: memberId,
+        p_point_rule_id: categoryId,
+        p_note: trimmedNote,
+        p_reason: options?.reason ?? trimmedNote ?? '수동 활동 기록',
+        p_occurred_at: occurredAt,
+        p_evidence_url: evidenceUrl,
+    });
+
+    if (error) {
+        throw error;
+    }
+
+    return data as string;
+};
+
+export const createBatchActivityEntryRecords = async (
+    memberIds: string[],
+    categoryId: string,
+    note?: string,
+    options?: ActivityEntryOptions,
+): Promise<string[]> => {
+    const trimmedNote = note?.trim() || null;
+    const occurredAt = options?.occurredAt ?? new Date().toISOString();
+    const evidenceUrl = options?.evidenceUrl?.trim() || null;
+
+    if (!isSupabaseConfigured) {
+        const recordIds: string[] = [];
+        for (const memberId of memberIds) {
+            recordIds.push(await createActivityEntryRecord(memberId, categoryId, trimmedNote ?? undefined, {
+                ...options,
+                evidenceUrl: evidenceUrl ?? undefined,
+            }));
+        }
+        return recordIds;
+    }
+
+    const client = getSupabaseClient();
+    const { data, error } = await client.rpc('create_batch_activity_entries', {
+        p_member_ids: memberIds,
+        p_point_rule_id: categoryId,
+        p_note: trimmedNote,
+        p_reason: options?.reason ?? trimmedNote ?? '수동 일괄 활동 기록',
+        p_occurred_at: occurredAt,
+        p_evidence_url: evidenceUrl,
+    });
+
+    if (error) {
+        throw error;
+    }
+
+    return (data as string[]) ?? [];
+};
+
+export const reverseActivityEntryRecord = async (recordId: string, note?: string): Promise<string | null> => {
+    const trimmedNote = note?.trim() || null;
+
+    if (!isSupabaseConfigured) {
+        reverseLocalActivityEntryRecord(recordId, trimmedNote);
+        return recordId;
+    }
+
+    const client = getSupabaseClient();
+    const { data, error } = await client.rpc('reverse_activity_entry', {
+        p_record_id: recordId,
+        p_note: trimmedNote,
+    });
+
+    if (error) {
+        throw error;
+    }
+
+    return (data as string) ?? null;
+};
 
 export const getMembers = async (options?: { includeLoginEmail?: boolean }): Promise<Member[]> => {
     const includeLoginEmail = options?.includeLoginEmail ?? false;
@@ -2010,246 +2337,354 @@ export const getScheduleEvents = async (): Promise<ScheduleEventItem[]> => {
 
 export const getAttendanceSessions = async (): Promise<AttendanceSession[]> => {
     if (!isSupabaseConfigured) {
-        return sortAttendanceSessions(
-            localAttendanceSessions.map((session) => ({
-                ...session,
-                checkInCount: localAttendanceCheckins.filter((checkin) => checkin.sessionId === session.id).length,
-            })),
-        );
+        return sortAttendanceSessions(localAttendanceSessions);
     }
 
     try {
         const client = getSupabaseClient();
-        const [sessionResult, checkinResult, categoryResult] = await Promise.all([
+        const [sessionResult, entryResult, memberResult, teamResult] = await Promise.all([
             client
                 .from('attendance_sessions')
-                .select('id, title, session_code, point_rule_id, season_id, starts_at, ends_at, note, is_active, created_at')
+                .select('id, title, session_code, point_rule_id, season_id, starts_at, ends_at, note, is_active, created_at, target_group_type, target_team_id')
                 .order('starts_at', { ascending: false }),
-            client.from('attendance_checkins').select('id, session_id, member_id, activity_record_id, point_ledger_id, checked_in_at'),
-            getCategories(),
+            client
+                .from('attendance_session_members')
+                .select('id, session_id, member_id, attendance_status, activity_record_id, created_at, updated_at'),
+            getMembers(),
+            client.from('teams').select('id, name'),
         ]);
 
         if (sessionResult.error) {
             throw sessionResult.error;
         }
 
-        if (checkinResult.error) {
-            throw checkinResult.error;
+        if (entryResult.error) {
+            throw entryResult.error;
         }
 
-        const sessions = (sessionResult.data ?? []) as Pick<
+        if (teamResult.error) {
+            throw teamResult.error;
+        }
+
+        const sessions = (sessionResult.data ?? []) as Array<Pick<
             AttendanceSessionRow,
-            'id' | 'title' | 'session_code' | 'point_rule_id' | 'season_id' | 'starts_at' | 'ends_at' | 'note' | 'is_active' | 'created_at'
-        >[];
-        const checkins = (checkinResult.data ?? []) as Pick<
-            AttendanceCheckinRow,
-            'id' | 'session_id' | 'member_id' | 'activity_record_id' | 'point_ledger_id' | 'checked_in_at'
-        >[];
-        const categoryMap = new Map(categoryResult.map((category) => [category.id, category.categoryName]));
+            'id' | 'title' | 'session_code' | 'point_rule_id' | 'season_id' | 'starts_at' | 'ends_at' | 'note' | 'is_active' | 'created_at' | 'target_group_type' | 'target_team_id'
+        >>;
+        const entryRows = (entryResult.data ?? []) as Array<Pick<
+            AttendanceSessionMemberRow,
+            'id' | 'session_id' | 'member_id' | 'attendance_status' | 'activity_record_id' | 'created_at' | 'updated_at'
+        >>;
+        const memberMap = new Map(memberResult.map((member) => [member.id, member]));
+        const teamMap = new Map(((teamResult.data ?? []) as Pick<TeamRow, 'id' | 'name'>[]).map((team) => [team.id, team.name]));
+        const entriesBySession = entryRows.reduce<Map<string, AttendanceSessionMember[]>>((acc, row) => {
+            const current = acc.get(row.session_id) ?? [];
+            current.push(mapAttendanceSessionMember(row, memberMap));
+            acc.set(row.session_id, current);
+            return acc;
+        }, new Map());
 
         return sortAttendanceSessions(
-            sessions.map((session) => mapAttendanceSession(
-                session,
-                categoryMap.get(session.point_rule_id) ?? null,
-                checkins.filter((checkin) => checkin.session_id === session.id).length,
-            )),
+            sessions.map((session) => mapAttendanceSession(session, entriesBySession.get(session.id) ?? [], teamMap)),
         );
     } catch (error) {
-        return fallback(
-            'getAttendanceSessions',
-            () =>
-                sortAttendanceSessions(
-                    localAttendanceSessions.map((session) => ({
-                        ...session,
-                        checkInCount: localAttendanceCheckins.filter((checkin) => checkin.sessionId === session.id).length,
-                    })),
-                ),
-            error,
-        );
+        if (isMissingSupabaseRelationError(error, ['attendance_sessions', 'attendance_session_members'])) {
+            console.warn('[data] attendance session tables are unavailable in Supabase; returning an empty list instead.');
+            return [];
+        }
+
+        return fallback('getAttendanceSessions', () => sortAttendanceSessions(localAttendanceSessions), error);
     }
 };
 
 export const createAttendanceSession = async (input: {
     title: string;
-    pointRuleId: string;
     startsAt: string;
-    endsAt?: string | null;
+    targetGroupType: AttendanceTargetGroup;
+    targetTeamId?: string | null;
     note?: string;
 }): Promise<AttendanceSession> => {
     const title = input.title.trim();
     const note = input.note?.trim() || null;
-    const endsAt = input.endsAt?.trim() || null;
 
     if (!title) {
         throw new Error('출석 세션 제목을 입력해 주세요.');
     }
 
-    if (!isSupabaseConfigured) {
-        const category = localCategories.find((item) => item.id === input.pointRuleId);
+    const [categories, members, season, teams] = await Promise.all([
+        getCategories(),
+        getMembers(),
+        getCurrentSeason(),
+        getTeams(),
+    ]);
+    const presentRule = getAttendanceRule(categories, 'present');
+    const targetMembers = filterMembersForAttendanceGroup(members, input.targetGroupType, input.targetTeamId);
+    const teamMap = new Map(teams.map((team) => [team.id, team.name]));
+
+    if (!presentRule) {
+        throw new Error('출석 세션을 만들려면 먼저 참석 규칙이 필요합니다. 설정에서 출석 규칙을 확인해 주세요.');
+    }
+
+    if (targetMembers.length === 0) {
+        throw new Error('선택한 대상 그룹에 속한 멤버가 없습니다.');
+    }
+
+    const createLocalSession = async () => {
+        const createdAt = new Date().toISOString();
+        const sessionId = createLocalId('attendance_session');
+        const recordIds = await createBatchActivityEntryRecords(
+            targetMembers.map((member) => member.id),
+            presentRule.id,
+            note ?? undefined,
+            {
+                occurredAt: input.startsAt,
+                reason: `${title} · ${attendanceStatusLabels.present}`,
+            },
+        );
+        const entries = targetMembers.map<AttendanceSessionMember>((member, index) => ({
+            id: createLocalId('attendance_entry'),
+            sessionId,
+            memberId: member.id,
+            memberName: member.name,
+            roleName: member.roleName ?? null,
+            teamNames: member.teamNames ?? (member.teamName ? [member.teamName] : []),
+            status: 'present',
+            activityRecordId: recordIds[index] ?? null,
+            createdAt,
+            updatedAt: createdAt,
+        }));
+
+        localAttendanceSessionMembers = [...localAttendanceSessionMembers, ...entries];
         const session: AttendanceSession = {
-            id: createLocalId('attendance_session'),
+            id: sessionId,
             title,
             sessionCode: createAttendanceCode(),
-            pointRuleId: input.pointRuleId,
-            pointRuleName: category?.categoryName ?? null,
-            seasonId: localCurrentSeason.id,
+            pointRuleId: presentRule.id,
+            pointRuleName: presentRule.categoryName,
+            seasonId: season?.id ?? null,
             startsAt: input.startsAt,
-            endsAt,
+            endsAt: null,
             note,
             isActive: true,
-            createdAt: new Date().toISOString(),
-            checkInCount: 0,
+            createdAt,
+            targetGroupType: input.targetGroupType,
+            targetTeamId: input.targetTeamId ?? null,
+            targetGroupLabel: getAttendanceTargetGroupLabel(input.targetGroupType, input.targetTeamId, teamMap),
+            memberCount: entries.length,
+            statusCounts: buildAttendanceStatusCounts(entries),
+            entries,
         };
-        localAttendanceSessions.push(session);
+        localAttendanceSessions = sortAttendanceSessions([session, ...localAttendanceSessions]);
         return session;
+    };
+
+    if (!isSupabaseConfigured) {
+        return createLocalSession();
     }
 
     try {
         const client = getSupabaseClient();
-        const { data, error } = await client.rpc('create_attendance_session', {
-            p_title: title,
-            p_point_rule_id: input.pointRuleId,
-            p_starts_at: input.startsAt,
-            p_ends_at: endsAt,
-            p_note: note,
-        });
+        const { data, error } = await client
+            .from('attendance_sessions')
+            .insert({
+                title,
+                session_code: createAttendanceCode(),
+                point_rule_id: presentRule.id,
+                season_id: season?.id ?? null,
+                starts_at: input.startsAt,
+                note,
+                is_active: true,
+                target_group_type: input.targetGroupType,
+                target_team_id: input.targetGroupType === 'team' ? input.targetTeamId ?? null : null,
+            })
+            .select('id')
+            .single();
 
-        if (error) {
-            throw error;
+        if (error || !data) {
+            throw error ?? new Error('출석 세션을 만들지 못했습니다.');
         }
 
-        const createdId = data as string;
+        const recordIds = await createBatchActivityEntryRecords(
+            targetMembers.map((member) => member.id),
+            presentRule.id,
+            note ?? undefined,
+            {
+                occurredAt: input.startsAt,
+                reason: `${title} · ${attendanceStatusLabels.present}`,
+            },
+        );
+        const { error: entryError } = await client.from('attendance_session_members').insert(
+            targetMembers.map((member, index) => ({
+                session_id: data.id,
+                member_id: member.id,
+                attendance_status: 'present',
+                activity_record_id: recordIds[index] ?? null,
+            })),
+        );
+
+        if (entryError) {
+            throw entryError;
+        }
+
         const sessions = await getAttendanceSessions();
-        const created = sessions.find((session) => session.id === createdId);
+        const created = sessions.find((session) => session.id === data.id);
         if (!created) {
             throw new Error('생성된 출석 세션을 다시 불러오지 못했습니다.');
         }
 
         return created;
     } catch (error) {
-        const category = localCategories.find((item) => item.id === input.pointRuleId);
-        const session: AttendanceSession = {
-            id: createLocalId('attendance_session'),
-            title,
-            sessionCode: createAttendanceCode(),
-            pointRuleId: input.pointRuleId,
-            pointRuleName: category?.categoryName ?? null,
-            seasonId: localCurrentSeason.id,
-            startsAt: input.startsAt,
-            endsAt,
-            note,
-            isActive: true,
-            createdAt: new Date().toISOString(),
-            checkInCount: 0,
-        };
-        localAttendanceSessions.push(session);
-        return fallback('createAttendanceSession', () => session, error);
+        if (isMissingSupabaseRelationError(error, ['attendance_sessions', 'attendance_session_members'])) {
+            throw new Error('관리자 출석 세션 기능이 아직 실DB에 적용되지 않았습니다. 최신 출석 migration을 먼저 반영해 주세요.');
+        }
+
+        throw error;
+    }
+};
+
+export const setAttendanceSessionActive = async (id: string, isActive: boolean): Promise<void> => {
+    if (!isSupabaseConfigured) {
+        localAttendanceSessions = localAttendanceSessions.map((session) =>
+            session.id === id
+                ? { ...session, isActive }
+                : session,
+        );
+        return;
+    }
+
+    try {
+        const client = getSupabaseClient();
+        const { error } = await client.from('attendance_sessions').update({ is_active: isActive }).eq('id', id);
+        if (error) {
+            throw error;
+        }
+    } catch (error) {
+        if (isMissingSupabaseRelationError(error, ['attendance_sessions'])) {
+            throw new Error('관리자 출석 세션 기능이 아직 실DB에 적용되지 않았습니다. 최신 출석 migration을 먼저 반영해 주세요.');
+        }
+
+        throw error;
     }
 };
 
 export const closeAttendanceSession = async (id: string): Promise<void> => {
-    if (!isSupabaseConfigured) {
-        localAttendanceSessions = localAttendanceSessions.map((session) =>
-            session.id === id
-                ? { ...session, isActive: false }
-                : session,
-        );
-        return;
-    }
-
-    try {
-        const client = getSupabaseClient();
-        const { error } = await client.from('attendance_sessions').update({ is_active: false }).eq('id', id);
-        if (error) {
-            throw error;
-        }
-    } catch (error) {
-        localAttendanceSessions = localAttendanceSessions.map((session) =>
-            session.id === id
-                ? { ...session, isActive: false }
-                : session,
-        );
-        fallback('closeAttendanceSession', () => undefined, error);
-    }
+    await setAttendanceSessionActive(id, false);
 };
 
-export const submitAttendanceCheckin = async (sessionCode: string): Promise<void> => {
-    const trimmedCode = sessionCode.trim().toUpperCase();
+export const updateAttendanceSessionMemberStatus = async (input: {
+    sessionId: string;
+    memberId: string;
+    status: AttendanceStatus;
+    title: string;
+    startsAt: string;
+    note?: string | null;
+}): Promise<void> => {
+    const categories = await getCategories();
+    const targetRule = getAttendanceRule(categories, input.status);
 
-    if (!trimmedCode) {
-        throw new Error('출석 코드를 입력해 주세요.');
+    if (!targetRule) {
+        throw new Error(`${attendanceStatusLabels[input.status]} 처리 규칙을 찾지 못했습니다. 설정에서 출석 규칙을 확인해 주세요.`);
     }
 
-    const applyLocalCheckin = () => {
-        const session = localAttendanceSessions.find((item) => item.sessionCode === trimmedCode && item.isActive);
-        const member = getLocalSelfMember();
-
-        if (!session || !member) {
-            throw new Error('사용 가능한 출석 코드가 아닙니다.');
+    const reason = `${input.title} · ${attendanceStatusLabels[input.status]}`;
+    const applyLocalUpdate = async () => {
+        const sessionMember = localAttendanceSessionMembers.find((entry) => entry.sessionId === input.sessionId && entry.memberId === input.memberId);
+        if (!sessionMember) {
+            throw new Error('출석 세션 멤버 정보를 찾지 못했습니다.');
         }
 
-        const now = new Date();
-        if (now < new Date(session.startsAt)) {
-            throw new Error('아직 시작 전인 출석 세션입니다.');
-        }
-        if (session.endsAt && now > new Date(session.endsAt)) {
-            throw new Error('이미 종료된 출석 세션입니다.');
-        }
-        if (localAttendanceCheckins.some((checkin) => checkin.sessionId === session.id && checkin.memberId === member.id)) {
-            throw new Error('이미 체크인한 출석 세션입니다.');
+        if (sessionMember.activityRecordId) {
+            await reverseActivityEntryRecord(sessionMember.activityRecordId, `${reason}으로 재조정`);
         }
 
-        const category = localCategories.find((item) => item.id === session.pointRuleId);
-        if (!category) {
-            throw new Error('이 출석 세션의 점수 규칙을 찾지 못했습니다.');
-        }
-
-        const recordId = createLocalId('record');
-        const ledgerId = createLocalId('ledger');
-        member.score += category.pointValue;
-        localLogs.push({
-            id: ledgerId,
-            recordId,
-            timestamp: now.toISOString(),
-            memberId: member.id,
-            categoryId: category.id,
-            pointDelta: category.pointValue,
-            reason: `${session.title} 출석 체크`,
-            note: session.note ?? `${session.title} 셀프 체크인`,
-            evidenceUrl: null,
-            memberName: member.name,
-            categoryName: category.categoryName,
-            recordStatus: 'confirmed',
+        const recordId = await createActivityEntryRecord(input.memberId, targetRule.id, input.note ?? undefined, {
+            occurredAt: input.startsAt,
+            reason,
         });
-        localAttendanceCheckins.push({
-            id: createLocalId('checkin'),
-            sessionId: session.id,
-            memberId: member.id,
-            activityRecordId: recordId,
-            pointLedgerId: ledgerId,
-            checkedInAt: now.toISOString(),
-        });
-        syncLocalMemberBadges(member.id);
+
+        localAttendanceSessionMembers = localAttendanceSessionMembers.map((entry) =>
+            entry.id === sessionMember.id
+                ? {
+                    ...entry,
+                    status: input.status,
+                    activityRecordId: recordId,
+                    updatedAt: new Date().toISOString(),
+                }
+                : entry,
+        );
+
+        localAttendanceSessions = localAttendanceSessions.map((session) =>
+            session.id === input.sessionId
+                ? mapAttendanceSession(
+                    {
+                        id: session.id,
+                        title: session.title,
+                        session_code: session.sessionCode,
+                        point_rule_id: session.pointRuleId,
+                        season_id: session.seasonId ?? null,
+                        starts_at: session.startsAt,
+                        ends_at: session.endsAt ?? null,
+                        note: session.note ?? null,
+                        is_active: session.isActive,
+                        created_at: session.createdAt,
+                        target_group_type: session.targetGroupType,
+                        target_team_id: session.targetTeamId ?? null,
+                    },
+                    localAttendanceSessionMembers.filter((entry) => entry.sessionId === input.sessionId),
+                    new Map(localTeams.map((team) => [team.id, team.name])),
+                )
+                : session,
+        );
     };
 
     if (!isSupabaseConfigured) {
-        applyLocalCheckin();
+        await applyLocalUpdate();
         return;
     }
 
     try {
         const client = getSupabaseClient();
-        const { error } = await client.rpc('submit_attendance_checkin', {
-            p_session_code: trimmedCode,
-        });
+        const { data, error } = await client
+            .from('attendance_session_members')
+            .select('id, activity_record_id')
+            .eq('session_id', input.sessionId)
+            .eq('member_id', input.memberId)
+            .single();
 
-        if (error) {
-            throw error;
+        if (error || !data) {
+            throw error ?? new Error('출석 세션 멤버 정보를 찾지 못했습니다.');
+        }
+
+        if (data.activity_record_id) {
+            await reverseActivityEntryRecord(data.activity_record_id, `${reason}으로 재조정`);
+        }
+
+        const recordId = await createActivityEntryRecord(input.memberId, targetRule.id, input.note ?? undefined, {
+            occurredAt: input.startsAt,
+            reason,
+        });
+        const { error: updateError } = await client
+            .from('attendance_session_members')
+            .update({
+                attendance_status: input.status,
+                activity_record_id: recordId,
+                updated_at: new Date().toISOString(),
+            })
+            .eq('id', data.id);
+
+        if (updateError) {
+            throw updateError;
         }
     } catch (error) {
-        applyLocalCheckin();
-        fallback('submitAttendanceCheckin', () => undefined, error);
+        if (isMissingSupabaseRelationError(error, ['attendance_sessions', 'attendance_session_members'])) {
+            throw new Error('관리자 출석 세션 기능이 아직 실DB에 적용되지 않았습니다. 최신 출석 migration을 먼저 반영해 주세요.');
+        }
+
+        throw error;
     }
+};
+
+export const submitAttendanceCheckin = async (): Promise<void> => {
+    throw new Error('링크 출석은 더 이상 지원되지 않습니다. 운영진이 활동 탭에서 직접 출석 상태를 관리해 주세요.');
 };
 
 export const addScheduleEvent = async (input: {
@@ -2958,109 +3393,9 @@ export const createActivityEntry = async (
     note?: string,
     options?: ActivityEntryOptions,
 ): Promise<void> => {
-    const trimmedNote = note?.trim() || null;
-    const occurredAt = options?.occurredAt ?? new Date().toISOString();
-    const evidenceUrl = options?.evidenceUrl?.trim() || null;
-    const recordId = createLocalId('record');
-
-    if (!isSupabaseConfigured) {
-        const category = localCategories.find((item) => item.id === categoryId);
-        const member = localMembers.find((item) => item.id === memberId);
-
-        if (!category || !member) {
-            return;
-        }
-
-        member.score += category.pointValue;
-        localLogs.push({
-            id: createLocalId('log'),
-            recordId,
-            timestamp: occurredAt,
-            memberId,
-            categoryId,
-            pointDelta: category.pointValue,
-            reason: options?.reason ?? trimmedNote ?? category.categoryName,
-            note: trimmedNote,
-            evidenceUrl,
-            memberName: member.name,
-            categoryName: category.categoryName,
-            recordStatus: 'confirmed',
-        });
-        logLocalAuditEntry({
-            actorId: null,
-            actorName: '로컬 운영자',
-            entityType: 'activity_record',
-            entityId: recordId,
-            action: 'created',
-            summary: `${member.name} · ${category.categoryName} 기록 생성`,
-            diff: {
-                memberId,
-                memberName: member.name,
-                pointRuleId: categoryId,
-                ruleName: category.categoryName,
-                delta: category.pointValue,
-                reason: options?.reason ?? trimmedNote ?? category.categoryName,
-                occurredAt,
-                evidenceUrl,
-            },
-        });
-        syncLocalMemberBadges(memberId);
-        return;
-    }
-
     try {
-        const client = getSupabaseClient();
-        const { error } = await client.rpc('create_activity_entry', {
-            p_member_id: memberId,
-            p_point_rule_id: categoryId,
-            p_note: trimmedNote,
-            p_reason: options?.reason ?? trimmedNote ?? '수동 활동 기록',
-            p_occurred_at: occurredAt,
-            p_evidence_url: evidenceUrl,
-        });
-
-        if (error) throw error;
+        await createActivityEntryRecord(memberId, categoryId, note, options);
     } catch (error) {
-        const category = localCategories.find((item) => item.id === categoryId);
-        const member = localMembers.find((item) => item.id === memberId);
-
-        if (category && member) {
-            member.score += category.pointValue;
-            localLogs.push({
-                id: createLocalId('log'),
-                recordId,
-                timestamp: occurredAt,
-                memberId,
-                categoryId,
-                pointDelta: category.pointValue,
-                reason: options?.reason ?? trimmedNote ?? category.categoryName,
-                note: trimmedNote,
-                evidenceUrl,
-                memberName: member.name,
-                categoryName: category.categoryName,
-                recordStatus: 'confirmed',
-            });
-            logLocalAuditEntry({
-                actorId: null,
-                actorName: '로컬 운영자',
-                entityType: 'activity_record',
-                entityId: recordId,
-                action: 'created',
-                summary: `${member.name} · ${category.categoryName} 기록 생성`,
-                diff: {
-                    memberId,
-                    memberName: member.name,
-                    pointRuleId: categoryId,
-                    ruleName: category.categoryName,
-                    delta: category.pointValue,
-                    reason: options?.reason ?? trimmedNote ?? category.categoryName,
-                    occurredAt,
-                    evidenceUrl,
-                },
-            });
-            syncLocalMemberBadges(memberId);
-        }
-
         fallback('createActivityEntry', () => undefined, error);
     }
 };
@@ -3075,122 +3410,17 @@ export const createBatchActivityEntries = async (
     note?: string,
     options?: ActivityEntryOptions,
 ): Promise<void> => {
-    const trimmedNote = note?.trim() || null;
-    const occurredAt = options?.occurredAt ?? new Date().toISOString();
-    const evidenceUrl = options?.evidenceUrl?.trim() || null;
-
-    if (isSupabaseConfigured) {
-        try {
-            const client = getSupabaseClient();
-            const { error } = await client.rpc('create_batch_activity_entries', {
-                p_member_ids: memberIds,
-                p_point_rule_id: categoryId,
-                p_note: trimmedNote,
-                p_reason: options?.reason ?? trimmedNote ?? '수동 일괄 활동 기록',
-                p_occurred_at: occurredAt,
-                p_evidence_url: evidenceUrl,
-            });
-
-            if (error) {
-                throw error;
-            }
-
-            return;
-        } catch (error) {
-            fallback('createBatchActivityEntries', () => undefined, error);
-        }
-    }
-
-    for (const memberId of memberIds) {
-        await createActivityEntry(memberId, categoryId, trimmedNote ?? undefined, {
-            ...options,
-            evidenceUrl: evidenceUrl ?? undefined,
-        });
+    try {
+        await createBatchActivityEntryRecords(memberIds, categoryId, note, options);
+    } catch (error) {
+        fallback('createBatchActivityEntries', () => undefined, error);
     }
 };
 
 export const reverseActivityEntry = async (recordId: string, note?: string): Promise<void> => {
-    const trimmedNote = note?.trim() || null;
-    const applyLocalReversal = () => {
-        const originalLog = localLogs.find((log) => log.recordId === recordId && !log.reversalOf);
-        const hasReversal = localLogs.some((log) => log.reversalOf === originalLog?.id);
-
-        if (!originalLog || hasReversal) {
-            return;
-        }
-
-        const category = localCategories.find((item) => item.id === originalLog.categoryId);
-        const member = localMembers.find((item) => item.id === originalLog.memberId);
-
-        if (member) {
-            member.score -= originalLog.pointDelta;
-        }
-
-        const reversalTimestamp = new Date().toISOString();
-
-        localLogs = localLogs.map((log) =>
-            log.recordId === recordId
-                ? {
-                    ...log,
-                    recordStatus: 'reversed',
-                }
-                : log,
-        );
-
-        localLogs.push({
-            id: createLocalId('log'),
-            recordId,
-            timestamp: reversalTimestamp,
-            memberId: originalLog.memberId,
-            categoryId: originalLog.categoryId,
-            pointDelta: originalLog.pointDelta * -1,
-            reason: trimmedNote ?? `기록 취소 · ${originalLog.reason ?? originalLog.categoryName ?? '원본 기록'}`,
-            note: originalLog.note ?? null,
-            evidenceUrl: originalLog.evidenceUrl ?? null,
-            memberName: member?.name ?? originalLog.memberName ?? null,
-            categoryName: category?.categoryName ?? originalLog.categoryName ?? null,
-            reversalOf: originalLog.id,
-            isReversal: true,
-            recordStatus: 'reversed',
-        });
-        logLocalAuditEntry({
-            actorId: null,
-            actorName: '로컬 운영자',
-            entityType: 'activity_record',
-            entityId: recordId,
-            action: 'reversed',
-            summary: `${member?.name ?? originalLog.memberName ?? '알 수 없는 멤버'} · ${category?.categoryName ?? originalLog.categoryName ?? '활동'} 기록 취소`,
-            createdAt: reversalTimestamp,
-            diff: {
-                memberId: originalLog.memberId,
-                memberName: member?.name ?? originalLog.memberName ?? null,
-                pointRuleId: originalLog.categoryId,
-                ruleName: category?.categoryName ?? originalLog.categoryName ?? null,
-                reversalOf: originalLog.id,
-                delta: originalLog.pointDelta * -1,
-                reason: trimmedNote ?? `기록 취소 · ${originalLog.reason ?? originalLog.categoryName ?? '원본 기록'}`,
-            },
-        });
-        syncLocalMemberBadges(originalLog.memberId);
-    };
-
-    if (!isSupabaseConfigured) {
-        applyLocalReversal();
-        return;
-    }
-
     try {
-        const client = getSupabaseClient();
-        const { error } = await client.rpc('reverse_activity_entry', {
-            p_record_id: recordId,
-            p_note: trimmedNote,
-        });
-
-        if (error) {
-            throw error;
-        }
+        await reverseActivityEntryRecord(recordId, note);
     } catch (error) {
-        applyLocalReversal();
         fallback('reverseActivityEntry', () => undefined, error);
     }
 };

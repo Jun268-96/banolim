@@ -460,11 +460,6 @@ export const DashboardTab: React.FC = () => {
         [members],
     );
 
-    const participatingTeamCount = useMemo(
-        () => new Set(members.flatMap((member) => member.teamIds ?? (member.teamId ? [member.teamId] : []))).size,
-        [members],
-    );
-
     const selectedTeamForManagement = useMemo(
         () => teams.find((team) => team.id === selectedTeamManagementId) ?? teams[0] ?? null,
         [selectedTeamManagementId, teams],
@@ -871,25 +866,6 @@ export const DashboardTab: React.FC = () => {
                     )}
                 </div>
             </header>
-
-            <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-                <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-                    <div className="text-sm text-slate-500">표시 중인 멤버</div>
-                    <div className="mt-2 text-3xl font-bold text-slate-900">{filteredMembers.length}</div>
-                </div>
-                <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-                    <div className="text-sm text-slate-500">접근 준비 필요</div>
-                    <div className="mt-2 text-3xl font-bold text-slate-900">{accessPreparation.total}</div>
-                </div>
-                <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-                    <div className="text-sm text-slate-500">즉시 접근 가능</div>
-                    <div className="mt-2 text-3xl font-bold text-slate-900">{members.filter((member) => isAccessReady(member)).length}</div>
-                </div>
-                <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-                    <div className="text-sm text-slate-500">참여 팀 수</div>
-                    <div className="mt-2 text-3xl font-bold text-slate-900">{participatingTeamCount}</div>
-                </div>
-            </div>
 
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
                 <div className="border-b border-slate-100 px-6 py-3 text-sm text-slate-500">

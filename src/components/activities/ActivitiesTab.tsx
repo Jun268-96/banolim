@@ -1,10 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-    ArrowUpRight,
     BadgeCheck,
     CalendarClock,
     CheckSquare,
-    CheckCircle2,
     CircleSlash,
     ClipboardList,
     Clock3,
@@ -21,10 +19,8 @@ import {
 } from 'lucide-react';
 import type { ActivityLog, AttendanceSession, AuditLogEntry, Category, CorrectionRequest, CorrectionRequestStatus, Member, SeasonSummary } from '../../types';
 import {
-    closeAttendanceSession,
     createActivityEntry,
     createBatchActivityEntries,
-    createAttendanceSession,
     getCorrectionRequests,
     getAttendanceSessions,
     getCategories,
@@ -35,9 +31,9 @@ import {
     reverseActivityEntry,
     updateCorrectionRequestStatus,
 } from '../../lib/db';
+import { AttendanceSessionManager } from './AttendanceSessionManager';
 
-type EntryMode = 'attendance' | 'session' | 'single' | 'mixed' | 'batch';
-type AttendanceStatus = 'present' | 'late' | 'absent';
+type EntryMode = 'attendance' | 'single' | 'mixed' | 'batch';
 type MixedDraftRow = {
     selected: boolean;
     categoryId: string;
@@ -52,14 +48,9 @@ const memberStatusLabels: Record<string, string> = {
 
 const entryModeMeta: Record<EntryMode, { label: string; title: string; description: string }> = {
     attendance: {
-        label: '정기모임 출석',
-        title: '출석 결과를 빠르게 확정하는 모드',
-        description: '참석, 지각, 불참처럼 출석 상태가 기준일 때 가장 빠르게 입력합니다.',
-    },
-    session: {
-        label: '링크 출석',
-        title: '회원이 직접 체크인하는 셀프 출석 모드',
-        description: '운영진이 링크나 코드를 배포하고, 회원이 직접 들어와 출석을 완료합니다.',
+        label: '출석 세션',
+        title: '관리자가 직접 여닫는 출석 세션 모드',
+        description: '출석 세션을 만들고, 대상자 카드를 눌러 출석·지각·결석 상태를 바로 저장합니다.',
     },
     mixed: {
         label: '혼합 배치',
@@ -78,28 +69,6 @@ const entryModeMeta: Record<EntryMode, { label: string; title: string; descripti
     },
 };
 
-const attendanceStatuses: AttendanceStatus[] = ['present', 'late', 'absent'];
-const attendanceStatusLabels: Record<AttendanceStatus, string> = {
-    present: '참석',
-    late: '지각',
-    absent: '불참',
-};
-const attendanceStatusDescriptions: Record<AttendanceStatus, string> = {
-    present: '정상 출석으로 처리합니다.',
-    late: '지각으로 처리하고 감점을 적용합니다.',
-    absent: '불참으로 기록합니다.',
-};
-const attendanceStatusStyles: Record<AttendanceStatus, string> = {
-    present: 'border-emerald-200 bg-emerald-50 text-emerald-700',
-    late: 'border-amber-200 bg-amber-50 text-amber-700',
-    absent: 'border-slate-200 bg-slate-100 text-slate-700',
-};
-const attendanceStatusButtonStyles: Record<AttendanceStatus, string> = {
-    present: 'border-emerald-200 text-emerald-700 hover:bg-emerald-50',
-    late: 'border-amber-200 text-amber-700 hover:bg-amber-50',
-    absent: 'border-slate-300 text-slate-700 hover:bg-slate-100',
-};
-
 const correctionRequestStatusLabels: Record<CorrectionRequestStatus, string> = {
     pending: '접수됨',
     reviewing: '검토 중',
@@ -113,17 +82,6 @@ const correctionRequestStatusClasses: Record<CorrectionRequestStatus, string> = 
     resolved: 'border-emerald-200 bg-emerald-50 text-emerald-700',
     rejected: 'border-rose-200 bg-rose-50 text-rose-700',
 };
-const attendanceStatusIcons = {
-    present: CheckCircle2,
-    late: Clock3,
-    absent: CircleSlash,
-} satisfies Record<AttendanceStatus, React.ComponentType<{ size?: number; className?: string }>>;
-
-const attendanceRuleMatchers: Record<AttendanceStatus, RegExp> = {
-    present: /(정기모임\s*출석|출석|참석|attendance|present)/i,
-    late: /(지각|late)/i,
-    absent: /(불참|결석|absence|absent)/i,
-};
 
 const formatDateTime = (value: string) =>
     new Intl.DateTimeFormat('ko-KR', {
@@ -131,40 +89,8 @@ const formatDateTime = (value: string) =>
         timeStyle: 'short',
     }).format(new Date(value));
 
-const formatDate = (value?: string | null) =>
-    value
-        ? new Intl.DateTimeFormat('ko-KR', { dateStyle: 'medium' }).format(new Date(value))
-        : '-';
-
 const toOccurredAt = (dateValue: string) =>
     dateValue ? new Date(`${dateValue}T12:00:00`).toISOString() : new Date().toISOString();
-
-const toDateTimeInputValue = (value?: string | null) => {
-    const source = value ? new Date(value) : new Date();
-    const year = source.getFullYear();
-    const month = `${source.getMonth() + 1}`.padStart(2, '0');
-    const day = `${source.getDate()}`.padStart(2, '0');
-    const hours = `${source.getHours()}`.padStart(2, '0');
-    const minutes = `${source.getMinutes()}`.padStart(2, '0');
-    return `${year}-${month}-${day}T${hours}:${minutes}`;
-};
-
-const toIsoFromLocalDateTime = (value: string) =>
-    value ? new Date(value).toISOString() : new Date().toISOString();
-
-const getAttendanceRule = (categories: Category[], status: AttendanceStatus) =>
-    categories.find((category) => {
-        if (!attendanceRuleMatchers[status].test(category.categoryName)) {
-            return false;
-        }
-
-        if (status === 'present') {
-            return !attendanceRuleMatchers.late.test(category.categoryName)
-                && !attendanceRuleMatchers.absent.test(category.categoryName);
-        }
-
-        return true;
-    }) ?? null;
 
 const getActivityStateInfo = (log: ActivityLog) => {
     if (log.isReversal) {
@@ -205,13 +131,6 @@ export const ActivitiesTab: React.FC = () => {
     const [note, setNote] = useState('');
     const [singleEvidenceUrl, setSingleEvidenceUrl] = useState('');
 
-    const [attendanceDate, setAttendanceDate] = useState(new Date().toISOString().slice(0, 10));
-    const [attendanceTitle, setAttendanceTitle] = useState('정기모임');
-    const [attendanceNote, setAttendanceNote] = useState('');
-    const [attendanceEvidenceUrl, setAttendanceEvidenceUrl] = useState('');
-    const [selectedTeamFilter, setSelectedTeamFilter] = useState('all');
-    const [attendanceDraft, setAttendanceDraft] = useState<Record<string, AttendanceStatus>>({});
-
     const [mixedDate, setMixedDate] = useState(new Date().toISOString().slice(0, 10));
     const [mixedTitle, setMixedTitle] = useState('운영 활동');
     const [mixedNote, setMixedNote] = useState('');
@@ -225,18 +144,10 @@ export const ActivitiesTab: React.FC = () => {
     const [batchNote, setBatchNote] = useState('');
     const [batchEvidenceUrl, setBatchEvidenceUrl] = useState('');
 
-    const [sessionTitle, setSessionTitle] = useState('정기모임 링크 출석');
-    const [sessionCategoryId, setSessionCategoryId] = useState('');
-    const [sessionStartsAt, setSessionStartsAt] = useState(() => toDateTimeInputValue());
-    const [sessionEndsAt, setSessionEndsAt] = useState('');
-    const [sessionNote, setSessionNote] = useState('');
-
     const [isLoading, setIsLoading] = useState(true);
     const [isSaving, setIsSaving] = useState(false);
     const [reversingRecordId, setReversingRecordId] = useState<string | null>(null);
     const [updatingCorrectionRequestId, setUpdatingCorrectionRequestId] = useState<string | null>(null);
-    const [closingSessionId, setClosingSessionId] = useState<string | null>(null);
-    const [copiedSessionValue, setCopiedSessionValue] = useState<string | null>(null);
     const [reviewNotes, setReviewNotes] = useState<Record<string, string>>({});
 
     const refreshData = async () => {
@@ -251,7 +162,6 @@ export const ActivitiesTab: React.FC = () => {
             getCorrectionRequests(),
         ]);
         const firstActiveMemberId = membersData.find((member) => member.status !== 'inactive')?.id ?? '';
-        const defaultAttendanceRuleId = getAttendanceRule(categoriesData, 'present')?.id ?? categoriesData[0]?.id ?? '';
         setSeason(seasonData);
         setMembers(membersData);
         setCategories(categoriesData);
@@ -263,7 +173,6 @@ export const ActivitiesTab: React.FC = () => {
         setSelectedCategoryId((current) => current || categoriesData[0]?.id || '');
         setMixedBulkCategoryId((current) => current || categoriesData[0]?.id || '');
         setBatchCategoryId((current) => current || categoriesData[0]?.id || '');
-        setSessionCategoryId((current) => current || defaultAttendanceRuleId);
         setIsLoading(false);
     };
 
@@ -281,7 +190,6 @@ export const ActivitiesTab: React.FC = () => {
                 getCorrectionRequests(),
             ]);
             const firstActiveMemberId = membersData.find((member) => member.status !== 'inactive')?.id ?? '';
-            const defaultAttendanceRuleId = getAttendanceRule(categoriesData, 'present')?.id ?? categoriesData[0]?.id ?? '';
 
             if (!isMounted) {
                 return;
@@ -298,7 +206,6 @@ export const ActivitiesTab: React.FC = () => {
             setSelectedCategoryId((current) => current || categoriesData[0]?.id || '');
             setMixedBulkCategoryId((current) => current || categoriesData[0]?.id || '');
             setBatchCategoryId((current) => current || categoriesData[0]?.id || '');
-            setSessionCategoryId((current) => current || defaultAttendanceRuleId);
             setIsLoading(false);
         };
 
@@ -308,18 +215,6 @@ export const ActivitiesTab: React.FC = () => {
             isMounted = false;
         };
     }, []);
-
-    useEffect(() => {
-        if (!copiedSessionValue) {
-            return undefined;
-        }
-
-        const timeoutId = window.setTimeout(() => {
-            setCopiedSessionValue(null);
-        }, 1800);
-
-        return () => window.clearTimeout(timeoutId);
-    }, [copiedSessionValue]);
 
     const activeMembers = useMemo(
         () => members.filter((member) => member.status !== 'inactive'),
@@ -350,22 +245,6 @@ export const ActivitiesTab: React.FC = () => {
                 }, [])
                 .sort((a, b) => a.name.localeCompare(b.name)),
         [activeMembers],
-    );
-
-    const filteredAttendanceMembers = useMemo(
-        () =>
-            activeMembers.filter((member) => {
-                if (selectedTeamFilter === 'all') {
-                    return true;
-                }
-
-                if (selectedTeamFilter === 'ungrouped') {
-                    return (member.teamIds ?? []).length === 0 && !member.teamId;
-                }
-
-                return (member.teamIds ?? []).includes(selectedTeamFilter) || member.teamId === selectedTeamFilter;
-            }),
-        [activeMembers, selectedTeamFilter],
     );
 
     const filteredMixedMembers = useMemo(
@@ -400,53 +279,15 @@ export const ActivitiesTab: React.FC = () => {
         [activeMembers, selectedBatchTeamFilter],
     );
 
-    const attendanceRules = useMemo(
-        () => ({
-            present: getAttendanceRule(categories, 'present'),
-            late: getAttendanceRule(categories, 'late'),
-            absent: getAttendanceRule(categories, 'absent'),
-        }),
-        [categories],
-    );
-
     const selectedCategory = useMemo(
         () => categories.find((category) => category.id === selectedCategoryId) ?? null,
         [categories, selectedCategoryId],
-    );
-
-    const selectedSessionCategory = useMemo(
-        () => categories.find((category) => category.id === sessionCategoryId) ?? null,
-        [categories, sessionCategoryId],
     );
 
     const selectedBatchCategory = useMemo(
         () => categories.find((category) => category.id === batchCategoryId) ?? null,
         [batchCategoryId, categories],
     );
-
-    const activeAttendanceSessions = useMemo(
-        () => attendanceSessions.filter((session) => session.isActive),
-        [attendanceSessions],
-    );
-
-    const totalAttendanceCheckIns = useMemo(
-        () => attendanceSessions.reduce((sum, session) => sum + (session.checkInCount ?? 0), 0),
-        [attendanceSessions],
-    );
-
-    const recommendedSessionRules = useMemo(() => {
-        const preferredIds = new Set(
-            [attendanceRules.present?.id, attendanceRules.late?.id, attendanceRules.absent?.id].filter((value): value is string => Boolean(value)),
-        );
-
-        if (preferredIds.size === 0) {
-            return categories;
-        }
-
-        const preferred = categories.filter((category) => preferredIds.has(category.id));
-        const others = categories.filter((category) => !preferredIds.has(category.id));
-        return [...preferred, ...others];
-    }, [attendanceRules.absent?.id, attendanceRules.late?.id, attendanceRules.present?.id, categories]);
 
     const mixedPreviewRows = useMemo(
         () =>
@@ -531,45 +372,6 @@ export const ActivitiesTab: React.FC = () => {
         [mixedPreviewRows],
     );
 
-    const attendancePreviewRows = useMemo(
-        () =>
-            filteredAttendanceMembers.flatMap((member) => {
-                const status = attendanceDraft[member.id];
-                if (!status) {
-                    return [];
-                }
-
-                return [{
-                    member,
-                    status,
-                    category: attendanceRules[status],
-                }];
-            }),
-        [attendanceDraft, attendanceRules, filteredAttendanceMembers],
-    );
-
-    const attendanceStatusCounts = useMemo(
-        () =>
-            attendancePreviewRows.reduce<Record<AttendanceStatus, number>>((acc, row) => {
-                acc[row.status] += 1;
-                return acc;
-            }, {
-                present: 0,
-                late: 0,
-                absent: 0,
-            }),
-        [attendancePreviewRows],
-    );
-
-    const missingAttendanceRules = attendanceStatuses.filter(
-        (status) => attendanceStatusCounts[status] > 0 && !attendanceRules[status],
-    );
-
-    const expectedAttendanceDelta = attendancePreviewRows.reduce(
-        (sum, row) => sum + (row.category?.pointValue ?? 0),
-        0,
-    );
-
     const correctionRequestCounts = useMemo(
         () =>
             correctionRequests.reduce<Record<CorrectionRequestStatus, number>>((acc, request) => {
@@ -585,41 +387,6 @@ export const ActivitiesTab: React.FC = () => {
     );
 
     const selectedEntryModeMeta = entryModeMeta[entryMode];
-
-    const handleAttendanceStatusChange = (memberId: string, status: AttendanceStatus) => {
-        setAttendanceDraft((current) => {
-            if (current[memberId] === status) {
-                const next = { ...current };
-                delete next[memberId];
-                return next;
-            }
-
-            return {
-                ...current,
-                [memberId]: status,
-            };
-        });
-    };
-
-    const applyStatusToFilteredMembers = (status: AttendanceStatus) => {
-        setAttendanceDraft((current) => {
-            const next = { ...current };
-            filteredAttendanceMembers.forEach((member) => {
-                next[member.id] = status;
-            });
-            return next;
-        });
-    };
-
-    const clearFilteredAttendance = () => {
-        setAttendanceDraft((current) => {
-            const next = { ...current };
-            filteredAttendanceMembers.forEach((member) => {
-                delete next[member.id];
-            });
-            return next;
-        });
-    };
 
     const handleMixedTeamFilterChange = (value: string) => {
         setSelectedMixedTeamFilter(value);
@@ -695,44 +462,6 @@ export const ActivitiesTab: React.FC = () => {
             });
             return next;
         });
-    };
-
-    const handleAttendanceSubmit = async (event: React.FormEvent) => {
-        event.preventDefault();
-        if (attendancePreviewRows.length === 0 || missingAttendanceRules.length > 0) {
-            return;
-        }
-
-        setIsSaving(true);
-
-        const baseTitle = attendanceTitle.trim() || '정기모임';
-        const sharedNote = attendanceNote.trim()
-            ? `${baseTitle} · ${attendanceNote.trim()}`
-            : `${baseTitle} 출석 입력`;
-        const occurredAt = toOccurredAt(attendanceDate);
-
-        for (const status of attendanceStatuses) {
-            const category = attendanceRules[status];
-            const memberIds = attendancePreviewRows
-                .filter((row) => row.status === status)
-                .map((row) => row.member.id);
-
-            if (!category || memberIds.length === 0) {
-                continue;
-            }
-
-            await createBatchActivityEntries(memberIds, category.id, sharedNote, {
-                occurredAt,
-                reason: `${baseTitle} · ${attendanceStatusLabels[status]}`,
-                evidenceUrl: attendanceEvidenceUrl,
-            });
-        }
-
-        setAttendanceDraft({});
-        setAttendanceNote('');
-        setAttendanceEvidenceUrl('');
-        await refreshData();
-        setIsSaving(false);
     };
 
     const handleSingleSubmit = async (event: React.FormEvent) => {
@@ -837,11 +566,6 @@ export const ActivitiesTab: React.FC = () => {
         setReversingRecordId(null);
     };
 
-    const handleTeamFilterChange = (value: string) => {
-        setSelectedTeamFilter(value);
-        setAttendanceDraft({});
-    };
-
     const handleCorrectionRequestStatusUpdate = async (
         request: CorrectionRequest,
         status: CorrectionRequestStatus,
@@ -851,51 +575,6 @@ export const ActivitiesTab: React.FC = () => {
         await refreshData();
         setUpdatingCorrectionRequestId(null);
     };
-
-    const handleCreateAttendanceSession = async (event: React.FormEvent) => {
-        event.preventDefault();
-        if (!sessionCategoryId || !sessionTitle.trim()) {
-            return;
-        }
-
-        setIsSaving(true);
-
-        try {
-            await createAttendanceSession({
-                title: sessionTitle,
-                pointRuleId: sessionCategoryId,
-                startsAt: toIsoFromLocalDateTime(sessionStartsAt),
-                endsAt: sessionEndsAt ? toIsoFromLocalDateTime(sessionEndsAt) : null,
-                note: sessionNote,
-            });
-
-            setSessionTitle('정기모임 링크 출석');
-            setSessionStartsAt(toDateTimeInputValue());
-            setSessionEndsAt('');
-            setSessionNote('');
-            await refreshData();
-        } finally {
-            setIsSaving(false);
-        }
-    };
-
-    const handleCloseAttendanceSession = async (sessionId: string) => {
-        setClosingSessionId(sessionId);
-        try {
-            await closeAttendanceSession(sessionId);
-            await refreshData();
-        } finally {
-            setClosingSessionId(null);
-        }
-    };
-
-    const handleCopySessionValue = async (value: string) => {
-        await navigator.clipboard.writeText(value);
-        setCopiedSessionValue(value);
-    };
-
-    const getAttendanceLink = (sessionCode: string) =>
-        `${window.location.origin}/?attendance=${encodeURIComponent(sessionCode)}#`;
 
     if (isLoading) {
         return (
@@ -919,7 +598,7 @@ export const ActivitiesTab: React.FC = () => {
                     <p className="text-slate-500 mt-1">출석 일괄 입력, 회원별 혼합 배치, 개별 활동 기록까지 운영 흐름에 맞춰 한 화면에서 처리합니다.</p>
                 </div>
 
-                <div className="grid grid-cols-2 gap-2 rounded-[24px] border border-slate-200 bg-white p-2 shadow-sm lg:grid-cols-5">
+                <div className="grid grid-cols-2 gap-2 rounded-[24px] border border-slate-200 bg-white p-2 shadow-sm lg:grid-cols-4">
                     <button
                         type="button"
                         onClick={() => setEntryMode('attendance')}
@@ -929,18 +608,7 @@ export const ActivitiesTab: React.FC = () => {
                                 : 'text-slate-600 hover:bg-slate-50'
                         }`}
                     >
-                        정기모임 출석
-                    </button>
-                    <button
-                        type="button"
-                        onClick={() => setEntryMode('session')}
-                        className={`rounded-xl px-4 py-2 text-sm font-semibold transition-colors ${
-                            entryMode === 'session'
-                                ? 'bg-indigo-600 text-white'
-                                : 'text-slate-600 hover:bg-slate-50'
-                        }`}
-                    >
-                        링크 출석
+                        출석 세션
                     </button>
                     <button
                         type="button"
@@ -993,323 +661,18 @@ export const ActivitiesTab: React.FC = () => {
                 </div>
             </section>
 
-            <div className="grid grid-cols-1 gap-6 2xl:grid-cols-[420px_minmax(0,1fr)]">
+            {entryMode === 'attendance' ? (
+                <AttendanceSessionManager
+                    season={season}
+                    members={members}
+                    categories={categories}
+                    sessions={attendanceSessions}
+                    onRefresh={refreshData}
+                />
+            ) : (
+                <div className="grid grid-cols-1 gap-6 2xl:grid-cols-[420px_minmax(0,1fr)]">
                 <section>
-                    {entryMode === 'attendance' ? (
-                        <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
-                            <div className="border-b border-slate-200 bg-gradient-to-br from-sky-50 via-white to-indigo-50 p-6">
-                                <div className="inline-flex items-center gap-2 rounded-full border border-sky-200 bg-white/90 px-3 py-1 text-xs font-semibold text-sky-700">
-                                    <Sparkles size={14} />
-                                    운영진 워크플로
-                                </div>
-                                <h3 className="mt-4 text-xl font-bold text-slate-950">정기모임 출석 입력</h3>
-                                <p className="mt-2 text-sm text-slate-600">
-                                    대상 그룹을 고르고, 회원별로 참석/지각/불참 상태를 지정한 뒤 저장 전 미리보기까지 확인합니다.
-                                </p>
-
-                                <div className="mt-5 rounded-2xl border border-sky-200 bg-white/90 p-4">
-                                    <div className="text-xs font-semibold tracking-wide text-sky-700">적용 시즌</div>
-                                    <div className="mt-2 text-lg font-bold text-slate-900">{season?.name ?? '활성 시즌 없음'}</div>
-                                    <div className="mt-1 text-sm text-slate-500">
-                                        {season
-                                            ? `${formatDate(season.startDate)} - ${formatDate(season.endDate)} 기준으로 자동 저장됩니다.`
-                                            : '활성 시즌이 없으면 기록은 저장되지만 시즌 연결은 비어 있을 수 있습니다.'}
-                                    </div>
-                                </div>
-                            </div>
-
-                            <form className="space-y-5 p-6" onSubmit={handleAttendanceSubmit}>
-                                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                                    <label className="space-y-1.5">
-                                        <span className="text-xs font-medium text-slate-600">모임 날짜</span>
-                                        <input
-                                            type="date"
-                                            value={attendanceDate}
-                                            onChange={(event) => setAttendanceDate(event.target.value)}
-                                            className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                                        />
-                                    </label>
-                                    <label className="space-y-1.5">
-                                        <span className="text-xs font-medium text-slate-600">대상 그룹</span>
-                                        <select
-                                            value={selectedTeamFilter}
-                                            onChange={(event) => handleTeamFilterChange(event.target.value)}
-                                            className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                                        >
-                                            <option value="all">전체 멤버</option>
-                                            <option value="ungrouped">팀 미지정</option>
-                                            {teamOptions.map((team) => (
-                                                <option key={team.id} value={team.id}>
-                                                    {team.name}
-                                                </option>
-                                            ))}
-                                        </select>
-                                    </label>
-                                </div>
-
-                                <label className="space-y-1.5">
-                                    <span className="text-xs font-medium text-slate-600">기록 제목</span>
-                                    <input
-                                        type="text"
-                                        value={attendanceTitle}
-                                        onChange={(event) => setAttendanceTitle(event.target.value)}
-                                        placeholder="예: 3월 둘째 주 정기모임"
-                                        className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                                    />
-                                </label>
-
-                                <label className="space-y-1.5">
-                                    <span className="text-xs font-medium text-slate-600">공통 메모</span>
-                                    <textarea
-                                        value={attendanceNote}
-                                        onChange={(event) => setAttendanceNote(event.target.value)}
-                                        rows={3}
-                                        placeholder="예: 전체 OT 공지 후 출석 점검"
-                                        className="w-full resize-none rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                                    />
-                                </label>
-
-                                <label className="space-y-1.5">
-                                    <span className="text-xs font-medium text-slate-600">증빙 링크</span>
-                                    <input
-                                        type="url"
-                                        value={attendanceEvidenceUrl}
-                                        onChange={(event) => setAttendanceEvidenceUrl(event.target.value)}
-                                        placeholder="예: 구글 시트 출석부, 공지 문서 링크"
-                                        className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                                    />
-                                </label>
-
-                                <div className="flex flex-wrap gap-2">
-                                    {attendanceStatuses.map((status) => {
-                                        const Icon = attendanceStatusIcons[status];
-
-                                        return (
-                                            <button
-                                                key={status}
-                                                type="button"
-                                                onClick={() => applyStatusToFilteredMembers(status)}
-                                                className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-medium transition-colors ${attendanceStatusButtonStyles[status]}`}
-                                            >
-                                                <Icon size={16} />
-                                                전원 {attendanceStatusLabels[status]}
-                                            </button>
-                                        );
-                                    })}
-                                    <button
-                                        type="button"
-                                        onClick={clearFilteredAttendance}
-                                        className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-50"
-                                    >
-                                        현재 선택 초기화
-                                    </button>
-                                </div>
-
-                                {missingAttendanceRules.length > 0 && (
-                                    <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-                                        <div className="flex items-start gap-2">
-                                            <TriangleAlert size={18} className="mt-0.5" />
-                                            <div>
-                                                <div className="font-semibold">저장 전 확인이 필요합니다.</div>
-                                                <div className="mt-1">
-                                                    {missingAttendanceRules.map((status) => attendanceStatusLabels[status]).join(', ')}
-                                                    {' '}규칙이 설정되지 않아 현재 선택은 저장할 수 없습니다. 설정에서 해당 규칙을 먼저 추가해 주세요.
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                )}
-
-                                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                                    <div className="flex items-center justify-between gap-3">
-                                        <div>
-                                            <div className="font-semibold text-slate-900">대상 멤버</div>
-                                            <div className="mt-1 text-sm text-slate-500">현재 범위에서 상태를 지정할 회원들입니다.</div>
-                                        </div>
-                                        <div className="rounded-full bg-white px-3 py-1 text-sm font-semibold text-slate-700">
-                                            {filteredAttendanceMembers.length}명
-                                        </div>
-                                    </div>
-
-                                    <div className="mt-4 space-y-3 max-h-[440px] overflow-auto pr-1">
-                                        {filteredAttendanceMembers.map((member) => (
-                                            <div
-                                                key={member.id}
-                                                className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"
-                                            >
-                                                <div className="flex items-start justify-between gap-3">
-                                                    <div>
-                                                        <div className="font-medium text-slate-900">{member.name}</div>
-                                                        <div className="mt-1 text-sm text-slate-500">
-                                                            {(member.teamNames?.join(', ') || member.teamName) || '팀 미지정'}
-                                                            <span className="text-slate-300"> · </span>
-                                                            {member.roleName || '역할 없음'}
-                                                        </div>
-                                                    </div>
-                                                    <div className="text-sm font-semibold text-indigo-600">{member.score}점</div>
-                                                </div>
-
-                                            <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-3">
-                                                    {attendanceStatuses.map((status) => {
-                                                        const Icon = attendanceStatusIcons[status];
-                                                        const isSelected = attendanceDraft[member.id] === status;
-
-                                                        return (
-                                                            <button
-                                                                key={status}
-                                                                type="button"
-                                                                onClick={() => handleAttendanceStatusChange(member.id, status)}
-                                                        className={`rounded-xl border px-3 py-2 text-left transition-all ${
-                                                                    isSelected
-                                                                        ? `${attendanceStatusStyles[status]} shadow-sm`
-                                                                        : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50'
-                                                                }`}
-                                                            >
-                                                                <div className="flex items-center gap-2 text-sm font-semibold">
-                                                                    <Icon size={16} />
-                                                                    {attendanceStatusLabels[status]}
-                                                                </div>
-                                                                <div className="mt-1 text-xs opacity-80">
-                                                                    {attendanceStatusDescriptions[status]}
-                                                                </div>
-                                                            </button>
-                                                        );
-                                                    })}
-                                                </div>
-                                            </div>
-                                        ))}
-
-                                        {filteredAttendanceMembers.length === 0 && (
-                                            <div className="rounded-2xl border border-dashed border-slate-200 bg-white px-4 py-10 text-center text-sm text-slate-500">
-                                                현재 범위에 표시할 멤버가 없습니다.
-                                            </div>
-                                        )}
-                                    </div>
-                                </div>
-
-                                <button
-                                    type="submit"
-                                    disabled={attendancePreviewRows.length === 0 || missingAttendanceRules.length > 0 || isSaving}
-                                    className="w-full rounded-2xl bg-indigo-600 px-4 py-3 font-semibold text-white transition-colors hover:bg-indigo-700 disabled:opacity-50"
-                                >
-                                    {isSaving ? '출석 저장 중...' : '출석 일괄 저장'}
-                                </button>
-                            </form>
-                        </div>
-                    ) : entryMode === 'session' ? (
-                        <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
-                            <div className="border-b border-slate-200 bg-gradient-to-br from-indigo-50 via-white to-sky-50 p-6">
-                                <div className="inline-flex items-center gap-2 rounded-full border border-indigo-200 bg-white/90 px-3 py-1 text-xs font-semibold text-indigo-700">
-                                    <Link2 size={14} />
-                                    링크/코드 출석
-                                </div>
-                                <h3 className="mt-4 text-xl font-bold text-slate-950">셀프 체크인 세션 생성</h3>
-                                <p className="mt-2 text-sm text-slate-600">
-                                    운영진이 출석 세션을 열면 회원은 링크를 누르거나 코드를 입력해서 직접 체크인할 수 있습니다. 중복 체크인은 자동으로 막습니다.
-                                </p>
-
-                                <div className="mt-5 rounded-2xl border border-indigo-200 bg-white/90 p-4">
-                                    <div className="text-xs font-semibold tracking-wide text-indigo-700">운영 팁</div>
-                                    <div className="mt-2 text-sm leading-6 text-slate-600">
-                                        정기모임 시작 전에 세션을 만들고 공지에 링크를 공유하면, 별도 수기 입력 없이 회원이 직접 출석을 완료할 수 있습니다.
-                                    </div>
-                                </div>
-                            </div>
-
-                            <form className="space-y-5 p-6" onSubmit={handleCreateAttendanceSession}>
-                                <label className="space-y-1.5">
-                                    <span className="text-xs font-medium text-slate-600">세션 제목</span>
-                                    <input
-                                        type="text"
-                                        value={sessionTitle}
-                                        onChange={(event) => setSessionTitle(event.target.value)}
-                                        placeholder="예: 3월 둘째 주 정기모임 셀프 체크인"
-                                        className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                                    />
-                                </label>
-
-                                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                                    <label className="space-y-1.5">
-                                        <span className="text-xs font-medium text-slate-600">출석 처리 규칙</span>
-                                        <select
-                                            value={sessionCategoryId}
-                                            onChange={(event) => setSessionCategoryId(event.target.value)}
-                                            className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                                        >
-                                            <option value="">규칙 선택</option>
-                                            {recommendedSessionRules.map((category) => (
-                                                <option key={category.id} value={category.id}>
-                                                    {category.categoryName} ({category.pointValue > 0 ? '+' : ''}
-                                                    {category.pointValue})
-                                                </option>
-                                            ))}
-                                        </select>
-                                    </label>
-                                    <label className="space-y-1.5">
-                                        <span className="text-xs font-medium text-slate-600">시작 시각</span>
-                                        <input
-                                            type="datetime-local"
-                                            value={sessionStartsAt}
-                                            onChange={(event) => setSessionStartsAt(event.target.value)}
-                                            className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                                        />
-                                    </label>
-                                </div>
-
-                                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                                    <label className="space-y-1.5">
-                                        <span className="text-xs font-medium text-slate-600">종료 시각</span>
-                                        <input
-                                            type="datetime-local"
-                                            value={sessionEndsAt}
-                                            onChange={(event) => setSessionEndsAt(event.target.value)}
-                                            className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                                        />
-                                    </label>
-                                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                                        <div className="text-xs font-medium text-slate-500">현재 적용 규칙</div>
-                                        <div className="mt-2 flex flex-wrap items-center gap-2">
-                                            <span className="rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700">
-                                                {selectedSessionCategory ? `v${selectedSessionCategory.version ?? 1}` : '규칙 미선택'}
-                                            </span>
-                                            {selectedSessionCategory && (
-                                                <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${
-                                                    selectedSessionCategory.pointValue >= 0
-                                                        ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                                                        : 'border-rose-200 bg-rose-50 text-rose-700'
-                                                }`}>
-                                                    {selectedSessionCategory.pointValue > 0 ? '+' : ''}
-                                                    {selectedSessionCategory.pointValue}점
-                                                </span>
-                                            )}
-                                        </div>
-                                        <div className="mt-2 text-sm text-slate-600">
-                                            {selectedSessionCategory?.conditionSummary ?? '선택한 규칙의 설명이 여기에 표시됩니다.'}
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <label className="space-y-1.5">
-                                    <span className="text-xs font-medium text-slate-600">세션 메모</span>
-                                    <textarea
-                                        value={sessionNote}
-                                        onChange={(event) => setSessionNote(event.target.value)}
-                                        rows={3}
-                                        placeholder="예: OT 공지 후 10분간 셀프 체크인 허용"
-                                        className="w-full resize-none rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                                    />
-                                </label>
-
-                                <button
-                                    type="submit"
-                                    disabled={!sessionTitle.trim() || !sessionCategoryId || isSaving}
-                                    className="w-full rounded-2xl bg-indigo-600 px-4 py-3 font-semibold text-white transition-colors hover:bg-indigo-700 disabled:opacity-50"
-                                >
-                                    {isSaving ? '세션 생성 중...' : '출석 세션 생성'}
-                                </button>
-                            </form>
-                        </div>
-                    ) : entryMode === 'mixed' ? (
+                    {entryMode === 'mixed' ? (
                         <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
                             <div className="border-b border-slate-200 bg-gradient-to-br from-violet-50 via-white to-indigo-50 p-6">
                                 <div className="inline-flex items-center gap-2 rounded-full border border-violet-200 bg-white/90 px-3 py-1 text-xs font-semibold text-violet-700">
@@ -1757,247 +1120,7 @@ export const ActivitiesTab: React.FC = () => {
                 </section>
 
                 <section className="space-y-4">
-                    {entryMode === 'attendance' ? (
-                        <>
-                            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-                                <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-                                    <div className="text-sm text-slate-500">현재 범위 멤버</div>
-                                    <div className="mt-2 text-3xl font-bold text-slate-900">{filteredAttendanceMembers.length}</div>
-                                </div>
-                                <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-                                    <div className="text-sm text-slate-500">입력 예정</div>
-                                    <div className="mt-2 text-3xl font-bold text-slate-900">{attendancePreviewRows.length}</div>
-                                </div>
-                                <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-                                    <div className="text-sm text-slate-500">예상 총점</div>
-                                    <div className={`mt-2 text-3xl font-bold ${expectedAttendanceDelta >= 0 ? 'text-indigo-600' : 'text-rose-600'}`}>
-                                        {expectedAttendanceDelta > 0 ? '+' : ''}
-                                        {expectedAttendanceDelta}점
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-                                <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
-                                    <div>
-                                        <div className="font-semibold text-slate-900">저장 미리보기</div>
-                                        <div className="mt-1 text-sm text-slate-500">저장 직전에 상태별 인원과 점수 반영을 확인합니다.</div>
-                                    </div>
-                                    <div className="rounded-full bg-slate-50 px-3 py-1 text-sm font-semibold text-slate-700">
-                                        {attendancePreviewRows.length}건
-                                    </div>
-                                </div>
-
-                                <div className="space-y-4 p-6">
-                                    <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-                                        {attendanceStatuses.map((status) => {
-                                            const Icon = attendanceStatusIcons[status];
-                                            const category = attendanceRules[status];
-
-                                            return (
-                                                <div
-                                                    key={status}
-                                                    className={`rounded-2xl border p-4 ${attendanceStatusStyles[status]}`}
-                                                >
-                                                    <div className="flex items-center gap-2 text-sm font-semibold">
-                                                        <Icon size={16} />
-                                                        {attendanceStatusLabels[status]}
-                                                    </div>
-                                                    <div className="mt-3 text-2xl font-bold">{attendanceStatusCounts[status]}명</div>
-                                                    <div className="mt-1 text-sm opacity-80">
-                                                        {category
-                                                            ? `규칙 ${category.categoryName} · ${category.pointValue > 0 ? '+' : ''}${category.pointValue}점`
-                                                            : '규칙 미설정'}
-                                                    </div>
-                                                </div>
-                                            );
-                                        })}
-                                    </div>
-
-                                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                                        <div className="flex items-center gap-2 text-slate-900 font-semibold">
-                                            <Users2 size={16} className="text-indigo-600" />
-                                            저장 예정 멤버
-                                        </div>
-                                        <div className="mt-4 space-y-3 max-h-[320px] overflow-auto pr-1">
-                                            {attendancePreviewRows.map((row) => (
-                                                <div
-                                                    key={`${row.member.id}-${row.status}`}
-                                                    className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white px-4 py-3"
-                                                >
-                                                    <div>
-                                                        <div className="font-medium text-slate-900">{row.member.name}</div>
-                                                        <div className="mt-1 text-sm text-slate-500">
-                                                            {attendanceStatusLabels[row.status]}
-                                                            <span className="text-slate-300"> · </span>
-                                                            {row.category?.categoryName ?? '규칙 없음'}
-                                                        </div>
-                                                    </div>
-                                                    <div className={`rounded-full px-3 py-1 text-sm font-semibold ${attendanceStatusStyles[row.status]}`}>
-                                                        {row.category
-                                                            ? `${row.category.pointValue > 0 ? '+' : ''}${row.category.pointValue}점`
-                                                            : '미설정'}
-                                                    </div>
-                                                </div>
-                                            ))}
-
-                                            {attendancePreviewRows.length === 0 && (
-                                                <div className="rounded-2xl border border-dashed border-slate-200 bg-white px-4 py-10 text-center text-sm text-slate-500">
-                                                    아직 저장할 출석 선택이 없습니다. 왼쪽에서 멤버별 상태를 지정해 주세요.
-                                                </div>
-                                            )}
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </>
-                    ) : entryMode === 'session' ? (
-                        <>
-                            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-                                <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-                                    <div className="text-sm text-slate-500">운영 중 세션</div>
-                                    <div className="mt-2 text-3xl font-bold text-slate-900">{activeAttendanceSessions.length}</div>
-                                </div>
-                                <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-                                    <div className="text-sm text-slate-500">누적 체크인</div>
-                                    <div className="mt-2 text-3xl font-bold text-slate-900">{totalAttendanceCheckIns}</div>
-                                </div>
-                                <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-                                    <div className="text-sm text-slate-500">전체 세션</div>
-                                    <div className="mt-2 text-3xl font-bold text-slate-900">{attendanceSessions.length}</div>
-                                </div>
-                            </div>
-
-                            <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
-                                <div className="border-b border-slate-100 px-6 py-5">
-                                    <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                                        <div>
-                                            <div className="flex items-center gap-2 font-semibold text-slate-900">
-                                                <Link2 size={18} className="text-indigo-600" />
-                                                출석 세션 관리
-                                            </div>
-                                            <div className="mt-1 text-sm text-slate-500">생성된 코드와 링크를 복사하고, 종료 시에는 세션을 닫아 중복 체크인을 막습니다.</div>
-                                        </div>
-                                        {copiedSessionValue && (
-                                            <div className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
-                                                복사 완료
-                                            </div>
-                                        )}
-                                    </div>
-                                </div>
-
-                                <div className="space-y-4 p-6">
-                                    {attendanceSessions.map((session) => {
-                                        const isClosing = closingSessionId === session.id;
-                                        const sessionLink = getAttendanceLink(session.sessionCode);
-
-                                        return (
-                                            <div key={session.id} className="rounded-[24px] border border-slate-200 bg-gradient-to-r from-white via-white to-slate-50 p-5">
-                                                <div className="flex flex-col gap-4 2xl:flex-row 2xl:items-start 2xl:justify-between">
-                                                    <div className="space-y-3">
-                                                        <div className="flex flex-wrap items-center gap-2">
-                                                            <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${
-                                                                session.isActive
-                                                                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                                                                    : 'border-slate-200 bg-slate-100 text-slate-700'
-                                                            }`}>
-                                                                {session.isActive ? '운영 중' : '종료됨'}
-                                                            </span>
-                                                            <span className="rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700">
-                                                                {session.pointRuleName ?? '규칙 미확인'}
-                                                            </span>
-                                                        </div>
-
-                                                        <div>
-                                                            <div className="text-lg font-bold text-slate-950">{session.title}</div>
-                                                            <div className="mt-1 text-sm text-slate-500">
-                                                                시작 {formatDateTime(session.startsAt)}
-                                                                {session.endsAt ? ` · 종료 ${formatDateTime(session.endsAt)}` : ' · 종료 시각 미설정'}
-                                                            </div>
-                                                        </div>
-
-                                                        <div className="rounded-2xl border border-slate-200 bg-slate-950 px-4 py-3 text-white">
-                                                            <div className="text-xs uppercase tracking-[0.16em] text-slate-400">출석 코드</div>
-                                                            <div className="mt-2 text-2xl font-bold tracking-[0.28em]">{session.sessionCode}</div>
-                                                            <div className="mt-2 text-xs text-slate-400">
-                                                                링크를 열면 회원 홈에서 코드가 자동 입력됩니다.
-                                                            </div>
-                                                        </div>
-
-                                                        {session.note && (
-                                                            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-600">
-                                                                {session.note}
-                                                            </div>
-                                                        )}
-                                                    </div>
-
-                                                    <div className="space-y-3 2xl:w-[280px]">
-                                                        <div className="grid grid-cols-2 gap-3">
-                                                            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                                                                <div className="text-xs font-medium uppercase tracking-[0.16em] text-slate-500">체크인</div>
-                                                                <div className="mt-2 text-xl font-bold text-slate-950">{session.checkInCount ?? 0}명</div>
-                                                            </div>
-                                                            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                                                                <div className="text-xs font-medium uppercase tracking-[0.16em] text-slate-500">생성일</div>
-                                                                <div className="mt-2 text-sm font-semibold text-slate-900">{formatDateTime(session.createdAt)}</div>
-                                                            </div>
-                                                        </div>
-
-                                                        <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600 break-all">
-                                                            {sessionLink}
-                                                        </div>
-
-                                                        <div className="flex flex-wrap gap-2">
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => void handleCopySessionValue(session.sessionCode)}
-                                                                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
-                                                            >
-                                                                코드 복사
-                                                            </button>
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => void handleCopySessionValue(sessionLink)}
-                                                                className="inline-flex items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm font-medium text-indigo-700 transition-colors hover:bg-indigo-100"
-                                                            >
-                                                                링크 복사
-                                                            </button>
-                                                            <a
-                                                                href={sessionLink}
-                                                                target="_blank"
-                                                                rel="noreferrer"
-                                                                className="inline-flex items-center gap-2 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-sm font-medium text-sky-700 transition-colors hover:bg-sky-100"
-                                                            >
-                                                                <ArrowUpRight size={15} />
-                                                                링크 열기
-                                                            </a>
-                                                            {session.isActive && (
-                                                                <button
-                                                                    type="button"
-                                                                    onClick={() => void handleCloseAttendanceSession(session.id)}
-                                                                    disabled={isClosing}
-                                                                    className="inline-flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700 transition-colors hover:bg-rose-100 disabled:opacity-50"
-                                                                >
-                                                                    <CircleSlash size={15} />
-                                                                    {isClosing ? '종료 중...' : '세션 종료'}
-                                                                </button>
-                                                            )}
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        );
-                                    })}
-
-                                    {attendanceSessions.length === 0 && (
-                                        <div className="rounded-[24px] border border-dashed border-slate-200 bg-slate-50 px-6 py-12 text-center text-sm text-slate-500">
-                                            아직 생성된 출석 세션이 없습니다. 왼쪽에서 첫 링크 출석 세션을 열어 주세요.
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
-                        </>
-                    ) : entryMode === 'mixed' ? (
+                    {entryMode === 'mixed' ? (
                         <>
                             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
                                 <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
@@ -2521,6 +1644,7 @@ export const ActivitiesTab: React.FC = () => {
                     </div>
                 </section>
             </div>
+            )}
         </div>
     );
 };
