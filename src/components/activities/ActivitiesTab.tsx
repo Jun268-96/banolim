@@ -646,20 +646,22 @@ export const ActivitiesTab: React.FC = () => {
                 </div>
             </header>
 
-            <section className="rounded-[28px] border border-slate-200 bg-white px-5 py-4 shadow-sm">
-                <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                    <div>
-                        <div className="text-xs font-semibold tracking-[0.18em] text-indigo-500">
-                            현재 모드 · {selectedEntryModeMeta.label}
+            {entryMode !== 'attendance' && (
+                <section className="rounded-[28px] border border-slate-200 bg-white px-5 py-4 shadow-sm">
+                    <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                        <div>
+                            <div className="text-xs font-semibold tracking-[0.18em] text-indigo-500">
+                                현재 모드 · {selectedEntryModeMeta.label}
+                            </div>
+                            <h3 className="mt-1 text-lg font-bold text-slate-950">{selectedEntryModeMeta.title}</h3>
+                            <p className="mt-1 text-sm text-slate-600">{selectedEntryModeMeta.description}</p>
                         </div>
-                        <h3 className="mt-1 text-lg font-bold text-slate-950">{selectedEntryModeMeta.title}</h3>
-                        <p className="mt-1 text-sm text-slate-600">{selectedEntryModeMeta.description}</p>
+                        <div className="rounded-2xl border border-indigo-100 bg-indigo-50 px-4 py-3 text-sm text-indigo-700">
+                            저장되는 데이터는 모두 동일한 활동 기록으로 합쳐지고, 입력 방식만 목적에 맞게 나뉩니다.
+                        </div>
                     </div>
-                    <div className="rounded-2xl border border-indigo-100 bg-indigo-50 px-4 py-3 text-sm text-indigo-700">
-                        저장되는 데이터는 모두 동일한 활동 기록으로 합쳐지고, 입력 방식만 목적에 맞게 나뉩니다.
-                    </div>
-                </div>
-            </section>
+                </section>
+            )}
 
             {entryMode === 'attendance' ? (
                 <AttendanceSessionManager

@@ -24,6 +24,7 @@ import {
     setAttendanceSessionActive,
     updateAttendanceSessionMemberStatus,
 } from '../../lib/db';
+import { AppDialog } from '../shared/AppDialog';
 
 interface AttendanceSessionManagerProps {
     season: SeasonSummary | null;
@@ -157,6 +158,7 @@ export const AttendanceSessionManager: React.FC<AttendanceSessionManagerProps> =
     onRefresh,
 }) => {
     const [selectedSessionId, setSelectedSessionId] = useState<string>('');
+    const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
     const [sessionStartsAt, setSessionStartsAt] = useState(() => toDateTimeInputValue());
     const [targetGroupValue, setTargetGroupValue] = useState('all');
     const [sessionTitle, setSessionTitle] = useState('정기모임 출석');
@@ -210,16 +212,6 @@ export const AttendanceSessionManager: React.FC<AttendanceSessionManagerProps> =
         [selectedSessionId, sessions],
     );
 
-    const activeSessionCount = useMemo(
-        () => sessions.filter((session) => session.isActive).length,
-        [sessions],
-    );
-
-    const totalTrackedMembers = useMemo(
-        () => sessions.reduce((sum, session) => sum + session.memberCount, 0),
-        [sessions],
-    );
-
     const attendanceRulesReady = useMemo(
         () => ({
             present: Boolean(getAttendanceRule(categories, 'present')),
@@ -258,6 +250,7 @@ export const AttendanceSessionManager: React.FC<AttendanceSessionManagerProps> =
             setSessionTitle('정기모임 출석');
             setSessionNote('');
             setTargetGroupValue('all');
+            setIsCreateDialogOpen(false);
             await onRefresh();
         } finally {
             setIsCreating(false);
@@ -298,156 +291,27 @@ export const AttendanceSessionManager: React.FC<AttendanceSessionManagerProps> =
 
     return (
         <div className="space-y-6">
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-                <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-                    <div className="text-sm text-slate-500">전체 출석 세션</div>
-                    <div className="mt-2 text-3xl font-bold text-slate-950">{sessions.length}</div>
-                </div>
-                <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-                    <div className="text-sm text-slate-500">운영 중 세션</div>
-                    <div className="mt-2 text-3xl font-bold text-slate-950">{activeSessionCount}</div>
-                </div>
-                <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-                    <div className="text-sm text-slate-500">관리 중 출석 대상</div>
-                    <div className="mt-2 text-3xl font-bold text-slate-950">{totalTrackedMembers}</div>
-                </div>
-            </div>
-
-            <div className="grid grid-cols-1 gap-6 2xl:grid-cols-[360px_minmax(0,1fr)]">
+            <div className="grid grid-cols-1 gap-6 xl:grid-cols-[380px_minmax(0,1fr)]">
                 <section className="space-y-6">
-                    <form
-                        onSubmit={handleCreateSession}
-                        className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm"
-                    >
-                        <div className="border-b border-slate-200 bg-gradient-to-br from-sky-50 via-white to-indigo-50 p-6">
-                            <div className="inline-flex items-center gap-2 rounded-full border border-sky-200 bg-white/90 px-3 py-1 text-xs font-semibold text-sky-700">
-                                <PlusCircle size={14} />
-                                관리자 출석 세션
-                            </div>
-                            <h3 className="mt-4 text-xl font-bold text-slate-950">출석 등록</h3>
-                            <p className="mt-2 text-sm leading-6 text-slate-600">
-                                날짜/시간, 대상 그룹, 모임 목적을 정하면 기본 상태가 모두 출석인 세션이 열립니다. 이후 이름 카드를 눌러 지각, 결석으로 바로 조정할 수 있습니다.
-                            </p>
-                            <div className="mt-4 rounded-2xl border border-slate-200 bg-white/90 p-4 text-sm text-slate-600">
-                                <div className="font-semibold text-slate-900">적용 시즌</div>
-                                <div className="mt-1">
-                                    {season ? `${season.name} · ${formatDateTime(`${season.startDate}T00:00:00`)}`.split(' · ')[0] : '활성 시즌 없음'}
-                                </div>
-                            </div>
-                        </div>
-
-                        <div className="space-y-5 p-6">
-                            <label className="space-y-1.5">
-                                <span className="text-xs font-medium text-slate-600">날짜와 시간</span>
-                                <input
-                                    type="datetime-local"
-                                    value={sessionStartsAt}
-                                    onChange={(event) => setSessionStartsAt(event.target.value)}
-                                    className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                                />
-                            </label>
-
-                            <label className="space-y-1.5">
-                                <span className="text-xs font-medium text-slate-600">대상 그룹</span>
-                                <select
-                                    value={targetGroupValue}
-                                    onChange={(event) => setTargetGroupValue(event.target.value)}
-                                    className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                                >
-                                    <option value="all">전체 멤버</option>
-                                    <option value="ungrouped">팀 미지정</option>
-                                    {teamOptions.map((team) => (
-                                        <option key={team.id} value={`team:${team.id}`}>
-                                            {team.name}
-                                        </option>
-                                    ))}
-                                </select>
-                            </label>
-
-                            <label className="space-y-1.5">
-                                <span className="text-xs font-medium text-slate-600">모임 목적</span>
-                                <input
-                                    type="text"
-                                    value={sessionTitle}
-                                    onChange={(event) => setSessionTitle(event.target.value)}
-                                    placeholder="예: 3월 둘째 주 정기모임"
-                                    className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                                />
-                            </label>
-
-                            <label className="space-y-1.5">
-                                <span className="text-xs font-medium text-slate-600">세션 메모</span>
-                                <textarea
-                                    value={sessionNote}
-                                    onChange={(event) => setSessionNote(event.target.value)}
-                                    rows={3}
-                                    placeholder="예: 발표 및 공지 후 출석 체크"
-                                    className="w-full resize-none rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                                />
-                            </label>
-
-                            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                                <div className="flex items-center justify-between gap-3">
-                                    <div>
-                                        <div className="font-semibold text-slate-900">이번 세션 대상자</div>
-                                        <div className="mt-1 text-sm text-slate-500">{getTargetGroupLabel(targetGroupValue, teamOptions)}</div>
-                                    </div>
-                                    <div className="rounded-full bg-white px-3 py-1 text-sm font-semibold text-slate-700">
-                                        {targetMembers.length}명
-                                    </div>
-                                </div>
-                                <div className="mt-4 flex flex-wrap gap-2">
-                                    {targetMembers.slice(0, 10).map((member) => (
-                                        <span
-                                            key={member.id}
-                                            className="rounded-full border border-slate-200 bg-white px-3 py-1 text-sm text-slate-700"
-                                        >
-                                            {member.name}
-                                        </span>
-                                    ))}
-                                    {targetMembers.length > 10 && (
-                                        <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-sm text-slate-500">
-                                            외 {targetMembers.length - 10}명
-                                        </span>
-                                    )}
-                                </div>
-                            </div>
-
-                            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-                                <div className="font-semibold text-slate-900">출석 상태 규칙 확인</div>
-                                <div className="mt-2 flex flex-wrap gap-2">
-                                    {(['present', 'late', 'absent'] as AttendanceStatus[]).map((status) => (
-                                        <span
-                                            key={status}
-                                            className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${
-                                                attendanceRulesReady[status]
-                                                    ? attendanceStatusStyles[status]
-                                                    : 'border-rose-200 bg-rose-50 text-rose-700'
-                                            }`}
-                                        >
-                                            {attendanceStatusLabels[status]} {attendanceRulesReady[status] ? '준비됨' : '규칙 없음'}
-                                        </span>
-                                    ))}
-                                </div>
-                            </div>
-
-                            <button
-                                type="submit"
-                                disabled={isCreating || targetMembers.length === 0 || Object.values(attendanceRulesReady).some((value) => !value)}
-                                className="w-full rounded-2xl bg-indigo-600 px-4 py-3 font-semibold text-white transition-colors hover:bg-indigo-700 disabled:opacity-50"
-                            >
-                                {isCreating ? '출석 세션 생성 중...' : '출석 등록'}
-                            </button>
-                        </div>
-                    </form>
-
                     <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
                         <div className="border-b border-slate-200 px-6 py-5">
-                            <div className="flex items-center gap-2 font-semibold text-slate-900">
-                                <CalendarClock size={18} className="text-indigo-600" />
-                                출석 세션 목록
+                            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                <div>
+                                    <div className="flex items-center gap-2 font-semibold text-slate-900">
+                                        <CalendarClock size={18} className="text-indigo-600" />
+                                        출석 세션 목록
+                                    </div>
+                                    <p className="mt-1 text-sm text-slate-500">기존 세션을 다시 열어 출석 상태를 수정할 수 있습니다.</p>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => setIsCreateDialogOpen(true)}
+                                    className="inline-flex items-center justify-center gap-2 rounded-2xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-700"
+                                >
+                                    <PlusCircle size={16} />
+                                    출석 등록
+                                </button>
                             </div>
-                            <p className="mt-1 text-sm text-slate-500">기존 세션을 다시 열어 출석 상태를 수정할 수 있습니다.</p>
                         </div>
                         <div className="divide-y divide-slate-100">
                             {sessions.map((session) => {
@@ -627,6 +491,132 @@ export const AttendanceSessionManager: React.FC<AttendanceSessionManagerProps> =
                     )}
                 </section>
             </div>
+
+            <AppDialog
+                isOpen={isCreateDialogOpen}
+                title="출석 등록"
+                description={season ? `${season.name} 시즌 출석 세션을 생성합니다.` : '날짜와 시간, 대상 그룹, 모임 목적을 정하면 새 출석 세션이 열립니다.'}
+                size="lg"
+                onClose={() => {
+                    if (!isCreating) {
+                        setIsCreateDialogOpen(false);
+                    }
+                }}
+            >
+                <form className="space-y-5" onSubmit={handleCreateSession}>
+                    <label className="space-y-1.5">
+                        <span className="text-xs font-medium text-slate-600">날짜와 시간</span>
+                        <input
+                            type="datetime-local"
+                            value={sessionStartsAt}
+                            onChange={(event) => setSessionStartsAt(event.target.value)}
+                            className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                        />
+                    </label>
+
+                    <label className="space-y-1.5">
+                        <span className="text-xs font-medium text-slate-600">대상 그룹</span>
+                        <select
+                            value={targetGroupValue}
+                            onChange={(event) => setTargetGroupValue(event.target.value)}
+                            className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                        >
+                            <option value="all">전체 멤버</option>
+                            <option value="ungrouped">팀 미지정</option>
+                            {teamOptions.map((team) => (
+                                <option key={team.id} value={`team:${team.id}`}>
+                                    {team.name}
+                                </option>
+                            ))}
+                        </select>
+                    </label>
+
+                    <label className="space-y-1.5">
+                        <span className="text-xs font-medium text-slate-600">모임 목적</span>
+                        <input
+                            type="text"
+                            value={sessionTitle}
+                            onChange={(event) => setSessionTitle(event.target.value)}
+                            placeholder="예: 3월 둘째 주 정기모임"
+                            className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                        />
+                    </label>
+
+                    <label className="space-y-1.5">
+                        <span className="text-xs font-medium text-slate-600">세션 메모</span>
+                        <textarea
+                            value={sessionNote}
+                            onChange={(event) => setSessionNote(event.target.value)}
+                            rows={3}
+                            placeholder="예: 발표 및 공지 후 출석 체크"
+                            className="w-full resize-none rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                        />
+                    </label>
+
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                        <div className="flex items-center justify-between gap-3">
+                            <div>
+                                <div className="font-semibold text-slate-900">이번 세션 대상자</div>
+                                <div className="mt-1 text-sm text-slate-500">{getTargetGroupLabel(targetGroupValue, teamOptions)}</div>
+                            </div>
+                            <div className="rounded-full bg-white px-3 py-1 text-sm font-semibold text-slate-700">
+                                {targetMembers.length}명
+                            </div>
+                        </div>
+                        <div className="mt-4 flex flex-wrap gap-2">
+                            {targetMembers.slice(0, 10).map((member) => (
+                                <span
+                                    key={member.id}
+                                    className="rounded-full border border-slate-200 bg-white px-3 py-1 text-sm text-slate-700"
+                                >
+                                    {member.name}
+                                </span>
+                            ))}
+                            {targetMembers.length > 10 && (
+                                <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-sm text-slate-500">
+                                    외 {targetMembers.length - 10}명
+                                </span>
+                            )}
+                        </div>
+                    </div>
+
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+                        <div className="font-semibold text-slate-900">출석 상태 규칙 확인</div>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                            {(['present', 'late', 'absent'] as AttendanceStatus[]).map((status) => (
+                                <span
+                                    key={status}
+                                    className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${
+                                        attendanceRulesReady[status]
+                                            ? attendanceStatusStyles[status]
+                                            : 'border-rose-200 bg-rose-50 text-rose-700'
+                                    }`}
+                                >
+                                    {attendanceStatusLabels[status]} {attendanceRulesReady[status] ? '준비됨' : '규칙 없음'}
+                                </span>
+                            ))}
+                        </div>
+                    </div>
+
+                    <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+                        <button
+                            type="button"
+                            onClick={() => setIsCreateDialogOpen(false)}
+                            disabled={isCreating}
+                            className="inline-flex items-center justify-center rounded-2xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-50"
+                        >
+                            취소
+                        </button>
+                        <button
+                            type="submit"
+                            disabled={isCreating || targetMembers.length === 0 || Object.values(attendanceRulesReady).some((value) => !value)}
+                            className="inline-flex items-center justify-center rounded-2xl bg-indigo-600 px-4 py-3 text-sm font-semibold text-white transition-colors hover:bg-indigo-700 disabled:opacity-50"
+                        >
+                            {isCreating ? '출석 세션 생성 중...' : '출석 등록'}
+                        </button>
+                    </div>
+                </form>
+            </AppDialog>
         </div>
     );
 };
