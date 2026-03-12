@@ -8,9 +8,9 @@ import {
     History,
     Link2,
     MessageSquareWarning,
+    PlusCircle,
     RotateCcw,
     TriangleAlert,
-    Users2,
 } from 'lucide-react';
 import type {
     ActivityLog,
@@ -35,27 +35,15 @@ import {
     updateCorrectionRequestStatus,
 } from '../../lib/db';
 import { AttendanceSessionManager } from './AttendanceSessionManager';
+import { AppDialog } from '../shared/AppDialog';
 
-type EntryMode = 'attendance' | 'record';
+type EntryMode = 'attendance' | 'record' | 'feed';
 type RecordSourceMode = 'attendance' | 'manual';
 
 type RecordDraftRow = {
     selected: boolean;
     categoryId: string;
     note: string;
-};
-
-const entryModeMeta: Record<EntryMode, { label: string; title: string; description: string }> = {
-    attendance: {
-        label: '출석 세션',
-        title: '관리자가 직접 여닫는 출석 세션 모드',
-        description: '출석 세션을 만들고, 대상자 카드를 눌러 출석·지각·결석 상태를 바로 저장합니다.',
-    },
-    record: {
-        label: '기록 세션',
-        title: '출석 외 활동 규칙을 한 화면에서 정리하는 통합 기록 모드',
-        description: '출석 세션 명단을 그대로 가져오거나 직접 대상을 고른 뒤, 공통 규칙과 개별 override를 함께 적용합니다.',
-    },
 };
 
 const correctionRequestStatusLabels: Record<CorrectionRequestStatus, string> = {
@@ -112,12 +100,7 @@ const isAttendanceCategory = (category: Category) => {
         return true;
     }
 
-    const groupName = category.groupName?.trim();
-    if (groupName === '출석') {
-        return true;
-    }
-
-    return false;
+    return category.groupName?.trim() === '출석';
 };
 
 export const ActivitiesTab: React.FC = () => {
@@ -139,6 +122,7 @@ export const ActivitiesTab: React.FC = () => {
     const [recordEvidenceUrl, setRecordEvidenceUrl] = useState('');
     const [recordBulkCategoryId, setRecordBulkCategoryId] = useState('');
     const [recordDraft, setRecordDraft] = useState<Record<string, RecordDraftRow>>({});
+    const [isRecordModalOpen, setIsRecordModalOpen] = useState(false);
 
     const [isLoading, setIsLoading] = useState(true);
     const [isSaving, setIsSaving] = useState(false);
@@ -281,40 +265,6 @@ export const ActivitiesTab: React.FC = () => {
         [recordPreviewRows],
     );
 
-    const recordCategorySummary = useMemo(
-        () =>
-            recordPreviewRows.reduce<Array<{
-                categoryId: string;
-                categoryName: string;
-                count: number;
-                delta: number;
-                version: number;
-            }>>((acc, row) => {
-                if (!row.category) {
-                    return acc;
-                }
-
-                const existing = acc.find((item) => item.categoryId === row.category?.id);
-                if (existing) {
-                    existing.count += 1;
-                    existing.delta += row.category.pointValue;
-                    return acc;
-                }
-
-                return [
-                    ...acc,
-                    {
-                        categoryId: row.category.id,
-                        categoryName: row.category.categoryName,
-                        count: 1,
-                        delta: row.category.pointValue,
-                        version: row.category.version ?? 1,
-                    },
-                ];
-            }, []).sort((a, b) => b.count - a.count || a.categoryName.localeCompare(b.categoryName)),
-        [recordPreviewRows],
-    );
-
     const correctionRequestCounts = useMemo(
         () =>
             correctionRequests.reduce<Record<CorrectionRequestStatus, number>>((acc, request) => {
@@ -328,8 +278,6 @@ export const ActivitiesTab: React.FC = () => {
             }),
         [correctionRequests],
     );
-
-    const selectedEntryModeMeta = entryModeMeta[entryMode];
 
     const updateRecordRow = (memberId: string, updater: (current: RecordDraftRow) => RecordDraftRow) => {
         setRecordDraft((current) => {
@@ -369,19 +317,30 @@ export const ActivitiesTab: React.FC = () => {
         }));
     };
 
-    const handleRecordSourceModeChange = (value: RecordSourceMode) => {
-        setRecordSourceMode(value);
+    const resetRecordDraft = () => {
         setRecordDraft({});
+        setRecordNote('');
+        setRecordEvidenceUrl('');
     };
 
-    const handleAttendanceSourceChange = (sessionId: string) => {
+    const openAttendanceRecordModal = (sessionId: string) => {
+        setRecordSourceMode('attendance');
         setSelectedAttendanceSessionId(sessionId);
-        setRecordDraft({});
+        setRecordTitle('활동 기록');
+        resetRecordDraft();
+        setIsRecordModalOpen(true);
     };
 
-    const handleManualTeamFilterChange = (value: string) => {
-        setSelectedManualTeamFilter(value);
-        setRecordDraft({});
+    const openManualRecordModal = () => {
+        setRecordSourceMode('manual');
+        setRecordTitle('직접 활동 기록');
+        resetRecordDraft();
+        setIsRecordModalOpen(true);
+    };
+
+    const closeRecordModal = () => {
+        setIsRecordModalOpen(false);
+        resetRecordDraft();
     };
 
     const applyBulkCategoryToVisibleMembers = () => {
@@ -439,10 +398,8 @@ export const ActivitiesTab: React.FC = () => {
                 });
             }
 
-            setRecordDraft({});
-            setRecordNote('');
-            setRecordEvidenceUrl('');
             await refreshData();
+            closeRecordModal();
         } finally {
             setIsSaving(false);
         }
@@ -498,51 +455,30 @@ export const ActivitiesTab: React.FC = () => {
                         <ClipboardList className="text-indigo-600" />
                         활동 기록
                     </h2>
-                    <p className="text-slate-500 mt-1">출석 세션과 기록 세션 두 흐름으로 운영 기록을 정리합니다.</p>
+                    <p className="text-slate-500 mt-1">출석 세션과 기록 세션, 활동 피드를 한 화면에서 오갑니다.</p>
                 </div>
 
-                <div className="grid grid-cols-2 gap-2 rounded-[24px] border border-slate-200 bg-white p-2 shadow-sm lg:grid-cols-2">
-                    <button
-                        type="button"
-                        onClick={() => setEntryMode('attendance')}
-                        className={`rounded-xl px-4 py-2 text-sm font-semibold transition-colors ${
-                            entryMode === 'attendance'
-                                ? 'bg-indigo-600 text-white'
-                                : 'text-slate-600 hover:bg-slate-50'
-                        }`}
-                    >
-                        출석 세션
-                    </button>
-                    <button
-                        type="button"
-                        onClick={() => setEntryMode('record')}
-                        className={`rounded-xl px-4 py-2 text-sm font-semibold transition-colors ${
-                            entryMode === 'record'
-                                ? 'bg-indigo-600 text-white'
-                                : 'text-slate-600 hover:bg-slate-50'
-                        }`}
-                    >
-                        기록 세션
-                    </button>
+                <div className="grid grid-cols-3 gap-2 rounded-[24px] border border-slate-200 bg-white p-2 shadow-sm">
+                    {[
+                        { id: 'attendance', label: '출석 세션' },
+                        { id: 'record', label: '기록 세션' },
+                        { id: 'feed', label: '활동 피드' },
+                    ].map((tab) => (
+                        <button
+                            key={tab.id}
+                            type="button"
+                            onClick={() => setEntryMode(tab.id as EntryMode)}
+                            className={`rounded-xl px-4 py-2 text-sm font-semibold transition-colors ${
+                                entryMode === tab.id
+                                    ? 'bg-indigo-600 text-white'
+                                    : 'text-slate-600 hover:bg-slate-50'
+                            }`}
+                        >
+                            {tab.label}
+                        </button>
+                    ))}
                 </div>
             </header>
-
-            {entryMode !== 'attendance' && (
-                <section className="rounded-[28px] border border-slate-200 bg-white px-5 py-4 shadow-sm">
-                    <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                        <div>
-                            <div className="text-xs font-semibold tracking-[0.18em] text-indigo-500">
-                                현재 모드 · {selectedEntryModeMeta.label}
-                            </div>
-                            <h3 className="mt-1 text-lg font-bold text-slate-950">{selectedEntryModeMeta.title}</h3>
-                            <p className="mt-1 text-sm text-slate-600">{selectedEntryModeMeta.description}</p>
-                        </div>
-                        <div className="rounded-2xl border border-indigo-100 bg-indigo-50 px-4 py-3 text-sm text-indigo-700">
-                            출석 규칙은 출석 세션에서 처리되고, 여기서는 출석 외 활동 규칙만 추가로 기록합니다.
-                        </div>
-                    </div>
-                </section>
-            )}
 
             {entryMode === 'attendance' ? (
                 <AttendanceSessionManager
@@ -552,609 +488,551 @@ export const ActivitiesTab: React.FC = () => {
                     sessions={attendanceSessions}
                     onRefresh={refreshData}
                 />
-            ) : (
-                <div className="grid grid-cols-1 gap-6 2xl:grid-cols-[460px_minmax(0,1fr)]">
-                    <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
-                        <div className="border-b border-slate-200 bg-gradient-to-br from-violet-50 via-white to-indigo-50 p-6">
-                            <div className="inline-flex items-center gap-2 rounded-full border border-violet-200 bg-white/90 px-3 py-1 text-xs font-semibold text-violet-700">
-                                <Users2 size={14} />
-                                통합 기록 세션
-                            </div>
-                            <h3 className="mt-4 text-xl font-bold text-slate-950">출석 외 활동 규칙 기록</h3>
-                            <p className="mt-2 text-sm text-slate-600">
-                                기존 출석 세션 명단을 불러오거나 직접 대상을 골라, 발표·참여·운영지원 같은 활동을 한 번에 저장합니다.
-                            </p>
+            ) : entryMode === 'record' ? (
+                <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
+                    <div className="flex flex-col gap-4 border-b border-slate-200 px-6 py-5 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                            <h3 className="text-lg font-bold text-slate-950">기록 세션 목록</h3>
+                            <p className="mt-1 text-sm text-slate-500">출석 세션을 선택해 활동 기록을 추가하거나, 직접 기록을 열 수 있습니다.</p>
                         </div>
+                        <button
+                            type="button"
+                            onClick={openManualRecordModal}
+                            className="inline-flex items-center gap-2 rounded-2xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-700"
+                        >
+                            <PlusCircle size={16} />
+                            직접 기록
+                        </button>
+                    </div>
 
-                        <form className="space-y-5 p-6" onSubmit={handleRecordSubmit}>
-                            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                                <button
-                                    type="button"
-                                    onClick={() => handleRecordSourceModeChange('attendance')}
-                                    className={`rounded-2xl border px-4 py-4 text-left transition-colors ${
-                                        recordSourceMode === 'attendance'
-                                            ? 'border-indigo-300 bg-indigo-50 text-indigo-700'
-                                            : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-                                    }`}
-                                >
-                                    <div className="text-sm font-semibold">출석 세션 연동</div>
-                                    <div className="mt-1 text-xs leading-5 text-inherit/80">이미 만들어진 출석 세션 명단을 그대로 가져옵니다.</div>
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => handleRecordSourceModeChange('manual')}
-                                    className={`rounded-2xl border px-4 py-4 text-left transition-colors ${
-                                        recordSourceMode === 'manual'
-                                            ? 'border-indigo-300 bg-indigo-50 text-indigo-700'
-                                            : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-                                    }`}
-                                >
-                                    <div className="text-sm font-semibold">직접 선택</div>
-                                    <div className="mt-1 text-xs leading-5 text-inherit/80">전체/팀 기준으로 원하는 멤버를 직접 고릅니다.</div>
-                                </button>
-                            </div>
-
-                            {recordSourceMode === 'attendance' ? (
-                                <label className="space-y-1.5 block">
-                                    <span className="text-xs font-medium text-slate-600">연동할 출석 세션</span>
-                                    <select
-                                        value={selectedAttendanceSessionId}
-                                        onChange={(event) => handleAttendanceSourceChange(event.target.value)}
-                                        className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                                    >
-                                        {attendanceSessions.map((session) => (
-                                            <option key={session.id} value={session.id}>
-                                                {session.title} · {session.targetGroupLabel} · {formatDateTime(session.startsAt)}
-                                            </option>
-                                        ))}
-                                    </select>
-                                </label>
-                            ) : (
-                                <label className="space-y-1.5 block">
-                                    <span className="text-xs font-medium text-slate-600">직접 선택 대상 그룹</span>
-                                    <select
-                                        value={selectedManualTeamFilter}
-                                        onChange={(event) => handleManualTeamFilterChange(event.target.value)}
-                                        className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                                    >
-                                        <option value="all">전체 멤버</option>
-                                        <option value="ungrouped">팀 미지정</option>
-                                        {teamOptions.map((team) => (
-                                            <option key={team.id} value={team.id}>
-                                                {team.name}
-                                            </option>
-                                        ))}
-                                    </select>
-                                </label>
-                            )}
-
-                            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                                <label className="space-y-1.5">
-                                    <span className="text-xs font-medium text-slate-600">기록 날짜</span>
-                                    <input
-                                        type="date"
-                                        value={recordDate}
-                                        onChange={(event) => setRecordDate(event.target.value)}
-                                        className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                                    />
-                                </label>
-                                <label className="space-y-1.5">
-                                    <span className="text-xs font-medium text-slate-600">세션 제목</span>
-                                    <input
-                                        type="text"
-                                        value={recordTitle}
-                                        onChange={(event) => setRecordTitle(event.target.value)}
-                                        placeholder="예: 3월 정기모임 부가 활동"
-                                        className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                                    />
-                                </label>
-                            </div>
-
-                            <label className="space-y-1.5 block">
-                                <span className="text-xs font-medium text-slate-600">공통 메모</span>
-                                <textarea
-                                    value={recordNote}
-                                    onChange={(event) => setRecordNote(event.target.value)}
-                                    rows={3}
-                                    placeholder="예: 발표 3건, 운영지원 2건, 현장 정리 반영"
-                                    className="w-full resize-none rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                                />
-                            </label>
-
-                            <label className="space-y-1.5 block">
-                                <span className="text-xs font-medium text-slate-600">증빙 링크</span>
-                                <input
-                                    type="url"
-                                    value={recordEvidenceUrl}
-                                    onChange={(event) => setRecordEvidenceUrl(event.target.value)}
-                                    placeholder="예: 회의록, 발표 자료, 결과물 링크"
-                                    className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                                />
-                            </label>
-
-                            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                                <div className="flex flex-col gap-3 lg:flex-row lg:items-end">
-                                    <label className="flex-1 space-y-1.5">
-                                        <span className="text-xs font-medium text-slate-600">현재 범위 기본 규칙</span>
-                                        <select
-                                            value={recordBulkCategoryId}
-                                            onChange={(event) => setRecordBulkCategoryId(event.target.value)}
-                                            className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                                        >
-                                            {recordCategories.map((category) => (
-                                                <option key={category.id} value={category.id}>
-                                                    {category.categoryName} ({category.pointValue > 0 ? '+' : ''}
-                                                    {category.pointValue})
-                                                </option>
-                                            ))}
-                                        </select>
-                                    </label>
-                                    <div className="flex flex-wrap gap-2">
-                                        <button
-                                            type="button"
-                                            onClick={applyBulkCategoryToVisibleMembers}
-                                            className="inline-flex items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm font-medium text-indigo-700 transition-colors hover:bg-indigo-100"
-                                        >
-                                            현재 범위 기본 적용
-                                        </button>
-                                        <button
-                                            type="button"
-                                            onClick={clearRecordSourceMembers}
-                                            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 transition-colors hover:bg-white"
-                                        >
-                                            현재 범위 초기화
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-
-                            {incompleteRecordRows.length > 0 && (
-                                <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-                                    <div className="flex items-start gap-2">
-                                        <TriangleAlert size={18} className="mt-0.5" />
-                                        <div>
-                                            <div className="font-semibold">아직 규칙이 비어 있는 선택 항목이 있습니다.</div>
-                                            <div className="mt-1">
-                                                {incompleteRecordRows.map((row) => row.member.name).join(', ')} 행에 활동 규칙을 지정한 뒤 저장해 주세요.
-                                            </div>
+                    <div className="divide-y divide-slate-100">
+                        {attendanceSessions.map((session) => (
+                            <button
+                                key={session.id}
+                                type="button"
+                                onClick={() => openAttendanceRecordModal(session.id)}
+                                className="flex w-full flex-col gap-4 px-6 py-5 text-left transition-colors hover:bg-slate-50"
+                            >
+                                <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                                    <div>
+                                        <div className="text-lg font-semibold text-slate-950">{session.title}</div>
+                                        <div className="mt-1 text-sm text-slate-500">
+                                            {session.targetGroupLabel}
+                                            <span className="text-slate-300"> · </span>
+                                            {formatDateTime(session.startsAt)}
                                         </div>
                                     </div>
+                                    <div className="flex flex-wrap gap-2">
+                                        <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${session.isActive ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-slate-200 bg-slate-100 text-slate-700'}`}>
+                                            {session.isActive ? '운영 중' : '마감됨'}
+                                        </span>
+                                        <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700">
+                                            대상 {session.memberCount}명
+                                        </span>
+                                    </div>
                                 </div>
-                            )}
-
-                            <button
-                                type="submit"
-                                disabled={recordPreviewRows.length === 0 || incompleteRecordRows.length > 0 || isSaving}
-                                className="w-full rounded-2xl bg-indigo-600 px-4 py-3 font-semibold text-white transition-colors hover:bg-indigo-700 disabled:opacity-50"
-                            >
-                                {isSaving ? '기록 세션 저장 중...' : '기록 세션 저장'}
+                                <div className="grid grid-cols-3 gap-3 text-sm text-slate-500 sm:max-w-xl">
+                                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2">
+                                        출석 {session.statusCounts.present ?? 0}
+                                    </div>
+                                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2">
+                                        지각 {session.statusCounts.late ?? 0}
+                                    </div>
+                                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2">
+                                        결석 {session.statusCounts.absent ?? 0}
+                                    </div>
+                                </div>
                             </button>
-                        </form>
-                    </section>
+                        ))}
 
-                    <section className="space-y-4">
-                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-                            <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-                                <div className="text-sm text-slate-500">현재 범위 멤버</div>
-                                <div className="mt-2 text-3xl font-bold text-slate-900">{recordSourceMembers.length}</div>
+                        {attendanceSessions.length === 0 && (
+                            <div className="px-6 py-12 text-center text-slate-500">
+                                먼저 출석 세션을 만들어야 기록 세션에서 명단을 연동할 수 있습니다.
                             </div>
-                            <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-                                <div className="text-sm text-slate-500">선택 완료</div>
-                                <div className="mt-2 text-3xl font-bold text-slate-900">{selectedRecordRows.length}</div>
+                        )}
+                    </div>
+                </section>
+            ) : (
+                <section className="space-y-4">
+                    <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                        <div className="px-6 py-4 border-b border-slate-100 flex items-center gap-2 text-slate-900 font-semibold">
+                            <CalendarClock size={18} className="text-indigo-600" />
+                            최근 활동 피드
+                        </div>
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-left border-collapse">
+                                <thead>
+                                    <tr className="bg-slate-50 border-b border-slate-200 text-sm font-semibold text-slate-600">
+                                        <th className="py-4 px-6 w-44">시각</th>
+                                        <th className="py-4 px-6 w-44">멤버</th>
+                                        <th className="py-4 px-6">규칙</th>
+                                        <th className="py-4 px-6 w-24">점수</th>
+                                        <th className="py-4 px-6 w-28">상태</th>
+                                        <th className="py-4 px-6">메모</th>
+                                        <th className="py-4 px-6 w-36">증빙</th>
+                                        <th className="py-4 px-6 w-28 text-center">관리</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100">
+                                    {logs.map((log) => {
+                                        const activityState = getActivityStateInfo(log);
+                                        const canReverse = Boolean(log.recordId) && !log.isReversal && log.recordStatus !== 'reversed';
+                                        const isReversing = reversingRecordId === log.recordId;
+
+                                        return (
+                                            <tr key={log.id} className="hover:bg-slate-50/60 transition-colors">
+                                                <td className="py-4 px-6 text-sm text-slate-600">{formatDateTime(log.timestamp)}</td>
+                                                <td className="py-4 px-6 font-medium text-slate-900">{log.memberName ?? log.memberId}</td>
+                                                <td className="py-4 px-6">
+                                                    <div className="font-medium text-slate-900">{log.categoryName ?? log.categoryId}</div>
+                                                    {log.reason && <div className="text-xs text-slate-500 mt-1">{log.reason}</div>}
+                                                </td>
+                                                <td className="py-4 px-6">
+                                                    <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-semibold border ${log.pointDelta >= 0
+                                                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                                        : 'bg-rose-50 text-rose-700 border-rose-200'
+                                                    }`}>
+                                                        {log.pointDelta > 0 ? '+' : ''}
+                                                        {log.pointDelta}점
+                                                    </span>
+                                                </td>
+                                                <td className="py-4 px-6">
+                                                    <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${activityState.className}`}>
+                                                        {activityState.label}
+                                                    </span>
+                                                </td>
+                                                <td className="py-4 px-6 text-sm text-slate-600">{log.note || '-'}</td>
+                                                <td className="py-4 px-6">
+                                                    {log.evidenceUrl ? (
+                                                        <a
+                                                            href={log.evidenceUrl}
+                                                            target="_blank"
+                                                            rel="noreferrer"
+                                                            className="inline-flex items-center gap-1 rounded-lg border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs font-medium text-sky-700 transition-colors hover:bg-sky-100"
+                                                        >
+                                                            <Link2 size={14} />
+                                                            링크 보기
+                                                        </a>
+                                                    ) : (
+                                                        <span className="text-xs text-slate-400">-</span>
+                                                    )}
+                                                </td>
+                                                <td className="py-4 px-6 text-center">
+                                                    {canReverse ? (
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleReverseLog(log)}
+                                                            disabled={isReversing}
+                                                            className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-50"
+                                                        >
+                                                            <RotateCcw size={14} />
+                                                            {isReversing ? '취소 중...' : '기록 취소'}
+                                                        </button>
+                                                    ) : (
+                                                        <span className="text-xs text-slate-400">-</span>
+                                                    )}
+                                                </td>
+                                            </tr>
+                                        );
+                                    })}
+
+                                    {logs.length === 0 && (
+                                        <tr>
+                                            <td colSpan={8} className="py-12 text-center text-slate-500">
+                                                아직 활동 기록이 없습니다.
+                                            </td>
+                                        </tr>
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                        <div className="flex flex-col gap-4 border-b border-slate-100 px-6 py-4 md:flex-row md:items-center md:justify-between">
+                            <div className="flex items-center gap-2 text-slate-900 font-semibold">
+                                <MessageSquareWarning size={18} className="text-indigo-600" />
+                                정정 요청 검토
                             </div>
-                            <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-                                <div className="text-sm text-slate-500">예상 총점</div>
-                                <div className={`mt-2 text-3xl font-bold ${recordExpectedDelta >= 0 ? 'text-indigo-600' : 'text-rose-600'}`}>
-                                    {recordExpectedDelta > 0 ? '+' : ''}
-                                    {recordExpectedDelta}점
-                                </div>
+                            <div className="flex flex-wrap gap-2">
+                                {(['pending', 'reviewing', 'resolved', 'rejected'] as CorrectionRequestStatus[]).map((status) => (
+                                    <span key={status} className={`inline-flex rounded-full border px-3 py-1 text-xs font-semibold ${correctionRequestStatusClasses[status]}`}>
+                                        {correctionRequestStatusLabels[status]} {correctionRequestCounts[status]}건
+                                    </span>
+                                ))}
                             </div>
                         </div>
+                        <div className="divide-y divide-slate-100">
+                            {correctionRequests.slice(0, 8).map((request) => {
+                                const isUpdating = updatingCorrectionRequestId === request.id;
+                                const canReview = request.status === 'pending' || request.status === 'reviewing';
 
-                        <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-                            <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
-                                <div>
-                                    <div className="font-semibold text-slate-900">대상 선택 및 override</div>
-                                    <div className="mt-1 text-sm text-slate-500">대상을 고르고, 필요하면 각 멤버별로 다른 규칙이나 메모를 덮어씁니다.</div>
-                                </div>
-                                <div className="rounded-full bg-slate-50 px-3 py-1 text-sm font-semibold text-slate-700">
-                                    {recordSourceMembers.length}명
-                                </div>
-                            </div>
-
-                            <div className="space-y-3 max-h-[540px] overflow-auto p-6">
-                                {recordDraftRows.map((preview) => (
-                                    <div key={preview.member.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                                        <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-                                            <div className="min-w-0">
-                                                <label className="inline-flex items-center gap-3 text-sm font-semibold text-slate-900">
-                                                    <input
-                                                        type="checkbox"
-                                                        checked={preview.row.selected}
-                                                        onChange={() => handleRecordMemberToggle(preview.member.id)}
-                                                        className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                                                    />
-                                                    <span>{preview.member.name}</span>
-                                                </label>
+                                return (
+                                    <div key={request.id} className="space-y-4 px-6 py-5">
+                                        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                                            <div>
+                                                <div className="flex flex-wrap items-center gap-2">
+                                                    <div className="font-medium text-slate-900">{request.requesterName ?? '알 수 없는 회원'}</div>
+                                                    <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${correctionRequestStatusClasses[request.status]}`}>
+                                                        {correctionRequestStatusLabels[request.status]}
+                                                    </span>
+                                                </div>
                                                 <div className="mt-1 text-sm text-slate-500">
-                                                    {(preview.member.teamNames?.join(', ') || preview.member.teamName) || '팀 미지정'}
-                                                    <span className="text-slate-300"> · </span>
-                                                    {preview.member.roleName || '역할 없음'}
-                                                    <span className="text-slate-300"> · </span>
-                                                    현재 {preview.member.score}점
-                                                    {preview.attendanceEntry ? (
+                                                    {request.activitySummary ?? '활동 기록'}
+                                                    {request.activityOccurredAt ? (
                                                         <>
                                                             <span className="text-slate-300"> · </span>
-                                                            출석 상태 {preview.attendanceEntry.status === 'present' ? '출석' : preview.attendanceEntry.status === 'late' ? '지각' : '결석'}
+                                                            {formatDateTime(request.activityOccurredAt)}
+                                                        </>
+                                                    ) : null}
+                                                    {typeof request.activityPointDelta === 'number' ? (
+                                                        <>
+                                                            <span className="text-slate-300"> · </span>
+                                                            {request.activityPointDelta > 0 ? '+' : ''}
+                                                            {request.activityPointDelta}점
                                                         </>
                                                     ) : null}
                                                 </div>
                                             </div>
-
-                                            {preview.category && preview.row.selected && (
-                                                <div className="flex flex-wrap gap-2">
-                                                    <span className="rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700">
-                                                        v{preview.category.version ?? 1}
-                                                    </span>
-                                                    <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${
-                                                        preview.category.pointValue >= 0
-                                                            ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                                                            : 'border-rose-200 bg-rose-50 text-rose-700'
-                                                    }`}>
-                                                        {preview.category.pointValue > 0 ? '+' : ''}
-                                                        {preview.category.pointValue}점
-                                                    </span>
-                                                </div>
-                                            )}
+                                            <div className="text-sm text-slate-500">{formatDateTime(request.createdAt)}</div>
                                         </div>
 
-                                        <div className="mt-4 grid grid-cols-1 gap-3 xl:grid-cols-[minmax(0,260px)_minmax(0,1fr)]">
-                                            <label className="space-y-1.5">
-                                                <span className="text-xs font-medium text-slate-600">활동 규칙</span>
-                                                <select
-                                                    value={preview.row.categoryId}
-                                                    onChange={(event) => handleRecordCategoryChange(preview.member.id, event.target.value)}
-                                                    className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                                                >
-                                                    <option value="">규칙 선택</option>
-                                                    {recordCategories.map((categoryOption) => (
-                                                        <option key={categoryOption.id} value={categoryOption.id}>
-                                                            {categoryOption.categoryName} ({categoryOption.pointValue > 0 ? '+' : ''}
-                                                            {categoryOption.pointValue})
-                                                        </option>
-                                                    ))}
-                                                </select>
-                                            </label>
-
-                                            <label className="space-y-1.5">
-                                                <span className="text-xs font-medium text-slate-600">개별 메모</span>
-                                                <input
-                                                    type="text"
-                                                    value={preview.row.note}
-                                                    onChange={(event) => handleRecordNoteChange(preview.member.id, event.target.value)}
-                                                    placeholder="예: 발표 담당, 운영 지원, 현장 정리"
-                                                    className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                                                />
-                                            </label>
+                                        <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-700">
+                                            {request.reason}
                                         </div>
 
-                                        {preview.category && (
-                                            <div className="mt-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600">
-                                                <div className="font-medium text-slate-900">{preview.category.categoryName}</div>
-                                                <div className="mt-1">{preview.category.conditionSummary ?? '추가 조건 요약이 아직 등록되지 않았습니다.'}</div>
+                                        <textarea
+                                            value={reviewNotes[request.id] ?? request.reviewNote ?? ''}
+                                            onChange={(event) =>
+                                                setReviewNotes((current) => ({
+                                                    ...current,
+                                                    [request.id]: event.target.value,
+                                                }))
+                                            }
+                                            rows={3}
+                                            placeholder="운영진 메모 또는 처리 결과를 남겨 주세요."
+                                            className="w-full resize-none rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                                        />
+
+                                        <div className="flex flex-wrap items-center justify-between gap-3">
+                                            <div className="text-sm text-slate-500">
+                                                {request.reviewedAt
+                                                    ? `${request.reviewedByName ?? '운영진'} · ${formatDateTime(request.reviewedAt)}`
+                                                    : '아직 검토 전입니다.'}
                                             </div>
-                                        )}
-                                    </div>
-                                ))}
-
-                                {recordSourceMembers.length === 0 && (
-                                    <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-10 text-center text-sm text-slate-500">
-                                        현재 범위에 표시할 멤버가 없습니다.
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-
-                        <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-                            <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
-                                <div>
-                                    <div className="font-semibold text-slate-900">저장 미리보기</div>
-                                    <div className="mt-1 text-sm text-slate-500">선택된 멤버와 규칙 구성을 저장 전에 확인합니다.</div>
-                                </div>
-                                <div className="rounded-full bg-slate-50 px-3 py-1 text-sm font-semibold text-slate-700">
-                                    {recordPreviewRows.length}건
-                                </div>
-                            </div>
-
-                            <div className="space-y-4 p-6">
-                                <div className="grid grid-cols-1 gap-3 md:grid-cols-2 2xl:grid-cols-3">
-                                    {recordCategorySummary.map((summary) => (
-                                        <div key={summary.categoryId} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                                            <div className="flex items-center gap-2">
-                                                <span className="rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-xs font-semibold text-indigo-700">
-                                                    v{summary.version}
-                                                </span>
-                                                <div className="text-sm font-semibold text-slate-900">{summary.categoryName}</div>
-                                            </div>
-                                            <div className="mt-3 text-2xl font-bold text-slate-900">{summary.count}명</div>
-                                            <div className="mt-1 text-sm text-slate-500">
-                                                예상 {summary.delta > 0 ? '+' : ''}
-                                                {summary.delta}점
-                                            </div>
-                                        </div>
-                                    ))}
-
-                                    {recordCategorySummary.length === 0 && (
-                                        <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-10 text-center text-sm text-slate-500 md:col-span-2 xl:col-span-3">
-                                            아직 저장할 활동 기록 선택이 없습니다.
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
-                        </div>
-
-                        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-                            <div className="px-6 py-4 border-b border-slate-100 flex items-center gap-2 text-slate-900 font-semibold">
-                                <CalendarClock size={18} className="text-indigo-600" />
-                                최근 활동 피드
-                            </div>
-                            <div className="overflow-x-auto">
-                                <table className="w-full text-left border-collapse">
-                                    <thead>
-                                        <tr className="bg-slate-50 border-b border-slate-200 text-sm font-semibold text-slate-600">
-                                            <th className="py-4 px-6 w-44">시각</th>
-                                            <th className="py-4 px-6 w-44">멤버</th>
-                                            <th className="py-4 px-6">규칙</th>
-                                            <th className="py-4 px-6 w-24">점수</th>
-                                            <th className="py-4 px-6 w-28">상태</th>
-                                            <th className="py-4 px-6">메모</th>
-                                            <th className="py-4 px-6 w-36">증빙</th>
-                                            <th className="py-4 px-6 w-28 text-center">관리</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-slate-100">
-                                        {logs.map((log) => {
-                                            const activityState = getActivityStateInfo(log);
-                                            const canReverse = Boolean(log.recordId) && !log.isReversal && log.recordStatus !== 'reversed';
-                                            const isReversing = reversingRecordId === log.recordId;
-
-                                            return (
-                                                <tr key={log.id} className="hover:bg-slate-50/60 transition-colors">
-                                                    <td className="py-4 px-6 text-sm text-slate-600">{formatDateTime(log.timestamp)}</td>
-                                                    <td className="py-4 px-6 font-medium text-slate-900">{log.memberName ?? log.memberId}</td>
-                                                    <td className="py-4 px-6">
-                                                        <div className="font-medium text-slate-900">{log.categoryName ?? log.categoryId}</div>
-                                                        {log.reason && <div className="text-xs text-slate-500 mt-1">{log.reason}</div>}
-                                                    </td>
-                                                    <td className="py-4 px-6">
-                                                        <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-semibold border ${log.pointDelta >= 0
-                                                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                                                            : 'bg-rose-50 text-rose-700 border-rose-200'
-                                                            }`}>
-                                                            {log.pointDelta > 0 ? '+' : ''}
-                                                            {log.pointDelta}점
-                                                        </span>
-                                                    </td>
-                                                    <td className="py-4 px-6">
-                                                        <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${activityState.className}`}>
-                                                            {activityState.label}
-                                                        </span>
-                                                    </td>
-                                                    <td className="py-4 px-6 text-sm text-slate-600">{log.note || '-'}</td>
-                                                    <td className="py-4 px-6">
-                                                        {log.evidenceUrl ? (
-                                                            <a
-                                                                href={log.evidenceUrl}
-                                                                target="_blank"
-                                                                rel="noreferrer"
-                                                                className="inline-flex items-center gap-1 rounded-lg border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs font-medium text-sky-700 transition-colors hover:bg-sky-100"
-                                                            >
-                                                                <Link2 size={14} />
-                                                                링크 보기
-                                                            </a>
-                                                        ) : (
-                                                            <span className="text-xs text-slate-400">-</span>
-                                                        )}
-                                                    </td>
-                                                    <td className="py-4 px-6 text-center">
-                                                        {canReverse ? (
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => handleReverseLog(log)}
-                                                                disabled={isReversing}
-                                                                className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-50"
-                                                            >
-                                                                <RotateCcw size={14} />
-                                                                {isReversing ? '취소 중...' : '기록 취소'}
-                                                            </button>
-                                                        ) : (
-                                                            <span className="text-xs text-slate-400">-</span>
-                                                        )}
-                                                    </td>
-                                                </tr>
-                                            );
-                                        })}
-
-                                        {logs.length === 0 && (
-                                            <tr>
-                                                <td colSpan={8} className="py-12 text-center text-slate-500">
-                                                    아직 활동 기록이 없습니다. 기록 세션에서 첫 기록을 추가해 주세요.
-                                                </td>
-                                            </tr>
-                                        )}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-
-                        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-                            <div className="flex flex-col gap-4 border-b border-slate-100 px-6 py-4 md:flex-row md:items-center md:justify-between">
-                                <div className="flex items-center gap-2 text-slate-900 font-semibold">
-                                    <MessageSquareWarning size={18} className="text-indigo-600" />
-                                    정정 요청 검토
-                                </div>
-                                <div className="flex flex-wrap gap-2">
-                                    {(['pending', 'reviewing', 'resolved', 'rejected'] as CorrectionRequestStatus[]).map((status) => (
-                                        <span key={status} className={`inline-flex rounded-full border px-3 py-1 text-xs font-semibold ${correctionRequestStatusClasses[status]}`}>
-                                            {correctionRequestStatusLabels[status]} {correctionRequestCounts[status]}건
-                                        </span>
-                                    ))}
-                                </div>
-                            </div>
-                            <div className="divide-y divide-slate-100">
-                                {correctionRequests.slice(0, 8).map((request) => {
-                                    const isUpdating = updatingCorrectionRequestId === request.id;
-                                    const canReview = request.status === 'pending' || request.status === 'reviewing';
-
-                                    return (
-                                        <div key={request.id} className="space-y-4 px-6 py-5">
-                                            <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                                                <div>
-                                                    <div className="flex flex-wrap items-center gap-2">
-                                                        <div className="font-medium text-slate-900">{request.requesterName ?? '알 수 없는 회원'}</div>
-                                                        <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${correctionRequestStatusClasses[request.status]}`}>
-                                                            {correctionRequestStatusLabels[request.status]}
-                                                        </span>
-                                                    </div>
-                                                    <div className="mt-1 text-sm text-slate-500">
-                                                        {request.activitySummary ?? '활동 기록'}
-                                                        {request.activityOccurredAt ? (
-                                                            <>
-                                                                <span className="text-slate-300"> · </span>
-                                                                {formatDateTime(request.activityOccurredAt)}
-                                                            </>
-                                                        ) : null}
-                                                        {typeof request.activityPointDelta === 'number' ? (
-                                                            <>
-                                                                <span className="text-slate-300"> · </span>
-                                                                {request.activityPointDelta > 0 ? '+' : ''}
-                                                                {request.activityPointDelta}점
-                                                            </>
-                                                        ) : null}
-                                                    </div>
-                                                </div>
-                                                <div className="text-sm text-slate-500">{formatDateTime(request.createdAt)}</div>
-                                            </div>
-
-                                            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-700">
-                                                {request.reason}
-                                            </div>
-
-                                            <textarea
-                                                value={reviewNotes[request.id] ?? request.reviewNote ?? ''}
-                                                onChange={(event) =>
-                                                    setReviewNotes((current) => ({
-                                                        ...current,
-                                                        [request.id]: event.target.value,
-                                                    }))
-                                                }
-                                                rows={3}
-                                                placeholder="운영진 메모 또는 처리 결과를 남겨 주세요."
-                                                className="w-full resize-none rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                                            />
-
-                                            <div className="flex flex-wrap items-center justify-between gap-3">
-                                                <div className="text-sm text-slate-500">
-                                                    {request.reviewedAt
-                                                        ? `${request.reviewedByName ?? '운영진'} · ${formatDateTime(request.reviewedAt)}`
-                                                        : '아직 검토 전입니다.'}
-                                                </div>
-                                                <div className="flex flex-wrap gap-2">
-                                                    {canReview && (
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => void handleCorrectionRequestStatusUpdate(request, 'reviewing')}
-                                                            disabled={isUpdating}
-                                                            className="inline-flex items-center gap-2 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-sm font-medium text-sky-700 transition-colors hover:bg-sky-100 disabled:opacity-50"
-                                                        >
-                                                            <Clock3 size={15} />
-                                                            검토 시작
-                                                        </button>
-                                                    )}
-                                                    {canReview && (
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => void handleCorrectionRequestStatusUpdate(request, 'resolved')}
-                                                            disabled={isUpdating}
-                                                            className="inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-700 transition-colors hover:bg-emerald-100 disabled:opacity-50"
-                                                        >
-                                                            <BadgeCheck size={15} />
-                                                            해결 완료
-                                                        </button>
-                                                    )}
-                                                    {canReview && (
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => void handleCorrectionRequestStatusUpdate(request, 'rejected')}
-                                                            disabled={isUpdating}
-                                                            className="inline-flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700 transition-colors hover:bg-rose-100 disabled:opacity-50"
-                                                        >
-                                                            <CircleSlash size={15} />
-                                                            반려
-                                                        </button>
-                                                    )}
-                                                </div>
-                                            </div>
-                                        </div>
-                                    );
-                                })}
-
-                                {correctionRequests.length === 0 && (
-                                    <div className="px-6 py-12 text-center text-slate-500">
-                                        아직 접수된 정정 요청이 없습니다.
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-
-                        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-                            <div className="px-6 py-4 border-b border-slate-100 flex items-center gap-2 text-slate-900 font-semibold">
-                                <History size={18} className="text-indigo-600" />
-                                최근 운영 이력
-                            </div>
-                            <div className="divide-y divide-slate-100">
-                                {auditLogs.slice(0, 8).map((auditLog) => {
-                                    const delta = getAuditDelta(auditLog);
-
-                                    return (
-                                        <div key={auditLog.id} className="flex flex-col gap-3 px-6 py-4 md:flex-row md:items-center md:justify-between">
-                                            <div>
-                                                <div className="font-medium text-slate-900">{auditLog.summary}</div>
-                                                <div className="mt-1 text-sm text-slate-500">
-                                                    {auditLog.actorName ?? '시스템'}
-                                                    <span className="text-slate-300"> · </span>
-                                                    {formatDateTime(auditLog.createdAt)}
-                                                </div>
-                                            </div>
-                                            <div className="flex items-center gap-2">
-                                                <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-700">
-                                                    {auditLog.action === 'created' ? '생성' : auditLog.action === 'reversed' ? '취소' : auditLog.action}
-                                                </span>
-                                                {delta !== null && (
-                                                    <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${
-                                                        delta >= 0
-                                                            ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                                                            : 'border-rose-200 bg-rose-50 text-rose-700'
-                                                    }`}>
-                                                        {delta > 0 ? '+' : ''}
-                                                        {delta}점
-                                                    </span>
+                                            <div className="flex flex-wrap gap-2">
+                                                {canReview && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => void handleCorrectionRequestStatusUpdate(request, 'reviewing')}
+                                                        disabled={isUpdating}
+                                                        className="inline-flex items-center gap-2 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-sm font-medium text-sky-700 transition-colors hover:bg-sky-100 disabled:opacity-50"
+                                                    >
+                                                        <Clock3 size={15} />
+                                                        검토 시작
+                                                    </button>
+                                                )}
+                                                {canReview && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => void handleCorrectionRequestStatusUpdate(request, 'resolved')}
+                                                        disabled={isUpdating}
+                                                        className="inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-700 transition-colors hover:bg-emerald-100 disabled:opacity-50"
+                                                    >
+                                                        <BadgeCheck size={15} />
+                                                        해결 완료
+                                                    </button>
+                                                )}
+                                                {canReview && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => void handleCorrectionRequestStatusUpdate(request, 'rejected')}
+                                                        disabled={isUpdating}
+                                                        className="inline-flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700 transition-colors hover:bg-rose-100 disabled:opacity-50"
+                                                    >
+                                                        <CircleSlash size={15} />
+                                                        반려
+                                                    </button>
                                                 )}
                                             </div>
                                         </div>
-                                    );
-                                })}
-
-                                {auditLogs.length === 0 && (
-                                    <div className="px-6 py-12 text-center text-slate-500">
-                                        아직 운영 이력이 없습니다.
                                     </div>
-                                )}
+                                );
+                            })}
+
+                            {correctionRequests.length === 0 && (
+                                <div className="px-6 py-12 text-center text-slate-500">
+                                    아직 접수된 정정 요청이 없습니다.
+                                </div>
+                            )}
+                        </div>
+                    </div>
+
+                    <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                        <div className="px-6 py-4 border-b border-slate-100 flex items-center gap-2 text-slate-900 font-semibold">
+                            <History size={18} className="text-indigo-600" />
+                            최근 운영 이력
+                        </div>
+                        <div className="divide-y divide-slate-100">
+                            {auditLogs.slice(0, 8).map((auditLog) => {
+                                const delta = getAuditDelta(auditLog);
+
+                                return (
+                                    <div key={auditLog.id} className="flex flex-col gap-3 px-6 py-4 md:flex-row md:items-center md:justify-between">
+                                        <div>
+                                            <div className="font-medium text-slate-900">{auditLog.summary}</div>
+                                            <div className="mt-1 text-sm text-slate-500">
+                                                {auditLog.actorName ?? '시스템'}
+                                                <span className="text-slate-300"> · </span>
+                                                {formatDateTime(auditLog.createdAt)}
+                                            </div>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-700">
+                                                {auditLog.action === 'created' ? '생성' : auditLog.action === 'reversed' ? '취소' : auditLog.action}
+                                            </span>
+                                            {delta !== null && (
+                                                <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${
+                                                    delta >= 0
+                                                        ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                                        : 'border-rose-200 bg-rose-50 text-rose-700'
+                                                }`}>
+                                                    {delta > 0 ? '+' : ''}
+                                                    {delta}점
+                                                </span>
+                                            )}
+                                        </div>
+                                    </div>
+                                );
+                            })}
+
+                            {auditLogs.length === 0 && (
+                                <div className="px-6 py-12 text-center text-slate-500">
+                                    아직 운영 이력이 없습니다.
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </section>
+            )}
+
+            <AppDialog
+                isOpen={isRecordModalOpen}
+                onClose={closeRecordModal}
+                size="xl"
+                title={recordSourceMode === 'attendance' ? (selectedAttendanceSession?.title ?? '기록 세션') : '직접 활동 기록'}
+                description={recordSourceMode === 'attendance'
+                    ? `${selectedAttendanceSession?.targetGroupLabel ?? '대상 그룹'} · ${selectedAttendanceSession ? formatDateTime(selectedAttendanceSession.startsAt) : ''}`
+                    : '출석 세션 없이 직접 대상을 골라 활동 기록을 남깁니다.'}
+            >
+                <form className="space-y-5" onSubmit={handleRecordSubmit}>
+                    {recordSourceMode === 'manual' ? (
+                        <label className="space-y-1.5 block">
+                            <span className="text-xs font-medium text-slate-600">대상 그룹</span>
+                            <select
+                                value={selectedManualTeamFilter}
+                                onChange={(event) => setSelectedManualTeamFilter(event.target.value)}
+                                className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                            >
+                                <option value="all">전체 멤버</option>
+                                <option value="ungrouped">팀 미지정</option>
+                                {teamOptions.map((team) => (
+                                    <option key={team.id} value={team.id}>
+                                        {team.name}
+                                    </option>
+                                ))}
+                            </select>
+                        </label>
+                    ) : null}
+
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                        <label className="space-y-1.5">
+                            <span className="text-xs font-medium text-slate-600">기록 날짜</span>
+                            <input
+                                type="date"
+                                value={recordDate}
+                                onChange={(event) => setRecordDate(event.target.value)}
+                                className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                            />
+                        </label>
+                        <label className="space-y-1.5">
+                            <span className="text-xs font-medium text-slate-600">기록 제목</span>
+                            <input
+                                type="text"
+                                value={recordTitle}
+                                onChange={(event) => setRecordTitle(event.target.value)}
+                                placeholder="예: 3월 정기모임 발표 기록"
+                                className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                            />
+                        </label>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,240px)_minmax(0,1fr)]">
+                        <label className="space-y-1.5">
+                            <span className="text-xs font-medium text-slate-600">공통 규칙</span>
+                            <select
+                                value={recordBulkCategoryId}
+                                onChange={(event) => setRecordBulkCategoryId(event.target.value)}
+                                className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                            >
+                                {recordCategories.map((category) => (
+                                    <option key={category.id} value={category.id}>
+                                        {category.categoryName} ({category.pointValue > 0 ? '+' : ''}{category.pointValue})
+                                    </option>
+                                ))}
+                            </select>
+                        </label>
+                        <div className="flex flex-wrap items-end gap-2">
+                            <button
+                                type="button"
+                                onClick={applyBulkCategoryToVisibleMembers}
+                                className="inline-flex items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm font-medium text-indigo-700 transition-colors hover:bg-indigo-100"
+                            >
+                                현재 명단 전체 적용
+                            </button>
+                            <button
+                                type="button"
+                                onClick={clearRecordSourceMembers}
+                                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-50"
+                            >
+                                현재 명단 초기화
+                            </button>
+                            <div className="ml-auto rounded-full bg-slate-100 px-3 py-2 text-sm font-semibold text-slate-700">
+                                선택 {selectedRecordRows.length}명 · 예상 {recordExpectedDelta > 0 ? '+' : ''}{recordExpectedDelta}점
                             </div>
                         </div>
-                    </section>
-                </div>
-            )}
+                    </div>
+
+                    <label className="space-y-1.5 block">
+                        <span className="text-xs font-medium text-slate-600">공통 메모</span>
+                        <textarea
+                            value={recordNote}
+                            onChange={(event) => setRecordNote(event.target.value)}
+                            rows={3}
+                            placeholder="예: 발표 2건, 운영지원 1건, 현장 정리 반영"
+                            className="w-full resize-none rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                        />
+                    </label>
+
+                    <label className="space-y-1.5 block">
+                        <span className="text-xs font-medium text-slate-600">증빙 링크</span>
+                        <input
+                            type="url"
+                            value={recordEvidenceUrl}
+                            onChange={(event) => setRecordEvidenceUrl(event.target.value)}
+                            placeholder="예: 회의록, 발표 자료, 결과물 링크"
+                            className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                        />
+                    </label>
+
+                    {incompleteRecordRows.length > 0 ? (
+                        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+                            <div className="flex items-start gap-2">
+                                <TriangleAlert size={18} className="mt-0.5" />
+                                <div>
+                                    <div className="font-semibold">아직 규칙이 비어 있는 선택 항목이 있습니다.</div>
+                                    <div className="mt-1">{incompleteRecordRows.map((row) => row.member.name).join(', ')} 항목의 규칙을 지정해 주세요.</div>
+                                </div>
+                            </div>
+                        </div>
+                    ) : null}
+
+                    <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4 sm:p-5">
+                        <div className="mb-4 flex items-center justify-between gap-3">
+                            <div>
+                                <div className="font-semibold text-slate-900">기록 대상 선택</div>
+                                <div className="mt-1 text-sm text-slate-500">카드를 눌러 대상을 고르고, 필요한 경우에만 규칙과 메모를 덮어씁니다.</div>
+                            </div>
+                            <div className="rounded-full bg-white px-3 py-1 text-sm font-semibold text-slate-700">{recordSourceMembers.length}명</div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+                            {recordDraftRows.map((preview) => {
+                                const isSelected = preview.row.selected;
+                                return (
+                                    <button
+                                        key={preview.member.id}
+                                        type="button"
+                                        onClick={() => handleRecordMemberToggle(preview.member.id)}
+                                        className={`rounded-2xl border px-3 py-3 text-center text-sm font-semibold transition-all ${
+                                            isSelected
+                                                ? 'border-indigo-300 bg-indigo-50 text-indigo-700 shadow-sm'
+                                                : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                                        }`}
+                                    >
+                                        {preview.member.name}
+                                    </button>
+                                );
+                            })}
+                        </div>
+
+                        <div className="mt-5 space-y-3 max-h-[320px] overflow-auto pr-1">
+                            {selectedRecordRows.map((preview) => (
+                                <div key={preview.member.id} className="rounded-2xl border border-slate-200 bg-white p-4">
+                                    <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                                        <div>
+                                            <div className="font-semibold text-slate-900">{preview.member.name}</div>
+                                            <div className="mt-1 text-sm text-slate-500">
+                                                {(preview.member.teamNames?.join(', ') || preview.member.teamName) || '팀 미지정'}
+                                            </div>
+                                        </div>
+                                        {preview.attendanceEntry ? (
+                                            <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-700">
+                                                출석 상태 {preview.attendanceEntry.status === 'present' ? '출석' : preview.attendanceEntry.status === 'late' ? '지각' : '결석'}
+                                            </span>
+                                        ) : null}
+                                    </div>
+
+                                    <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,240px)_minmax(0,1fr)]">
+                                        <label className="space-y-1.5">
+                                            <span className="text-xs font-medium text-slate-600">개별 규칙</span>
+                                            <select
+                                                value={preview.row.categoryId}
+                                                onChange={(event) => handleRecordCategoryChange(preview.member.id, event.target.value)}
+                                                className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                                            >
+                                                <option value="">규칙 선택</option>
+                                                {recordCategories.map((categoryOption) => (
+                                                    <option key={categoryOption.id} value={categoryOption.id}>
+                                                        {categoryOption.categoryName} ({categoryOption.pointValue > 0 ? '+' : ''}{categoryOption.pointValue})
+                                                    </option>
+                                                ))}
+                                            </select>
+                                        </label>
+                                        <label className="space-y-1.5">
+                                            <span className="text-xs font-medium text-slate-600">개별 메모</span>
+                                            <input
+                                                type="text"
+                                                value={preview.row.note}
+                                                onChange={(event) => handleRecordNoteChange(preview.member.id, event.target.value)}
+                                                placeholder="예: 발표 담당, 운영 지원"
+                                                className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                                            />
+                                        </label>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center justify-end gap-3 border-t border-slate-200 pt-4">
+                        <button
+                            type="button"
+                            onClick={closeRecordModal}
+                            className="rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-50"
+                        >
+                            닫기
+                        </button>
+                        <button
+                            type="submit"
+                            disabled={recordPreviewRows.length === 0 || incompleteRecordRows.length > 0 || isSaving}
+                            className="rounded-2xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-700 disabled:opacity-50"
+                        >
+                            {isSaving ? '저장 중...' : '기록 저장'}
+                        </button>
+                    </div>
+                </form>
+            </AppDialog>
         </div>
     );
 };

@@ -121,6 +121,11 @@ const getErrorMessage = (error: unknown) => {
     return '알 수 없는 오류';
 };
 
+const isNetworkFetchError = (error: unknown) => {
+    const message = getErrorMessage(error).toLowerCase();
+    return message.includes('failed to fetch') || message.includes('networkerror');
+};
+
 const isMissingSupabaseRelationError = (error: unknown, relationNames: string[]) => {
     const message = getErrorMessage(error).toLowerCase();
     const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
@@ -1197,13 +1202,28 @@ export const getMembers = async (options?: { includeLoginEmail?: boolean }): Pro
                 .from('members')
                 .select('id, name, role_id, team_id, status, joined_at, is_approved, is_visible, auth_user_id, auth_provisioned_at, password_reset_required')
                 .eq('is_visible', true);
-        const [summaryResult, memberResult, roleResult, teamResult, memberTeamLinkResult] = await Promise.all([
+        const loadMemberData = async () => Promise.all([
             client.from('member_score_summary').select('id, name, is_approved, score'),
             memberQuery,
             client.from('roles').select('id, name'),
             client.from('teams').select('id, name'),
             client.from('member_team_links').select('member_id, team_id'),
         ]);
+
+        let summaryResult;
+        let memberResult;
+        let roleResult;
+        let teamResult;
+        let memberTeamLinkResult;
+
+        try {
+            [summaryResult, memberResult, roleResult, teamResult, memberTeamLinkResult] = await loadMemberData();
+        } catch (error) {
+            if (!isNetworkFetchError(error)) {
+                throw error;
+            }
+            [summaryResult, memberResult, roleResult, teamResult, memberTeamLinkResult] = await loadMemberData();
+        }
 
         if (summaryResult.error) throw summaryResult.error;
         if (memberResult.error) throw memberResult.error;
@@ -1261,6 +1281,12 @@ export const getMembers = async (options?: { includeLoginEmail?: boolean }): Pro
             }),
         );
     } catch (error) {
+        if (isSupabaseConfigured && isNetworkFetchError(error)) {
+            reportDataFallback('getMembers', error);
+            console.warn('[data] getMembers failed after retry, returning an empty list instead of local fallback.', error);
+            return [];
+        }
+
         return fallback(
             'getMembers',
             () =>

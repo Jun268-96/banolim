@@ -57,7 +57,7 @@ export const Layout: React.FC<LayoutProps> = ({ activeTab, setActiveTab, childre
                         <div className="mb-4 flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 shadow-sm">
                             <TriangleAlert size={18} className="mt-0.5 shrink-0 text-amber-600" />
                             <div className="min-w-0 flex-1">
-                                <div className="font-semibold">일부 데이터 조회가 실패해 임시 더미 데이터로 표시되었습니다.</div>
+                                <div className="font-semibold">일부 실데이터 조회가 실패했습니다.</div>
                                 <div className="mt-1 text-amber-800">
                                     작업: {visibleFallbackState.task} · 원인: {visibleFallbackState.message}
                                 </div>
