@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowRight, Bell, CalendarClock, CalendarDays, Medal, Sparkles, TrendingUp, Users, Zap } from 'lucide-react';
+import { ArrowRight, Bell, CalendarClock, CalendarDays, Medal, Sparkles, TrendingUp, Zap } from 'lucide-react';
 import type { ActivityLog, AnnouncementItem, Category, Member, ScheduleEventItem, SeasonSummary } from '../../types';
 import { getAnnouncements, getCategories, getCurrentSeason, getLogs, getMembers, getScheduleEvents } from '../../lib/db';
 import { useAuth } from '../auth/auth-context';
@@ -117,14 +117,6 @@ export const HomeTab: React.FC<HomeTabProps> = ({ onNavigate }) => {
                   icon: Zap,
               }
             : null,
-        permissions.canManagePoints
-            ? {
-                  id: 'points' as const,
-                  label: '일괄 점수 반영',
-                  description: '같은 규칙을 여러 회원에게 한 번에 반영합니다.',
-                  icon: Users,
-              }
-            : null,
         {
             id: 'stats' as const,
             label: '통계 보기',
@@ -197,13 +189,13 @@ export const HomeTab: React.FC<HomeTabProps> = ({ onNavigate }) => {
                                     <ArrowRight size={16} />
                                 </button>
                             )}
-                            {permissions.canManagePoints && (
+                            {permissions.canViewActivities && (
                                 <button
                                     type="button"
-                                    onClick={() => onNavigate('points')}
+                                    onClick={() => onNavigate('activities')}
                                     className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-5 py-3 font-semibold text-slate-800 transition-colors hover:bg-slate-50"
                                 >
-                                    일괄 점수 열기
+                                    전체 활동 관리 열기
                                 </button>
                             )}
                         </div>

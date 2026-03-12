@@ -1,10 +1,10 @@
 import React from 'react';
-import { Settings, BarChart3, Users, ClipboardList, Coins, House, UserRound, X } from 'lucide-react';
+import { Settings, BarChart3, Users, ClipboardList, House, UserRound, X } from 'lucide-react';
 import clsx from 'clsx';
 import { isSupabaseConfigured } from '../../lib/supabase';
 import { useAuth } from '../auth/auth-context';
 
-export type TabType = 'home' | 'dashboard' | 'activities' | 'points' | 'settings' | 'stats';
+export type TabType = 'home' | 'dashboard' | 'activities' | 'settings' | 'stats';
 
 interface SidebarProps {
     activeTab: TabType;
@@ -20,7 +20,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpe
         { id: 'home', label: role === 'member' ? '내 상태' : '홈', icon: role === 'member' ? UserRound : House, visible: permissions.canViewHome },
         { id: 'dashboard', label: '멤버', icon: Users, visible: permissions.canViewMembers },
         { id: 'activities', label: '활동', icon: ClipboardList, visible: permissions.canViewActivities },
-        { id: 'points', label: '점수', icon: Coins, visible: permissions.canManagePoints },
         { id: 'settings', label: '설정', icon: Settings, visible: permissions.canManageSettings },
         { id: 'stats', label: '통계 · 리캡', icon: BarChart3, visible: permissions.canViewStats },
     ] as const;

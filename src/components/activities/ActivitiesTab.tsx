@@ -3,16 +3,19 @@ import {
     ArrowUpRight,
     BadgeCheck,
     CalendarClock,
+    CheckSquare,
     CheckCircle2,
     CircleSlash,
     ClipboardList,
     Clock3,
+    Coins,
     History,
     Link2,
     MessageSquareWarning,
     PlusCircle,
     RotateCcw,
     Sparkles,
+    Square,
     TriangleAlert,
     Users2,
 } from 'lucide-react';
@@ -33,12 +36,46 @@ import {
     updateCorrectionRequestStatus,
 } from '../../lib/db';
 
-type EntryMode = 'attendance' | 'session' | 'single' | 'mixed';
+type EntryMode = 'attendance' | 'session' | 'single' | 'mixed' | 'batch';
 type AttendanceStatus = 'present' | 'late' | 'absent';
 type MixedDraftRow = {
     selected: boolean;
     categoryId: string;
     note: string;
+};
+
+const memberStatusLabels: Record<string, string> = {
+    active: '활동 중',
+    dormant: '휴면',
+    inactive: '비활성',
+};
+
+const entryModeMeta: Record<EntryMode, { label: string; title: string; description: string }> = {
+    attendance: {
+        label: '정기모임 출석',
+        title: '출석 결과를 빠르게 확정하는 모드',
+        description: '참석, 지각, 불참처럼 출석 상태가 기준일 때 가장 빠르게 입력합니다.',
+    },
+    session: {
+        label: '링크 출석',
+        title: '회원이 직접 체크인하는 셀프 출석 모드',
+        description: '운영진이 링크나 코드를 배포하고, 회원이 직접 들어와 출석을 완료합니다.',
+    },
+    mixed: {
+        label: '혼합 배치',
+        title: '회원마다 다른 규칙을 한 번에 반영하는 모드',
+        description: '같은 활동 안에서도 발표, 참여, 불참처럼 서로 다른 결과를 함께 저장할 때 씁니다.',
+    },
+    batch: {
+        label: '빠른 일괄 반영',
+        title: '같은 규칙을 여러 회원에게 한 번에 반영하는 모드',
+        description: '기존 점수 탭의 빠른 입력 흐름을 그대로 옮긴 모드입니다. 규칙 하나를 정하고 여러 회원을 즉시 반영합니다.',
+    },
+    single: {
+        label: '개별 활동',
+        title: '한 사람의 활동을 자세히 기록하는 모드',
+        description: '메모와 증빙 링크를 함께 남기면서 단건 활동을 정확히 기록할 때 적합합니다.',
+    },
 };
 
 const attendanceStatuses: AttendanceStatus[] = ['present', 'late', 'absent'];
@@ -182,6 +219,11 @@ export const ActivitiesTab: React.FC = () => {
     const [selectedMixedTeamFilter, setSelectedMixedTeamFilter] = useState('all');
     const [mixedBulkCategoryId, setMixedBulkCategoryId] = useState('');
     const [mixedDraft, setMixedDraft] = useState<Record<string, MixedDraftRow>>({});
+    const [selectedBatchTeamFilter, setSelectedBatchTeamFilter] = useState('all');
+    const [batchCategoryId, setBatchCategoryId] = useState('');
+    const [selectedBatchMemberIds, setSelectedBatchMemberIds] = useState<string[]>([]);
+    const [batchNote, setBatchNote] = useState('');
+    const [batchEvidenceUrl, setBatchEvidenceUrl] = useState('');
 
     const [sessionTitle, setSessionTitle] = useState('정기모임 링크 출석');
     const [sessionCategoryId, setSessionCategoryId] = useState('');
@@ -220,6 +262,7 @@ export const ActivitiesTab: React.FC = () => {
         setSelectedMemberId((current) => current || firstActiveMemberId);
         setSelectedCategoryId((current) => current || categoriesData[0]?.id || '');
         setMixedBulkCategoryId((current) => current || categoriesData[0]?.id || '');
+        setBatchCategoryId((current) => current || categoriesData[0]?.id || '');
         setSessionCategoryId((current) => current || defaultAttendanceRuleId);
         setIsLoading(false);
     };
@@ -254,6 +297,7 @@ export const ActivitiesTab: React.FC = () => {
             setSelectedMemberId((current) => current || firstActiveMemberId);
             setSelectedCategoryId((current) => current || categoriesData[0]?.id || '');
             setMixedBulkCategoryId((current) => current || categoriesData[0]?.id || '');
+            setBatchCategoryId((current) => current || categoriesData[0]?.id || '');
             setSessionCategoryId((current) => current || defaultAttendanceRuleId);
             setIsLoading(false);
         };
@@ -340,6 +384,22 @@ export const ActivitiesTab: React.FC = () => {
         [activeMembers, selectedMixedTeamFilter],
     );
 
+    const filteredBatchMembers = useMemo(
+        () =>
+            activeMembers.filter((member) => {
+                if (selectedBatchTeamFilter === 'all') {
+                    return true;
+                }
+
+                if (selectedBatchTeamFilter === 'ungrouped') {
+                    return (member.teamIds ?? []).length === 0 && !member.teamId;
+                }
+
+                return (member.teamIds ?? []).includes(selectedBatchTeamFilter) || member.teamId === selectedBatchTeamFilter;
+            }),
+        [activeMembers, selectedBatchTeamFilter],
+    );
+
     const attendanceRules = useMemo(
         () => ({
             present: getAttendanceRule(categories, 'present'),
@@ -357,6 +417,11 @@ export const ActivitiesTab: React.FC = () => {
     const selectedSessionCategory = useMemo(
         () => categories.find((category) => category.id === sessionCategoryId) ?? null,
         [categories, sessionCategoryId],
+    );
+
+    const selectedBatchCategory = useMemo(
+        () => categories.find((category) => category.id === batchCategoryId) ?? null,
+        [batchCategoryId, categories],
     );
 
     const activeAttendanceSessions = useMemo(
@@ -418,6 +483,23 @@ export const ActivitiesTab: React.FC = () => {
         () => mixedPreviewRows.reduce((sum, row) => sum + row.category.pointValue, 0),
         [mixedPreviewRows],
     );
+
+    const groupedBatchMembers = useMemo(
+        () =>
+            filteredBatchMembers.reduce<Record<string, Member[]>>((groups, member) => {
+                const key = member.teamNames?.[0] || member.teamName || '미지정';
+                groups[key] = groups[key] ? [...groups[key], member] : [member];
+                return groups;
+            }, {}),
+        [filteredBatchMembers],
+    );
+
+    const selectedBatchMembers = useMemo(
+        () => filteredBatchMembers.filter((member) => selectedBatchMemberIds.includes(member.id)),
+        [filteredBatchMembers, selectedBatchMemberIds],
+    );
+
+    const batchExpectedDelta = (selectedBatchCategory?.pointValue ?? 0) * selectedBatchMemberIds.length;
 
     const mixedCategorySummary = useMemo(
         () =>
@@ -502,6 +584,8 @@ export const ActivitiesTab: React.FC = () => {
         [correctionRequests],
     );
 
+    const selectedEntryModeMeta = entryModeMeta[entryMode];
+
     const handleAttendanceStatusChange = (memberId: string, status: AttendanceStatus) => {
         setAttendanceDraft((current) => {
             if (current[memberId] === status) {
@@ -540,6 +624,11 @@ export const ActivitiesTab: React.FC = () => {
     const handleMixedTeamFilterChange = (value: string) => {
         setSelectedMixedTeamFilter(value);
         setMixedDraft({});
+    };
+
+    const handleBatchTeamFilterChange = (value: string) => {
+        setSelectedBatchTeamFilter(value);
+        setSelectedBatchMemberIds([]);
     };
 
     const updateMixedRow = (memberId: string, updater: (current: MixedDraftRow) => MixedDraftRow) => {
@@ -658,6 +747,39 @@ export const ActivitiesTab: React.FC = () => {
         });
         setNote('');
         setSingleEvidenceUrl('');
+        await refreshData();
+        setIsSaving(false);
+    };
+
+    const toggleBatchMember = (memberId: string) => {
+        setSelectedBatchMemberIds((current) =>
+            current.includes(memberId)
+                ? current.filter((id) => id !== memberId)
+                : [...current, memberId],
+        );
+    };
+
+    const selectAllFilteredBatchMembers = () => {
+        setSelectedBatchMemberIds(filteredBatchMembers.map((member) => member.id));
+    };
+
+    const clearFilteredBatchSelection = () => {
+        setSelectedBatchMemberIds([]);
+    };
+
+    const handleBatchSubmit = async (event: React.FormEvent) => {
+        event.preventDefault();
+        if (!batchCategoryId || selectedBatchMemberIds.length === 0) {
+            return;
+        }
+
+        setIsSaving(true);
+        await createBatchActivityEntries(selectedBatchMemberIds, batchCategoryId, batchNote, {
+            evidenceUrl: batchEvidenceUrl,
+        });
+        setBatchNote('');
+        setBatchEvidenceUrl('');
+        setSelectedBatchMemberIds([]);
         await refreshData();
         setIsSaving(false);
     };
@@ -797,7 +919,7 @@ export const ActivitiesTab: React.FC = () => {
                     <p className="text-slate-500 mt-1">출석 일괄 입력, 회원별 혼합 배치, 개별 활동 기록까지 운영 흐름에 맞춰 한 화면에서 처리합니다.</p>
                 </div>
 
-                <div className="grid grid-cols-2 gap-2 rounded-[24px] border border-slate-200 bg-white p-2 shadow-sm lg:grid-cols-4">
+                <div className="grid grid-cols-2 gap-2 rounded-[24px] border border-slate-200 bg-white p-2 shadow-sm lg:grid-cols-5">
                     <button
                         type="button"
                         onClick={() => setEntryMode('attendance')}
@@ -833,6 +955,17 @@ export const ActivitiesTab: React.FC = () => {
                     </button>
                     <button
                         type="button"
+                        onClick={() => setEntryMode('batch')}
+                        className={`rounded-xl px-4 py-2 text-sm font-semibold transition-colors ${
+                            entryMode === 'batch'
+                                ? 'bg-indigo-600 text-white'
+                                : 'text-slate-600 hover:bg-slate-50'
+                        }`}
+                    >
+                        빠른 일괄 반영
+                    </button>
+                    <button
+                        type="button"
                         onClick={() => setEntryMode('single')}
                         className={`rounded-xl px-4 py-2 text-sm font-semibold transition-colors ${
                             entryMode === 'single'
@@ -844,6 +977,21 @@ export const ActivitiesTab: React.FC = () => {
                     </button>
                 </div>
             </header>
+
+            <section className="rounded-[28px] border border-slate-200 bg-white px-5 py-4 shadow-sm">
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                    <div>
+                        <div className="text-xs font-semibold tracking-[0.18em] text-indigo-500">
+                            현재 모드 · {selectedEntryModeMeta.label}
+                        </div>
+                        <h3 className="mt-1 text-lg font-bold text-slate-950">{selectedEntryModeMeta.title}</h3>
+                        <p className="mt-1 text-sm text-slate-600">{selectedEntryModeMeta.description}</p>
+                    </div>
+                    <div className="rounded-2xl border border-indigo-100 bg-indigo-50 px-4 py-3 text-sm text-indigo-700">
+                        저장되는 데이터는 모두 동일한 활동 기록으로 합쳐지고, 입력 방식만 목적에 맞게 나뉩니다.
+                    </div>
+                </div>
+            </section>
 
             <div className="grid grid-cols-1 gap-6 2xl:grid-cols-[420px_minmax(0,1fr)]">
                 <section>
@@ -1412,6 +1560,109 @@ export const ActivitiesTab: React.FC = () => {
                                 </button>
                             </form>
                         </div>
+                    ) : entryMode === 'batch' ? (
+                        <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
+                            <div className="border-b border-slate-200 bg-gradient-to-br from-indigo-50 via-white to-sky-50 p-6">
+                                <div className="inline-flex items-center gap-2 rounded-full border border-indigo-200 bg-white/90 px-3 py-1 text-xs font-semibold text-indigo-700">
+                                    <Coins size={14} />
+                                    빠른 일괄 반영
+                                </div>
+                                <h3 className="mt-4 text-xl font-bold text-slate-950">같은 규칙을 여러 회원에게 한 번에 적용</h3>
+                                <p className="mt-2 text-sm text-slate-600">
+                                    규칙 하나를 고르고 여러 회원을 선택해 바로 저장합니다. 점수 처리도 결국 활동 기록으로 남기 때문에 별도 점수 탭 없이 이 화면에서 끝낼 수 있습니다.
+                                </p>
+                            </div>
+
+                            <form className="space-y-5 p-6" onSubmit={handleBatchSubmit}>
+                                <label className="space-y-1.5">
+                                    <span className="text-xs font-medium text-slate-600">규칙</span>
+                                    <select
+                                        value={batchCategoryId}
+                                        onChange={(event) => setBatchCategoryId(event.target.value)}
+                                        className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                                    >
+                                        {categories.map((category) => (
+                                            <option key={category.id} value={category.id}>
+                                                {category.categoryName} ({category.pointValue > 0 ? '+' : ''}
+                                                {category.pointValue}) · v{category.version ?? 1}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </label>
+
+                                <label className="space-y-1.5">
+                                    <span className="text-xs font-medium text-slate-600">대상 그룹</span>
+                                    <select
+                                        value={selectedBatchTeamFilter}
+                                        onChange={(event) => handleBatchTeamFilterChange(event.target.value)}
+                                        className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                                    >
+                                        <option value="all">전체 멤버</option>
+                                        <option value="ungrouped">팀 미지정</option>
+                                        {teamOptions.map((team) => (
+                                            <option key={team.id} value={team.id}>
+                                                {team.name}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </label>
+
+                                <label className="space-y-1.5">
+                                    <span className="text-xs font-medium text-slate-600">공통 메모</span>
+                                    <textarea
+                                        value={batchNote}
+                                        onChange={(event) => setBatchNote(event.target.value)}
+                                        rows={4}
+                                        placeholder="예: 주간 스터디 참여, 회의 출석, 운영 지원"
+                                        className="w-full resize-none rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                                    />
+                                </label>
+
+                                <label className="space-y-1.5">
+                                    <span className="text-xs font-medium text-slate-600">증빙 링크</span>
+                                    <input
+                                        type="url"
+                                        value={batchEvidenceUrl}
+                                        onChange={(event) => setBatchEvidenceUrl(event.target.value)}
+                                        placeholder="예: 회의록, 시트, 제출물 링크"
+                                        className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                                    />
+                                </label>
+
+                                <div className="space-y-2 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                                    <div className="flex items-center justify-between text-sm">
+                                        <span className="text-slate-500">선택한 멤버</span>
+                                        <span className="font-semibold text-slate-900">{selectedBatchMemberIds.length}명</span>
+                                    </div>
+                                    <div className="flex items-center justify-between text-sm">
+                                        <span className="text-slate-500">규칙 점수</span>
+                                        <span className="font-semibold text-slate-900">
+                                            {(selectedBatchCategory?.pointValue ?? 0) > 0 ? '+' : ''}
+                                            {selectedBatchCategory?.pointValue ?? 0}점
+                                        </span>
+                                    </div>
+                                    <div className="flex items-center justify-between text-sm">
+                                        <span className="text-slate-500">규칙 버전</span>
+                                        <span className="font-semibold text-slate-900">v{selectedBatchCategory?.version ?? 1}</span>
+                                    </div>
+                                    <div className="flex items-center justify-between text-sm">
+                                        <span className="text-slate-500">예상 총합</span>
+                                        <span className={`font-semibold ${batchExpectedDelta >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                                            {batchExpectedDelta > 0 ? '+' : ''}
+                                            {batchExpectedDelta}점
+                                        </span>
+                                    </div>
+                                </div>
+
+                                <button
+                                    type="submit"
+                                    disabled={!batchCategoryId || selectedBatchMemberIds.length === 0 || isSaving}
+                                    className="w-full rounded-2xl bg-indigo-600 px-4 py-3 font-semibold text-white transition-colors hover:bg-indigo-700 disabled:opacity-50"
+                                >
+                                    {isSaving ? '일괄 저장 중...' : '일괄 활동 반영'}
+                                </button>
+                            </form>
+                        </section>
                     ) : (
                         <section className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
                             <div className="flex items-center gap-2 text-slate-900 font-semibold mb-5">
@@ -1841,6 +2092,152 @@ export const ActivitiesTab: React.FC = () => {
                                                     </div>
                                                 </div>
                                             ))}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </>
+                    ) : entryMode === 'batch' ? (
+                        <>
+                            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                                <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+                                    <div className="text-sm text-slate-500">현재 범위 멤버</div>
+                                    <div className="mt-2 text-3xl font-bold text-slate-900">{filteredBatchMembers.length}</div>
+                                </div>
+                                <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+                                    <div className="text-sm text-slate-500">선택 완료</div>
+                                    <div className="mt-2 text-3xl font-bold text-slate-900">{selectedBatchMemberIds.length}</div>
+                                </div>
+                                <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+                                    <div className="text-sm text-slate-500">예상 총점</div>
+                                    <div className={`mt-2 text-3xl font-bold ${batchExpectedDelta >= 0 ? 'text-indigo-600' : 'text-rose-600'}`}>
+                                        {batchExpectedDelta > 0 ? '+' : ''}
+                                        {batchExpectedDelta}점
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+                                <div className="flex flex-col gap-3 border-b border-slate-100 px-6 py-4 md:flex-row md:items-center md:justify-between">
+                                    <div>
+                                        <div className="font-semibold text-slate-900">멤버 선택</div>
+                                        <div className="mt-1 text-sm text-slate-500">현재 팀 기준으로 묶어서 보여줍니다.</div>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <button
+                                            type="button"
+                                            onClick={selectAllFilteredBatchMembers}
+                                            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm transition-colors hover:bg-slate-50"
+                                        >
+                                            현재 범위 전체 선택
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={clearFilteredBatchSelection}
+                                            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm transition-colors hover:bg-slate-50"
+                                        >
+                                            선택 해제
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-1 gap-6 p-6 2xl:grid-cols-[minmax(0,1.2fr)_320px]">
+                                    <div className="space-y-6">
+                                        {Object.entries(groupedBatchMembers).map(([teamName, teamMembers]) => (
+                                            <div key={teamName} className="space-y-3">
+                                                <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+                                                    <Users2 size={16} className="text-indigo-500" />
+                                                    {teamName}
+                                                    <span className="font-normal text-slate-400">({teamMembers.length})</span>
+                                                </div>
+
+                                                <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+                                                    {teamMembers.map((member) => {
+                                                        const isSelected = selectedBatchMemberIds.includes(member.id);
+
+                                                        return (
+                                                            <button
+                                                                key={member.id}
+                                                                type="button"
+                                                                onClick={() => toggleBatchMember(member.id)}
+                                                                className={`rounded-2xl border p-4 text-left transition-all ${
+                                                                    isSelected
+                                                                        ? 'border-indigo-300 bg-indigo-50 shadow-sm'
+                                                                        : 'border-slate-200 bg-white hover:bg-slate-50'
+                                                                }`}
+                                                            >
+                                                                <div className="flex items-start justify-between gap-3">
+                                                                    <div>
+                                                                        <div className="font-medium text-slate-900">{member.name}</div>
+                                                                        <div className="mt-1 text-sm text-slate-500">
+                                                                            {member.roleName || '역할 없음'} · {member.status ? memberStatusLabels[member.status] ?? member.status : '상태 미확인'}
+                                                                        </div>
+                                                                        <div className="mt-2 text-sm font-semibold text-indigo-600">{member.score}점</div>
+                                                                    </div>
+                                                                    <div className="text-indigo-600">
+                                                                        {isSelected ? <CheckSquare size={18} /> : <Square size={18} />}
+                                                                    </div>
+                                                                </div>
+                                                            </button>
+                                                        );
+                                                    })}
+                                                </div>
+                                            </div>
+                                        ))}
+
+                                        {filteredBatchMembers.length === 0 && (
+                                            <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-10 text-center text-sm text-slate-500">
+                                                현재 범위에 표시할 멤버가 없습니다.
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    <div className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                                        <div>
+                                            <div className="font-semibold text-slate-900">저장 미리보기</div>
+                                            <div className="mt-1 text-sm text-slate-500">같은 규칙이 여러 회원에게 적용됩니다.</div>
+                                        </div>
+
+                                        {selectedBatchCategory && (
+                                            <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                                                <div className="flex flex-wrap items-center gap-2">
+                                                    <span className="rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700">
+                                                        v{selectedBatchCategory.version ?? 1}
+                                                    </span>
+                                                    <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700">
+                                                        {selectedBatchCategory.categoryName}
+                                                    </span>
+                                                </div>
+                                                <div className="mt-3 text-sm text-slate-600">
+                                                    {selectedBatchCategory.conditionSummary ?? '규칙 설명이 아직 없습니다.'}
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        <div className="space-y-3">
+                                            {selectedBatchMembers.map((member) => (
+                                                <div
+                                                    key={member.id}
+                                                    className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white px-4 py-3"
+                                                >
+                                                    <div>
+                                                        <div className="font-medium text-slate-900">{member.name}</div>
+                                                        <div className="mt-1 text-sm text-slate-500">
+                                                            {(member.teamNames?.join(', ') || member.teamName) || '팀 미지정'}
+                                                        </div>
+                                                    </div>
+                                                    <div className="text-sm font-semibold text-indigo-600">
+                                                        {(selectedBatchCategory?.pointValue ?? 0) > 0 ? '+' : ''}
+                                                        {selectedBatchCategory?.pointValue ?? 0}점
+                                                    </div>
+                                                </div>
+                                            ))}
+
+                                            {selectedBatchMembers.length === 0 && (
+                                                <div className="rounded-2xl border border-dashed border-slate-200 bg-white px-4 py-10 text-center text-sm text-slate-500">
+                                                    아직 선택한 멤버가 없습니다.
+                                                </div>
+                                            )}
                                         </div>
                                     </div>
                                 </div>

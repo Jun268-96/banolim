@@ -5,7 +5,6 @@ import { DashboardTab } from './components/dashboard/DashboardTab';
 import { SettingsTab } from './components/settings/SettingsTab';
 import { StatsTab } from './components/stats/StatsTab';
 import { ActivitiesTab } from './components/activities/ActivitiesTab';
-import { PointsTab } from './components/points/PointsTab';
 import { HomeTab } from './components/home/HomeTab';
 import { MemberHomeTab } from './components/home/MemberHomeTab';
 import { AuthShell } from './components/auth/AuthShell';
@@ -15,7 +14,6 @@ const getFirstAllowedTab = (permissions: ReturnType<typeof useAuth>['permissions
   if (permissions.canViewHome) return 'home';
   if (permissions.canViewMembers) return 'dashboard';
   if (permissions.canViewActivities) return 'activities';
-  if (permissions.canManagePoints) return 'points';
   if (permissions.canManageSettings) return 'settings';
   return 'stats';
 };
@@ -29,7 +27,6 @@ function AppBody() {
       ...(permissions.canViewHome ? ['home' as const] : []),
       ...(permissions.canViewMembers ? ['dashboard' as const] : []),
       ...(permissions.canViewActivities ? ['activities' as const] : []),
-      ...(permissions.canManagePoints ? ['points' as const] : []),
       ...(permissions.canManageSettings ? ['settings' as const] : []),
       ...(permissions.canViewStats ? ['stats' as const] : []),
     ],
@@ -45,7 +42,6 @@ function AppBody() {
       {resolvedActiveTab === 'home' && (role === 'member' ? <MemberHomeTab /> : <HomeTab onNavigate={setActiveTab} />)}
       {resolvedActiveTab === 'dashboard' && <DashboardTab />}
       {resolvedActiveTab === 'activities' && <ActivitiesTab />}
-      {resolvedActiveTab === 'points' && <PointsTab />}
       {resolvedActiveTab === 'settings' && <SettingsTab />}
       {resolvedActiveTab === 'stats' && <StatsTab />}
     </Layout>

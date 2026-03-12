@@ -46,6 +46,11 @@ type GetAuditLogsOptions = {
     entityId?: string;
     limit?: number;
 };
+export type DataFallbackState = {
+    id: string;
+    task: string;
+    message: string;
+};
 
 const createLocalId = (prefix: string) => `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
 const createAttendanceCode = () => Math.random().toString(36).replace(/[^a-z0-9]/gi, '').toUpperCase().slice(0, 8);
@@ -75,6 +80,55 @@ const buildLocalMemberAuditSummary = (memberName: string, changes: Record<string
     if (changes.status) return `${memberName} · 회원 상태 변경`;
     if (changes.team) return `${memberName} · 소속 팀 변경`;
     return `${memberName} · 회원 정보 수정`;
+};
+
+let latestDataFallbackState: DataFallbackState | null = null;
+const dataFallbackListeners = new Set<() => void>();
+
+const notifyDataFallbackListeners = () => {
+    dataFallbackListeners.forEach((listener) => listener());
+};
+
+const getErrorMessage = (error: unknown) => {
+    if (error instanceof Error) {
+        return error.message;
+    }
+
+    if (typeof error === 'string') {
+        return error;
+    }
+
+    if (error && typeof error === 'object') {
+        const message = 'message' in error && typeof error.message === 'string' ? error.message : null;
+        const details = 'details' in error && typeof error.details === 'string' ? error.details : null;
+        const hint = 'hint' in error && typeof error.hint === 'string' ? error.hint : null;
+        return [message, details, hint].filter(Boolean).join(' · ') || '알 수 없는 오류';
+    }
+
+    return '알 수 없는 오류';
+};
+
+const reportDataFallback = (task: string, error: unknown) => {
+    latestDataFallbackState = {
+        id: `${task}-${Date.now()}`,
+        task,
+        message: getErrorMessage(error),
+    };
+    notifyDataFallbackListeners();
+};
+
+export const getLatestDataFallbackState = () => latestDataFallbackState;
+
+export const subscribeToDataFallbackState = (listener: () => void) => {
+    dataFallbackListeners.add(listener);
+    return () => {
+        dataFallbackListeners.delete(listener);
+    };
+};
+
+export const clearLatestDataFallbackState = () => {
+    latestDataFallbackState = null;
+    notifyDataFallbackListeners();
 };
 
 let localMembers: Member[] = [
@@ -751,6 +805,7 @@ const mapAttendanceSession = (
 
 const fallback = <T>(task: string, getLocalValue: () => T, error?: unknown): T => {
     if (error) {
+        reportDataFallback(task, error);
         console.warn(`[data] ${task} failed, using local fallback instead.`, error);
     }
 

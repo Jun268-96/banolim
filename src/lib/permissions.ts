@@ -5,7 +5,6 @@ export interface AppPermissions {
     canViewMembers: boolean;
     canViewActivities: boolean;
     canManageMembers: boolean;
-    canManagePoints: boolean;
     canManageSettings: boolean;
     canViewStats: boolean;
 }
@@ -29,7 +28,6 @@ export const buildPermissions = (role: AppRole): AppPermissions => ({
     canViewMembers: role !== 'member',
     canViewActivities: role === 'super_admin' || role === 'operator' || role === 'team_lead',
     canManageMembers: role === 'super_admin' || role === 'operator',
-    canManagePoints: role === 'super_admin' || role === 'operator',
     canManageSettings: role === 'super_admin' || role === 'operator',
     canViewStats: role !== 'member',
 });
