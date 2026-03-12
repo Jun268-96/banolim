@@ -1,14 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
     CalendarClock,
-    CheckCircle2,
-    CircleSlash,
-    Clock3,
     Lock,
     LockOpen,
     PlusCircle,
-    RefreshCw,
-    Users2,
 } from 'lucide-react';
 import type {
     AttendanceSession,
@@ -40,23 +35,11 @@ const attendanceStatusLabels: Record<AttendanceStatus, string> = {
     absent: '결석',
 };
 
-const attendanceStatusDescriptions: Record<AttendanceStatus, string> = {
-    present: '정상 출석으로 기록됩니다.',
-    late: '지각 규칙으로 다시 반영됩니다.',
-    absent: '결석 규칙으로 다시 반영됩니다.',
-};
-
 const attendanceStatusStyles: Record<AttendanceStatus, string> = {
     present: 'border-emerald-200 bg-emerald-50 text-emerald-700',
     late: 'border-amber-200 bg-amber-50 text-amber-700',
     absent: 'border-slate-300 bg-slate-100 text-slate-700',
 };
-
-const attendanceStatusIcons = {
-    present: CheckCircle2,
-    late: Clock3,
-    absent: CircleSlash,
-} satisfies Record<AttendanceStatus, React.ComponentType<{ size?: number; className?: string }>>;
 
 const nextAttendanceStatus: Record<AttendanceStatus, AttendanceStatus> = {
     present: 'late',
@@ -150,6 +133,12 @@ const sortSessionEntries = (entries: AttendanceSessionMember[]) =>
         return a.memberName.localeCompare(b.memberName, 'ko');
     });
 
+const buildDraftStatuses = (entries: AttendanceSessionMember[]) =>
+    entries.reduce<Record<string, AttendanceStatus>>((acc, entry) => {
+        acc[entry.memberId] = entry.status;
+        return acc;
+    }, {});
+
 export const AttendanceSessionManager: React.FC<AttendanceSessionManagerProps> = ({
     season,
     members,
@@ -159,13 +148,15 @@ export const AttendanceSessionManager: React.FC<AttendanceSessionManagerProps> =
 }) => {
     const [selectedSessionId, setSelectedSessionId] = useState<string>('');
     const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
+    const [isDetailDialogOpen, setIsDetailDialogOpen] = useState(false);
     const [sessionStartsAt, setSessionStartsAt] = useState(() => toDateTimeInputValue());
     const [targetGroupValue, setTargetGroupValue] = useState('all');
     const [sessionTitle, setSessionTitle] = useState('정기모임 출석');
     const [sessionNote, setSessionNote] = useState('');
     const [isCreating, setIsCreating] = useState(false);
     const [togglingSessionId, setTogglingSessionId] = useState<string | null>(null);
-    const [updatingMemberId, setUpdatingMemberId] = useState<string | null>(null);
+    const [draftStatuses, setDraftStatuses] = useState<Record<string, AttendanceStatus>>({});
+    const [isSavingStatuses, setIsSavingStatuses] = useState(false);
 
     const teamOptions = useMemo(
         () =>
@@ -212,6 +203,17 @@ export const AttendanceSessionManager: React.FC<AttendanceSessionManagerProps> =
         [selectedSessionId, sessions],
     );
 
+    const sessionEntries = useMemo(
+        () =>
+            selectedSession
+                ? sortSessionEntries(selectedSession.entries).map((entry) => ({
+                    ...entry,
+                    draftStatus: draftStatuses[entry.memberId] ?? entry.status,
+                }))
+                : [],
+        [draftStatuses, selectedSession],
+    );
+
     const attendanceRulesReady = useMemo(
         () => ({
             present: Boolean(getAttendanceRule(categories, 'present')),
@@ -231,6 +233,22 @@ export const AttendanceSessionManager: React.FC<AttendanceSessionManagerProps> =
             setSelectedSessionId(sessions[0]?.id ?? '');
         }
     }, [selectedSessionId, sessions]);
+
+    const draftStatusCounts = useMemo(
+        () => sessionEntries.reduce<Record<AttendanceStatus, number>>(
+            (acc, entry) => {
+                acc[entry.draftStatus] += 1;
+                return acc;
+            },
+            { present: 0, late: 0, absent: 0 },
+        ),
+        [sessionEntries],
+    );
+
+    const hasDraftChanges = useMemo(
+        () => sessionEntries.some((entry) => entry.draftStatus !== entry.status),
+        [sessionEntries],
+    );
 
     const handleCreateSession = async (event: React.FormEvent) => {
         event.preventDefault();
@@ -257,6 +275,12 @@ export const AttendanceSessionManager: React.FC<AttendanceSessionManagerProps> =
         }
     };
 
+    const handleOpenSessionDetail = (session: AttendanceSession) => {
+        setSelectedSessionId(session.id);
+        setDraftStatuses(buildDraftStatuses(session.entries));
+        setIsDetailDialogOpen(true);
+    };
+
     const handleToggleSession = async (session: AttendanceSession) => {
         setTogglingSessionId(session.id);
         try {
@@ -267,230 +291,136 @@ export const AttendanceSessionManager: React.FC<AttendanceSessionManagerProps> =
         }
     };
 
-    const handleCycleMemberStatus = async (entry: AttendanceSessionMember) => {
+    const handleCycleMemberStatus = (entry: AttendanceSessionMember) => {
         if (!selectedSession || !selectedSession.isActive) {
             return;
         }
 
-        const nextStatus = nextAttendanceStatus[entry.status];
-        setUpdatingMemberId(entry.memberId);
+        const currentStatus = draftStatuses[entry.memberId] ?? entry.status;
+        const nextStatus = nextAttendanceStatus[currentStatus];
+        setDraftStatuses((current) => ({
+            ...current,
+            [entry.memberId]: nextStatus,
+        }));
+    };
+
+    const handleSaveStatuses = async () => {
+        if (!selectedSession || !hasDraftChanges) {
+            setIsDetailDialogOpen(false);
+            return;
+        }
+
+        setIsSavingStatuses(true);
         try {
-            await updateAttendanceSessionMemberStatus({
-                sessionId: selectedSession.id,
-                memberId: entry.memberId,
-                status: nextStatus,
-                title: selectedSession.title,
-                startsAt: selectedSession.startsAt,
-                note: selectedSession.note ?? null,
-            });
+            for (const entry of sessionEntries) {
+                if (entry.draftStatus === entry.status) {
+                    continue;
+                }
+
+                await updateAttendanceSessionMemberStatus({
+                    sessionId: selectedSession.id,
+                    memberId: entry.memberId,
+                    status: entry.draftStatus,
+                    title: selectedSession.title,
+                    startsAt: selectedSession.startsAt,
+                    note: selectedSession.note ?? null,
+                });
+            }
+
             await onRefresh();
+            setIsDetailDialogOpen(false);
+            setDraftStatuses({});
         } finally {
-            setUpdatingMemberId(null);
+            setIsSavingStatuses(false);
         }
     };
 
     return (
         <div className="space-y-6">
-            <div className="grid grid-cols-1 gap-6 xl:grid-cols-[380px_minmax(0,1fr)]">
-                <section className="space-y-6">
-                    <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
-                        <div className="border-b border-slate-200 px-6 py-5">
-                            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                                <div>
-                                    <div className="flex items-center gap-2 font-semibold text-slate-900">
-                                        <CalendarClock size={18} className="text-indigo-600" />
-                                        출석 세션 목록
-                                    </div>
-                                    <p className="mt-1 text-sm text-slate-500">기존 세션을 다시 열어 출석 상태를 수정할 수 있습니다.</p>
-                                </div>
-                                <button
-                                    type="button"
-                                    onClick={() => setIsCreateDialogOpen(true)}
-                                    className="inline-flex items-center justify-center gap-2 rounded-2xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-700"
-                                >
-                                    <PlusCircle size={16} />
-                                    출석 등록
-                                </button>
+            <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
+                <div className="border-b border-slate-200 px-6 py-5">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                        <div>
+                            <div className="flex items-center gap-2 font-semibold text-slate-900">
+                                <CalendarClock size={18} className="text-indigo-600" />
+                                출석 세션 목록
                             </div>
+                            <p className="mt-1 text-sm text-slate-500">세션을 눌러 모달에서 출석 상태를 조정하고 한 번에 저장합니다.</p>
                         </div>
-                        <div className="divide-y divide-slate-100">
-                            {sessions.map((session) => {
-                                const isSelected = selectedSession?.id === session.id;
-                                const isToggling = togglingSessionId === session.id;
-
-                                return (
-                                    <button
-                                        key={session.id}
-                                        type="button"
-                                        onClick={() => setSelectedSessionId(session.id)}
-                                        className={`flex w-full flex-col gap-3 px-6 py-5 text-left transition-colors hover:bg-slate-50 ${isSelected ? 'bg-indigo-50/70' : 'bg-white'}`}
-                                    >
-                                        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                                            <div className="space-y-1">
-                                                <div className="flex flex-wrap items-center gap-2">
-                                                    <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${
-                                                        session.isActive
-                                                            ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                                                            : 'border-slate-200 bg-slate-100 text-slate-700'
-                                                    }`}>
-                                                        {session.isActive ? '운영 중' : '마감'}
-                                                    </span>
-                                                    <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700">
-                                                        {session.targetGroupLabel}
-                                                    </span>
-                                                </div>
-                                                <div className="text-lg font-bold text-slate-950">{session.title}</div>
-                                                <div className="text-sm text-slate-500">{formatDateTime(session.startsAt)}</div>
-                                            </div>
-
-                                            <div className="flex flex-wrap items-center gap-2">
-                                                {(['present', 'late', 'absent'] as AttendanceStatus[]).map((status) => (
-                                                    <span
-                                                        key={status}
-                                                        className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${attendanceStatusStyles[status]}`}
-                                                    >
-                                                        {attendanceStatusLabels[status]} {session.statusCounts[status]}
-                                                    </span>
-                                                ))}
-                                                <button
-                                                    type="button"
-                                                    onClick={(event) => {
-                                                        event.stopPropagation();
-                                                        void handleToggleSession(session);
-                                                    }}
-                                                    disabled={isToggling}
-                                                    className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-50"
-                                                >
-                                                    {session.isActive ? <Lock size={14} /> : <LockOpen size={14} />}
-                                                    {isToggling ? '변경 중...' : session.isActive ? '마감' : '마감 취소'}
-                                                </button>
-                                            </div>
-                                        </div>
-                                    </button>
-                                );
-                            })}
-
-                            {sessions.length === 0 && (
-                                <div className="px-6 py-12 text-center text-sm text-slate-500">
-                                    아직 등록된 출석 세션이 없습니다.
-                                </div>
-                            )}
-                        </div>
-                    </section>
-                </section>
-
-                <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
-                    <div className="border-b border-slate-200 bg-gradient-to-br from-white via-white to-slate-50 px-6 py-5">
-                        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                            <div>
-                                <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700">
-                                    <Users2 size={14} />
-                                    세션 상세
-                                </div>
-                                <h3 className="mt-4 text-xl font-bold text-slate-950">
-                                    {selectedSession ? selectedSession.title : '선택한 출석 세션이 없습니다.'}
-                                </h3>
-                                {selectedSession && (
-                                    <p className="mt-2 text-sm leading-6 text-slate-600">
-                                        {selectedSession.targetGroupLabel} · {formatDateTime(selectedSession.startsAt)}
-                                        {selectedSession.note ? ` · ${selectedSession.note}` : ''}
-                                    </p>
-                                )}
-                            </div>
-                            {selectedSession && (
-                                <button
-                                    type="button"
-                                    onClick={() => void onRefresh()}
-                                    className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
-                                >
-                                    <RefreshCw size={14} />
-                                    새로고침
-                                </button>
-                            )}
-                        </div>
+                        <button
+                            type="button"
+                            onClick={() => setIsCreateDialogOpen(true)}
+                            className="inline-flex items-center justify-center gap-2 rounded-2xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-700"
+                        >
+                            <PlusCircle size={16} />
+                            출석 등록
+                        </button>
                     </div>
+                </div>
+                <div className="divide-y divide-slate-100">
+                    {sessions.map((session) => {
+                        const isSelected = selectedSession?.id === session.id;
+                        const isToggling = togglingSessionId === session.id;
 
-                    {selectedSession ? (
-                        <div className="space-y-5 p-6">
-                            {!selectedSession.isActive && (
-                                <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                                    이 세션은 마감되어 있습니다. 출석 상태를 수정하려면 먼저 마감 취소를 눌러 주세요.
-                                </div>
-                            )}
-
-                            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                                {(['present', 'late', 'absent'] as AttendanceStatus[]).map((status) => {
-                                    const Icon = attendanceStatusIcons[status];
-
-                                    return (
-                                        <div
-                                            key={status}
-                                            className={`rounded-2xl border p-4 ${attendanceStatusStyles[status]}`}
-                                        >
-                                            <div className="flex items-center gap-2 text-sm font-semibold">
-                                                <Icon size={16} />
-                                                {attendanceStatusLabels[status]}
-                                            </div>
-                                            <div className="mt-2 text-2xl font-bold">
-                                                {selectedSession.statusCounts[status]}
-                                            </div>
+                        return (
+                            <button
+                                key={session.id}
+                                type="button"
+                                onClick={() => handleOpenSessionDetail(session)}
+                                className={`flex w-full flex-col gap-3 px-6 py-5 text-left transition-colors hover:bg-slate-50 ${isSelected ? 'bg-indigo-50/70' : 'bg-white'}`}
+                            >
+                                <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                                    <div className="space-y-1">
+                                        <div className="flex flex-wrap items-center gap-2">
+                                            <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${
+                                                session.isActive
+                                                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                                    : 'border-slate-200 bg-slate-100 text-slate-700'
+                                            }`}>
+                                                {session.isActive ? '운영 중' : '마감'}
+                                            </span>
+                                            <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700">
+                                                {session.targetGroupLabel}
+                                            </span>
                                         </div>
-                                    );
-                                })}
-                            </div>
+                                        <div className="text-lg font-bold text-slate-950">{session.title}</div>
+                                        <div className="text-sm text-slate-500">{formatDateTime(session.startsAt)}</div>
+                                    </div>
 
-                            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-                                {sortSessionEntries(selectedSession.entries).map((entry) => {
-                                    const statusTone = attendanceStatusStyles[entry.status];
-                                    const Icon = attendanceStatusIcons[entry.status];
-                                    const isUpdating = updatingMemberId === entry.memberId;
-
-                                    return (
+                                    <div className="flex flex-wrap items-center gap-2">
+                                        {(['present', 'late', 'absent'] as AttendanceStatus[]).map((status) => (
+                                            <span
+                                                key={status}
+                                                className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${attendanceStatusStyles[status]}`}
+                                            >
+                                                {attendanceStatusLabels[status]} {session.statusCounts[status]}
+                                            </span>
+                                        ))}
                                         <button
-                                            key={entry.id}
                                             type="button"
-                                            onClick={() => void handleCycleMemberStatus(entry)}
-                                            disabled={!selectedSession.isActive || isUpdating}
-                                            className={`rounded-[24px] border bg-white p-5 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-70 ${statusTone}`}
+                                            onClick={(event) => {
+                                                event.stopPropagation();
+                                                void handleToggleSession(session);
+                                            }}
+                                            disabled={isToggling}
+                                            className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-50"
                                         >
-                                            <div className="flex items-start justify-between gap-3">
-                                                <div>
-                                                    <div className="text-lg font-bold">{entry.memberName}</div>
-                                                    <div className="mt-1 text-sm opacity-80">{entry.roleName ?? '일반 회원'}</div>
-                                                </div>
-                                                <div className="rounded-full border border-current/20 bg-white/60 p-2">
-                                                    <Icon size={18} />
-                                                </div>
-                                            </div>
-                                            <div className="mt-4 flex items-center justify-between">
-                                                <span className="text-sm font-semibold">{attendanceStatusLabels[entry.status]}</span>
-                                                <span className="text-xs opacity-80">
-                                                    클릭 시 {attendanceStatusLabels[nextAttendanceStatus[entry.status]]}
-                                                </span>
-                                            </div>
-                                            <div className="mt-3 text-xs leading-5 opacity-80">
-                                                {attendanceStatusDescriptions[nextAttendanceStatus[entry.status]]}
-                                            </div>
-                                            {entry.teamNames.length > 0 && (
-                                                <div className="mt-3 text-xs opacity-80">
-                                                    {entry.teamNames.join(', ')}
-                                                </div>
-                                            )}
-                                            {isUpdating && (
-                                                <div className="mt-3 text-xs font-semibold">상태 저장 중...</div>
-                                            )}
+                                            {session.isActive ? <Lock size={14} /> : <LockOpen size={14} />}
+                                            {isToggling ? '변경 중...' : session.isActive ? '마감' : '마감 취소'}
                                         </button>
-                                    );
-                                })}
-                            </div>
-                        </div>
-                    ) : (
-                        <div className="px-6 py-16 text-center text-sm text-slate-500">
-                            왼쪽에서 출석 세션을 선택하면 상태를 바로 수정할 수 있습니다.
+                                    </div>
+                                </div>
+                            </button>
+                        );
+                    })}
+
+                    {sessions.length === 0 && (
+                        <div className="px-6 py-12 text-center text-sm text-slate-500">
+                            아직 등록된 출석 세션이 없습니다.
                         </div>
                     )}
-                </section>
-            </div>
+                </div>
+            </section>
 
             <AppDialog
                 isOpen={isCreateDialogOpen}
@@ -616,6 +546,97 @@ export const AttendanceSessionManager: React.FC<AttendanceSessionManagerProps> =
                         </button>
                     </div>
                 </form>
+            </AppDialog>
+
+            <AppDialog
+                isOpen={isDetailDialogOpen}
+                title={selectedSession?.title ?? '출석 세션'}
+                description={selectedSession ? `${selectedSession.targetGroupLabel} · ${formatDateTime(selectedSession.startsAt)}${selectedSession.note ? ` · ${selectedSession.note}` : ''}` : '출석 상태를 조정하고 저장합니다.'}
+                size="xl"
+                onClose={() => {
+                    if (!isSavingStatuses) {
+                        setIsDetailDialogOpen(false);
+                        setDraftStatuses({});
+                    }
+                }}
+            >
+                {selectedSession ? (
+                    <div className="space-y-5">
+                        {!selectedSession.isActive && (
+                            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                                이 세션은 마감되어 있습니다. 상태를 수정하려면 목록에서 먼저 마감 취소를 눌러 주세요.
+                            </div>
+                        )}
+
+                        <div className="flex flex-wrap gap-2">
+                            {(['present', 'late', 'absent'] as AttendanceStatus[]).map((status) => (
+                                <span
+                                    key={status}
+                                    className={`rounded-full border px-3 py-1.5 text-sm font-semibold ${attendanceStatusStyles[status]}`}
+                                >
+                                    {attendanceStatusLabels[status]} {draftStatusCounts[status]}
+                                </span>
+                            ))}
+                        </div>
+
+                        <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                            카드를 누르면 출석 → 지각 → 결석 순서로 바뀌고, <span className="font-semibold text-slate-900">저장</span>을 눌렀을 때만 실제 출석 기록에 반영됩니다.
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+                            {sessionEntries.map((entry) => {
+                                const statusTone = attendanceStatusStyles[entry.draftStatus];
+
+                                return (
+                                    <button
+                                        key={entry.id}
+                                        type="button"
+                                        onClick={() => handleCycleMemberStatus(entry)}
+                                        disabled={!selectedSession.isActive || isSavingStatuses}
+                                        className={`min-h-[72px] rounded-[20px] border px-3 py-3 text-center text-sm font-semibold shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-70 ${statusTone}`}
+                                        aria-label={`${entry.memberName} ${attendanceStatusLabels[entry.draftStatus]}`}
+                                    >
+                                        {entry.memberName}
+                                    </button>
+                                );
+                            })}
+                        </div>
+
+                        <div className="flex flex-col-reverse gap-3 border-t border-slate-200 pt-5 sm:flex-row sm:justify-between">
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setDraftStatuses(buildDraftStatuses(selectedSession.entries));
+                                    setIsDetailDialogOpen(false);
+                                }}
+                                disabled={isSavingStatuses}
+                                className="inline-flex items-center justify-center rounded-2xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-50"
+                            >
+                                닫기
+                            </button>
+                            <div className="flex flex-col-reverse gap-3 sm:flex-row">
+                                <button
+                                    type="button"
+                                    onClick={() => setDraftStatuses(buildDraftStatuses(selectedSession.entries))}
+                                    disabled={isSavingStatuses || !hasDraftChanges}
+                                    className="inline-flex items-center justify-center rounded-2xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-50"
+                                >
+                                    변경 취소
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => void handleSaveStatuses()}
+                                    disabled={isSavingStatuses || !selectedSession.isActive || !hasDraftChanges}
+                                    className="inline-flex items-center justify-center rounded-2xl bg-indigo-600 px-4 py-3 text-sm font-semibold text-white transition-colors hover:bg-indigo-700 disabled:opacity-50"
+                                >
+                                    {isSavingStatuses ? '저장 중...' : '상태 저장'}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                ) : (
+                    <div className="text-sm text-slate-500">선택한 출석 세션이 없습니다.</div>
+                )}
             </AppDialog>
         </div>
     );
