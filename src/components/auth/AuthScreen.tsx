@@ -150,7 +150,7 @@ export const AuthScreen: React.FC = () => {
 
                     {isBlockedState && authError && (
                         <div className="mt-6 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-800">
-                            <div className="font-semibold">승인 또는 회원 매칭이 필요합니다.</div>
+                            <div className="font-semibold">회원 상태 또는 매칭 확인이 필요합니다.</div>
                             <div className="mt-1">{authError}</div>
                             <div className="mt-4 flex flex-wrap gap-2">
                                 <button

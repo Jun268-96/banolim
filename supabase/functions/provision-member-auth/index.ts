@@ -148,6 +148,7 @@ Deno.serve(async (request) => {
                 auth_user_id: authUserId,
                 auth_provisioned_at: new Date().toISOString(),
                 password_reset_required: true,
+                is_approved: true,
             })
             .eq('id', member.id);
 

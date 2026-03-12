@@ -224,7 +224,7 @@ export const StatsTab: React.FC = () => {
     }, [seasons, selectedSeason]);
 
     const eligibleSnapshotMembers = useMemo(
-        () => members.filter((member) => member.isApproved && member.status === 'active'),
+        () => members.filter((member) => member.status === 'active' && Boolean(member.authUserId)),
         [members],
     );
 

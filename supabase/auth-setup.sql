@@ -121,7 +121,7 @@ begin
             members.id,
             members.name,
             public.member_role_scope(members.role_id),
-            members.is_approved and members.is_visible and members.status <> 'inactive',
+            members.is_visible and members.status = 'active' and members.auth_user_id is not null and members.login_email is not null,
             coalesce(members.password_reset_required, false)
         into
             v_member_id,

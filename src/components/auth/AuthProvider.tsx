@@ -85,7 +85,7 @@ const getProfileAccessMessage = (profile: UserProfile) => {
     }
 
     if (!profile.isActive) {
-        return '회원 정보는 확인되었지만 아직 승인되지 않았거나 비활성화되어 있습니다. 운영진에게 승인 상태를 확인해 주세요.';
+        return '회원 정보는 확인되었지만 현재 보류 또는 비활성 상태입니다. 운영진에게 회원 상태를 확인해 주세요.';
     }
 
     return null;

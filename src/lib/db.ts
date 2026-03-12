@@ -944,6 +944,7 @@ export const provisionMemberPasswordAuth = async (memberId: string): Promise<{
                     authUserId: entry.authUserId ?? createLocalId('auth'),
                     authProvisionedAt: provisionedAt,
                     passwordResetRequired: true,
+                    isApproved: true,
                 }
                 : entry,
         );
@@ -1551,7 +1552,7 @@ export const addMember = async (name: string, loginEmail?: string | null): Promi
             authUserId: null,
             authProvisionedAt: null,
             passwordResetRequired: false,
-            isApproved: false,
+            isApproved: true,
             roleName: null,
             teamName: null,
             teamIds: [],
@@ -1573,7 +1574,6 @@ export const addMember = async (name: string, loginEmail?: string | null): Promi
                 changes: {
                     loginEmail: { to: normalizedLoginEmail },
                     status: { to: newMember.status },
-                    approval: { to: newMember.isApproved },
                 },
             },
         });
@@ -1587,7 +1587,7 @@ export const addMember = async (name: string, loginEmail?: string | null): Promi
             .insert({
                 name,
                 login_email: normalizedLoginEmail,
-                is_approved: false,
+                is_approved: true,
                 status: 'active',
             })
             .select('id, name, login_email, is_approved, status, joined_at')
@@ -1625,7 +1625,7 @@ export const addMember = async (name: string, loginEmail?: string | null): Promi
             authUserId: null,
             authProvisionedAt: null,
             passwordResetRequired: false,
-            isApproved: false,
+            isApproved: true,
             roleId: null,
             roleName: null,
             teamId: null,
@@ -1648,7 +1648,6 @@ export const addMember = async (name: string, loginEmail?: string | null): Promi
                 changes: {
                     loginEmail: { to: normalizedLoginEmail },
                     status: { to: newMember.status },
-                    approval: { to: newMember.isApproved },
                 },
             },
         });
