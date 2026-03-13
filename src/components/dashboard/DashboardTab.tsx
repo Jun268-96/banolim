@@ -1,16 +1,19 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowUpDown, ChevronDown, ChevronUp, CircleHelp, Clock3, FileText, History, KeyRound, Mail, Network, RotateCcw, Search, ShieldAlert, TableProperties, Trash2, Upload, UserPlus, Users, XCircle } from 'lucide-react';
+import { ArrowUpDown, Check, ChevronDown, ChevronUp, CircleHelp, Clock3, FileText, History, KeyRound, Mail, Network, Pencil, RotateCcw, Search, ShieldAlert, TableProperties, Trash2, Upload, UserPlus, Users, XCircle } from 'lucide-react';
 import type { AuditLogEntry, Member, MemberStatus, RoleSummary, TeamSummary, TeamType } from '../../types';
 import {
     addTeam,
     addMember,
+    deleteTeam,
     deleteMember,
     getAuditLogs,
     getMembers,
     provisionMemberPasswordAuth,
     getRoles,
     getTeams,
-    setMemberTeams,
+    hardDeleteHiddenMember,
+    replaceTeamMembers,
+    updateTeam,
     updateMember,
 } from '../../lib/db';
 import { useAuth } from '../auth/auth-context';
@@ -315,7 +318,7 @@ const getHistoryChangeBadges = (entry: AuditLogEntry) => {
 
     if (changes.role) badges.push('직책/권한');
     if (changes.loginEmail) badges.push('로그인 이메일');
-    if (changes.team) badges.push('팀');
+    if (changes.team || changes.teams) badges.push('팀');
     if (changes.status) badges.push('상태');
     if (changes.visibility) badges.push('노출');
     if (changes.name) badges.push('이름');
@@ -344,12 +347,16 @@ export const DashboardTab: React.FC = () => {
     const [openFilterPanel, setOpenFilterPanel] = useState<MemberFilterPanel>(null);
     const [selectedTeamManagementId, setSelectedTeamManagementId] = useState<string | null>(null);
     const [teamAssignmentQuery, setTeamAssignmentQuery] = useState('');
+    const [draftTeamMemberIds, setDraftTeamMemberIds] = useState<string[]>([]);
     const [historyMemberId, setHistoryMemberId] = useState<string | null>(null);
     const [bulkCsvText, setBulkCsvText] = useState('');
     const [bulkImportStatus, setBulkImportStatus] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [savingMemberId, setSavingMemberId] = useState<string | null>(null);
-    const [savingTeamMemberId, setSavingTeamMemberId] = useState<string | null>(null);
+    const [hardDeletingMemberId, setHardDeletingMemberId] = useState<string | null>(null);
+    const [isSavingTeamAssignment, setIsSavingTeamAssignment] = useState(false);
+    const [isSavingTeamEdit, setIsSavingTeamEdit] = useState(false);
+    const [isDeletingTeam, setIsDeletingTeam] = useState(false);
     const [isImportingMembers, setIsImportingMembers] = useState(false);
     const [provisioningMemberId, setProvisioningMemberId] = useState<string | null>(null);
     const [provisionedAccount, setProvisionedAccount] = useState<{
@@ -364,9 +371,15 @@ export const DashboardTab: React.FC = () => {
     const [isAddMemberDialogOpen, setIsAddMemberDialogOpen] = useState(false);
     const [isAddTeamDialogOpen, setIsAddTeamDialogOpen] = useState(false);
     const [isTeamAssignmentDialogOpen, setIsTeamAssignmentDialogOpen] = useState(false);
+    const [isEditTeamDialogOpen, setIsEditTeamDialogOpen] = useState(false);
     const [isRoleSettingsDialogOpen, setIsRoleSettingsDialogOpen] = useState(false);
     const [isHistoryOpen, setIsHistoryOpen] = useState(false);
     const [isHiddenMembersOpen, setIsHiddenMembersOpen] = useState(false);
+    const [editingTeamId, setEditingTeamId] = useState<string | null>(null);
+    const [editingTeamName, setEditingTeamName] = useState('');
+    const [editingTeamType, setEditingTeamType] = useState<TeamType>('core');
+    const [teamIdPendingDelete, setTeamIdPendingDelete] = useState<string | null>(null);
+    const [hiddenMemberIdPendingDelete, setHiddenMemberIdPendingDelete] = useState<string | null>(null);
 
     const refreshData = async () => {
         setIsLoading(true);
@@ -590,6 +603,8 @@ export const DashboardTab: React.FC = () => {
         [members, searchQueryNormalized, selectedRoleFilter, selectedStatusFilter, selectedTeamFilter],
     );
 
+    const allMembers = useMemo(() => [...members, ...hiddenMembers], [hiddenMembers, members]);
+
     const selectedTeamForManagement = useMemo(
         () => teams.find((team) => team.id === selectedTeamManagementId) ?? teams[0] ?? null,
         [selectedTeamManagementId, teams],
@@ -608,6 +623,19 @@ export const DashboardTab: React.FC = () => {
             .sort((a, b) => a.name.localeCompare(b.name));
     }, [members, selectedTeamForManagement]);
 
+    const hiddenTeamMembers = useMemo(() => {
+        if (!selectedTeamForManagement) {
+            return [];
+        }
+
+        return [...hiddenMembers]
+            .filter((member) => {
+                const teamIds = member.teamIds ?? [];
+                return teamIds.includes(selectedTeamForManagement.id) || member.teamId === selectedTeamForManagement.id;
+            })
+            .sort((a, b) => a.name.localeCompare(b.name));
+    }, [hiddenMembers, selectedTeamForManagement]);
+
     const assignableMembers = useMemo(() => {
         const query = teamAssignmentQuery.trim().toLowerCase();
         const baseRows = [...members].sort((a, b) => a.name.localeCompare(b.name));
@@ -621,6 +649,37 @@ export const DashboardTab: React.FC = () => {
             return member.name.toLowerCase().includes(query) || roleName.includes(query);
         });
     }, [members, teamAssignmentQuery]);
+
+    const actualAssignedMemberIds = useMemo(
+        () => dedupeTeamIds([...teamMembers.map((member) => member.id), ...hiddenTeamMembers.map((member) => member.id)]).sort((left, right) => left.localeCompare(right)),
+        [hiddenTeamMembers, teamMembers],
+    );
+
+    const persistedDraftTeamMemberIds = useMemo(
+        () => dedupeTeamIds([...draftTeamMemberIds, ...hiddenTeamMembers.map((member) => member.id)]).sort((left, right) => left.localeCompare(right)),
+        [draftTeamMemberIds, hiddenTeamMembers],
+    );
+
+    const hasTeamAssignmentChanges = useMemo(() => {
+        if (actualAssignedMemberIds.length !== persistedDraftTeamMemberIds.length) {
+            return true;
+        }
+
+        return actualAssignedMemberIds.some((memberId, index) => memberId !== persistedDraftTeamMemberIds[index]);
+    }, [actualAssignedMemberIds, persistedDraftTeamMemberIds]);
+
+    const editingTeam = useMemo(
+        () => teams.find((team) => team.id === editingTeamId) ?? null,
+        [editingTeamId, teams],
+    );
+    const teamPendingDelete = useMemo(
+        () => teams.find((team) => team.id === teamIdPendingDelete) ?? null,
+        [teamIdPendingDelete, teams],
+    );
+    const hiddenMemberPendingDelete = useMemo(
+        () => hiddenMembers.find((member) => member.id === hiddenMemberIdPendingDelete) ?? null,
+        [hiddenMemberIdPendingDelete, hiddenMembers],
+    );
 
     const memberById = useMemo(() => new Map(members.map((member) => [member.id, member])), [members]);
     const memberNameSuggestions = useMemo(
@@ -712,6 +771,21 @@ export const DashboardTab: React.FC = () => {
 
     const parsedBulkImport = useMemo(() => parseMemberCsv(bulkCsvText), [bulkCsvText]);
 
+    const showActionError = (error: unknown) => {
+        alert(error instanceof Error ? error.message : '작업을 완료하지 못했습니다.');
+    };
+
+    const openTeamAssignmentDialog = (team: TeamSummary) => {
+        setSelectedTeamManagementId(team.id);
+        setTeamAssignmentQuery('');
+        setDraftTeamMemberIds(
+            members
+                .filter((member) => (member.teamIds ?? []).includes(team.id) || member.teamId === team.id)
+                .map((member) => member.id),
+        );
+        setIsTeamAssignmentDialogOpen(true);
+    };
+
     const handleAddMember = async (event: React.FormEvent) => {
         event.preventDefault();
         if (!newMemberName.trim()) return;
@@ -769,18 +843,96 @@ export const DashboardTab: React.FC = () => {
         setSelectedTeamManagementId(created.id);
     };
 
-    const handleToggleTeamMember = async (member: Member, teamId: string, nextChecked: boolean) => {
-        const currentTeamIds = member.teamIds ?? (member.teamId ? [member.teamId] : []);
-        const nextTeamIds = nextChecked
-            ? dedupeTeamIds([...currentTeamIds, teamId])
-            : currentTeamIds.filter((currentTeamId) => currentTeamId !== teamId);
+    const handleOpenTeamEdit = (team: TeamSummary) => {
+        setEditingTeamId(team.id);
+        setEditingTeamName(team.name);
+        setEditingTeamType(team.type);
+        setIsEditTeamDialogOpen(true);
+    };
 
-        setSavingTeamMemberId(member.id);
+    const handleSaveTeamEdit = async () => {
+        if (!editingTeamId || !editingTeamName.trim()) {
+            return;
+        }
+
+        setIsSavingTeamEdit(true);
         try {
-            await setMemberTeams(member.id, nextTeamIds);
+            await updateTeam(editingTeamId, {
+                name: editingTeamName.trim(),
+                type: editingTeamType,
+            });
             await refreshData();
+            setIsEditTeamDialogOpen(false);
+        } catch (error) {
+            showActionError(error);
         } finally {
-            setSavingTeamMemberId(null);
+            setIsSavingTeamEdit(false);
+        }
+    };
+
+    const handleSaveTeamAssignment = async () => {
+        if (!selectedTeamForManagement) {
+            return;
+        }
+
+        setIsSavingTeamAssignment(true);
+        try {
+            await replaceTeamMembers(selectedTeamForManagement.id, persistedDraftTeamMemberIds);
+            await refreshData();
+            setIsTeamAssignmentDialogOpen(false);
+        } catch (error) {
+            showActionError(error);
+        } finally {
+            setIsSavingTeamAssignment(false);
+        }
+    };
+
+    const handleResetTeamAssignmentDraft = () => {
+        if (!selectedTeamForManagement) {
+            return;
+        }
+
+        setDraftTeamMemberIds(
+            members
+                .filter((member) => (member.teamIds ?? []).includes(selectedTeamForManagement.id) || member.teamId === selectedTeamForManagement.id)
+                .map((member) => member.id),
+        );
+    };
+
+    const handleDeleteTeamConfirm = async () => {
+        if (!teamPendingDelete) {
+            return;
+        }
+
+        setIsDeletingTeam(true);
+        try {
+            await deleteTeam(teamPendingDelete.id);
+            await refreshData();
+            setIsTeamAssignmentDialogOpen(false);
+            setIsEditTeamDialogOpen(false);
+            setEditingTeamId(null);
+            setTeamIdPendingDelete(null);
+        } catch (error) {
+            showActionError(error);
+        } finally {
+            setIsDeletingTeam(false);
+        }
+    };
+
+    const handleHardDeleteMemberConfirm = async () => {
+        if (!hiddenMemberPendingDelete) {
+            return;
+        }
+
+        setHardDeletingMemberId(hiddenMemberPendingDelete.id);
+        try {
+            await hardDeleteHiddenMember(hiddenMemberPendingDelete.id);
+            await refreshData();
+            setHiddenMemberIdPendingDelete(null);
+        } catch (error) {
+            showActionError(error);
+        } finally {
+            setHardDeletingMemberId(null);
         }
     };
 
@@ -1463,31 +1615,53 @@ export const DashboardTab: React.FC = () => {
 
                         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
                             {teams.map((team) => {
-                                const assignedCount = members.filter((member) => (member.teamIds ?? []).includes(team.id) || member.teamId === team.id).length;
+                                const visibleAssignedMembers = members.filter((member) => (member.teamIds ?? []).includes(team.id) || member.teamId === team.id);
+                                const hiddenAssignedCount = hiddenMembers.filter((member) => (member.teamIds ?? []).includes(team.id) || member.teamId === team.id).length;
+                                const assignedCount = visibleAssignedMembers.length + hiddenAssignedCount;
 
                                 return (
-                                    <button
+                                    <div
                                         key={team.id}
-                                        type="button"
-                                        onClick={() => {
-                                            setSelectedTeamManagementId(team.id);
-                                            setTeamAssignmentQuery('');
-                                            setIsTeamAssignmentDialogOpen(true);
-                                        }}
                                         className="rounded-[24px] border border-slate-200 bg-white px-5 py-5 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-indigo-300 hover:shadow-md"
                                     >
                                         <div className="flex items-start justify-between gap-3">
-                                            <div>
+                                            <button
+                                                type="button"
+                                                onClick={() => openTeamAssignmentDialog(team)}
+                                                className="min-w-0 flex-1 text-left"
+                                            >
                                                 <div className="font-semibold text-slate-900">{team.name}</div>
                                                 <div className="mt-1 text-sm text-slate-500">{teamTypeLabels[team.type]}</div>
+                                            </button>
+                                            <div className="flex items-center gap-2">
+                                                <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600">
+                                                    {assignedCount}명
+                                                </span>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleOpenTeamEdit(team)}
+                                                    className="inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-500 transition-colors hover:bg-slate-50 hover:text-slate-900"
+                                                    title="팀 수정"
+                                                >
+                                                    <Pencil size={16} />
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setTeamIdPendingDelete(team.id)}
+                                                    className="inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-500 transition-colors hover:bg-rose-50 hover:text-rose-600"
+                                                    title="팀 삭제"
+                                                >
+                                                    <Trash2 size={16} />
+                                                </button>
                                             </div>
-                                            <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600">
-                                                {assignedCount}명
-                                            </span>
                                         </div>
-                                        <div className="mt-4 flex flex-wrap gap-2">
-                                            {members
-                                                .filter((member) => (member.teamIds ?? []).includes(team.id) || member.teamId === team.id)
+                                        <button
+                                            type="button"
+                                            onClick={() => openTeamAssignmentDialog(team)}
+                                            className="mt-4 block w-full text-left"
+                                        >
+                                            <div className="flex flex-wrap gap-2">
+                                                {visibleAssignedMembers
                                                 .slice(0, 5)
                                                 .map((member) => (
                                                     <span
@@ -1497,13 +1671,19 @@ export const DashboardTab: React.FC = () => {
                                                         {member.name}
                                                     </span>
                                                 ))}
-                                            {assignedCount > 5 && (
-                                                <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-500">
-                                                    +{assignedCount - 5}명
-                                                </span>
-                                            )}
-                                        </div>
-                                    </button>
+                                                {assignedCount > 5 && (
+                                                    <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-500">
+                                                        +{assignedCount - 5}명
+                                                    </span>
+                                                )}
+                                                {hiddenAssignedCount > 0 && (
+                                                    <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700">
+                                                        숨김 {hiddenAssignedCount}명
+                                                    </span>
+                                                )}
+                                            </div>
+                                        </button>
+                                    </div>
                                 );
                             })}
                         </div>
@@ -1781,17 +1961,28 @@ export const DashboardTab: React.FC = () => {
                                                 </div>
                                             </div>
 
-                                            <button
-                                                type="button"
-                                                disabled={savingMemberId === member.id}
-                                                onClick={() => {
-                                                    void handleRestoreMember(member.id);
-                                                }}
-                                                className="inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm font-semibold text-emerald-700 transition-colors hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
-                                            >
-                                                <RotateCcw size={16} />
-                                                {savingMemberId === member.id ? '복구 중' : '복구'}
-                                            </button>
+                                            <div className="flex flex-wrap gap-2">
+                                                <button
+                                                    type="button"
+                                                    disabled={savingMemberId === member.id}
+                                                    onClick={() => {
+                                                        void handleRestoreMember(member.id);
+                                                    }}
+                                                    className="inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm font-semibold text-emerald-700 transition-colors hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
+                                                >
+                                                    <RotateCcw size={16} />
+                                                    {savingMemberId === member.id ? '복구 중' : '복구'}
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    disabled={hardDeletingMemberId === member.id}
+                                                    onClick={() => setHiddenMemberIdPendingDelete(member.id)}
+                                                    className="inline-flex items-center justify-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2.5 text-sm font-semibold text-rose-700 transition-colors hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
+                                                >
+                                                    <Trash2 size={16} />
+                                                    {hardDeletingMemberId === member.id ? '삭제 중' : '영구 삭제'}
+                                                </button>
+                                            </div>
                                         </div>
                                     ))}
                                 </div>
@@ -2056,9 +2247,15 @@ export const DashboardTab: React.FC = () => {
             >
                 <form
                     onSubmit={async (event) => {
-                        await handleAddTeam(event);
-                        setIsAddTeamDialogOpen(false);
-                        setIsTeamAssignmentDialogOpen(true);
+                        try {
+                            await handleAddTeam(event);
+                            setDraftTeamMemberIds([]);
+                            setTeamAssignmentQuery('');
+                            setIsAddTeamDialogOpen(false);
+                            setIsTeamAssignmentDialogOpen(true);
+                        } catch (error) {
+                            showActionError(error);
+                        }
                     }}
                     className="space-y-4"
                 >
@@ -2106,9 +2303,73 @@ export const DashboardTab: React.FC = () => {
             </AppDialog>
 
             <AppDialog
+                isOpen={isEditTeamDialogOpen && Boolean(editingTeam)}
+                title={editingTeam ? `${editingTeam.name} 팀 수정` : '팀 수정'}
+                description="팀 이름과 팀 유형을 수정할 수 있습니다."
+                size="md"
+                onClose={() => {
+                    setIsEditTeamDialogOpen(false);
+                    setEditingTeamId(null);
+                }}
+            >
+                {editingTeam && (
+                    <div className="space-y-4">
+                        <label className="block space-y-2">
+                            <span className="text-sm font-medium text-slate-700">팀 이름</span>
+                            <input
+                                type="text"
+                                value={editingTeamName}
+                                onChange={(event) => setEditingTeamName(event.target.value)}
+                                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                            />
+                        </label>
+                        <label className="block space-y-2">
+                            <span className="text-sm font-medium text-slate-700">팀 유형</span>
+                            <select
+                                value={editingTeamType}
+                                onChange={(event) => setEditingTeamType(event.target.value as TeamType)}
+                                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                            >
+                                {teamTypeOptions.map((teamType) => (
+                                    <option key={teamType} value={teamType}>
+                                        {teamTypeLabels[teamType]}
+                                    </option>
+                                ))}
+                            </select>
+                        </label>
+                        <div className="rounded-[24px] border border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-600">
+                            현재 배정 인원 {allMembers.filter((member) => (member.teamIds ?? []).includes(editingTeam.id) || member.teamId === editingTeam.id).length}명
+                        </div>
+                        <div className="flex flex-wrap justify-end gap-2 pt-2">
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setIsEditTeamDialogOpen(false);
+                                    setEditingTeamId(null);
+                                }}
+                                className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
+                            >
+                                취소
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    void handleSaveTeamEdit();
+                                }}
+                                disabled={isSavingTeamEdit || !editingTeamName.trim()}
+                                className="rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-700 disabled:opacity-50"
+                            >
+                                {isSavingTeamEdit ? '저장 중...' : '저장'}
+                            </button>
+                        </div>
+                    </div>
+                )}
+            </AppDialog>
+
+            <AppDialog
                 isOpen={isTeamAssignmentDialogOpen && Boolean(selectedTeamForManagement)}
                 title={selectedTeamForManagement ? `${selectedTeamForManagement.name} 팀원 지정` : '팀원 지정'}
-                description="체크를 켜면 해당 팀에 추가되고, 끄면 이 팀에서만 빠집니다. 다른 팀 소속은 유지됩니다."
+                description="카드를 눌러 선택한 뒤 저장할 때만 실제 팀 배정에 반영됩니다."
                 size="xl"
                 onClose={() => setIsTeamAssignmentDialogOpen(false)}
             >
@@ -2119,7 +2380,7 @@ export const DashboardTab: React.FC = () => {
                                 <div className="text-sm font-semibold text-indigo-600">팀 지정</div>
                                 <div className="mt-1 text-xl font-bold text-slate-900">{selectedTeamForManagement.name}</div>
                                 <div className="mt-2 text-sm text-slate-500">
-                                    {teamTypeLabels[selectedTeamForManagement.type]} · 현재 {teamMembers.length}명 배정
+                                    {teamTypeLabels[selectedTeamForManagement.type]} · 현재 {actualAssignedMemberIds.length}명 배정
                                 </div>
                             </div>
                             <label className="relative block lg:w-[320px]">
@@ -2134,62 +2395,213 @@ export const DashboardTab: React.FC = () => {
                             </label>
                         </div>
 
-                        <div className="flex flex-wrap gap-2">
-                            {teamMembers.length > 0 ? teamMembers.map((member) => (
+                        <div className="rounded-[24px] border border-slate-200 bg-slate-50 px-4 py-4">
+                            <div className="flex flex-wrap items-center gap-2">
+                                <span className="rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-700">
+                                    선택 {draftTeamMemberIds.length}명
+                                </span>
+                                <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600">
+                                    숨김 유지 {hiddenTeamMembers.length}명
+                                </span>
+                                {hasTeamAssignmentChanges && (
+                                    <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700">
+                                        저장 전 변경 사항 있음
+                                    </span>
+                                )}
+                            </div>
+                            <div className="mt-3 flex flex-wrap gap-2">
+                                {teamMembers.length > 0 ? teamMembers.map((member) => (
                                 <span
                                     key={`${selectedTeamForManagement.id}-${member.id}`}
                                     className="rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-700"
                                 >
                                     {member.name}
                                 </span>
-                            )) : (
-                                <span className="text-sm text-slate-400">아직 배정된 멤버가 없습니다.</span>
-                            )}
+                                )) : (
+                                    <span className="text-sm text-slate-400">현재 공개 멤버 중 배정된 인원이 없습니다.</span>
+                                )}
+                                {hiddenTeamMembers.map((member) => (
+                                    <span
+                                        key={`${selectedTeamForManagement.id}-hidden-${member.id}`}
+                                        className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700"
+                                    >
+                                        숨김 · {member.name}
+                                    </span>
+                                ))}
+                            </div>
                         </div>
 
-                        <div className="space-y-3">
+                        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-5">
                             {assignableMembers.map((member) => {
                                 const memberTeams = getMemberTeamLabels(member);
-                                const isChecked = memberTeams.length > 0
-                                    ? (member.teamIds ?? []).includes(selectedTeamForManagement.id) || member.teamId === selectedTeamForManagement.id
-                                    : member.teamId === selectedTeamForManagement.id;
+                                const isChecked = draftTeamMemberIds.includes(member.id);
 
                                 return (
-                                    <label
+                                    <button
                                         key={member.id}
-                                        className="flex flex-col gap-3 rounded-[24px] border border-slate-200 bg-slate-50 px-4 py-4 transition-colors hover:border-slate-300 sm:flex-row sm:items-center sm:justify-between"
+                                        type="button"
+                                        onClick={() => {
+                                            setDraftTeamMemberIds((current) =>
+                                                current.includes(member.id)
+                                                    ? current.filter((memberId) => memberId !== member.id)
+                                                    : [...current, member.id],
+                                            );
+                                        }}
+                                        className={`rounded-[24px] border px-4 py-4 text-left transition-all ${
+                                            isChecked
+                                                ? 'border-indigo-400 bg-indigo-50 shadow-sm shadow-indigo-100'
+                                                : 'border-slate-200 bg-white hover:border-slate-300 hover:shadow-sm'
+                                        }`}
                                     >
-                                        <div className="min-w-0">
-                                            <div className="flex items-center gap-3">
-                                                <input
-                                                    type="checkbox"
-                                                    checked={isChecked}
-                                                    disabled={savingTeamMemberId === member.id}
-                                                    onChange={(event) => {
-                                                        void handleToggleTeamMember(member, selectedTeamForManagement.id, event.target.checked);
-                                                    }}
-                                                    className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                                                />
+                                        <div className="flex items-start justify-between gap-3">
+                                            <div className="min-w-0">
                                                 <div>
                                                     <div className="font-semibold text-slate-900">{member.name}</div>
                                                     <div className="mt-1 text-sm text-slate-500">{member.roleName ?? '직책 미지정'}</div>
                                                 </div>
                                             </div>
+                                            <span className={`inline-flex h-7 w-7 items-center justify-center rounded-full border ${isChecked ? 'border-indigo-300 bg-indigo-600 text-white' : 'border-slate-200 bg-white text-slate-300'}`}>
+                                                <Check size={15} />
+                                            </span>
                                         </div>
-                                        <div className="flex flex-wrap gap-2 sm:justify-end">
+                                        <div className="mt-4 flex flex-wrap gap-2">
                                             {memberTeams.length > 0 ? memberTeams.map((teamName) => (
-                                                <span key={`${member.id}-${teamName}`} className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600">
+                                                <span
+                                                    key={`${member.id}-${teamName}`}
+                                                    className={`rounded-full border px-3 py-1 text-xs font-semibold ${teamName === selectedTeamForManagement.name && isChecked ? 'border-indigo-200 bg-white text-indigo-700' : 'border-slate-200 bg-slate-50 text-slate-600'}`}
+                                                >
                                                     {teamName}
                                                 </span>
                                             )) : (
-                                                <span className="rounded-full border border-dashed border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-400">
+                                                <span className="rounded-full border border-dashed border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-400">
                                                     팀 미지정
                                                 </span>
                                             )}
                                         </div>
-                                    </label>
+                                    </button>
                                 );
                             })}
+                        </div>
+
+                        {assignableMembers.length === 0 && (
+                            <div className="rounded-[24px] border border-dashed border-slate-300 bg-slate-50 px-6 py-10 text-center text-sm text-slate-500">
+                                검색 조건에 맞는 공개 멤버가 없습니다.
+                            </div>
+                        )}
+
+                        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-4">
+                            <div className="text-sm text-slate-500">
+                                숨김 멤버 {hiddenTeamMembers.length}명은 이 모달에서 노출되지 않지만 저장 시 그대로 유지됩니다.
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                                <button
+                                    type="button"
+                                    onClick={handleResetTeamAssignmentDraft}
+                                    className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
+                                >
+                                    초기화
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setIsTeamAssignmentDialogOpen(false)}
+                                    className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
+                                >
+                                    취소
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        void handleSaveTeamAssignment();
+                                    }}
+                                    disabled={isSavingTeamAssignment || !hasTeamAssignmentChanges}
+                                    className="rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-700 disabled:opacity-50"
+                                >
+                                    {isSavingTeamAssignment ? '저장 중...' : '저장'}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
+            </AppDialog>
+
+            <AppDialog
+                isOpen={Boolean(teamPendingDelete)}
+                title={teamPendingDelete ? `${teamPendingDelete.name} 팀 삭제` : '팀 삭제'}
+                description="팀을 삭제하면 팀 연결이 해제되고, 대표 팀은 남은 첫 팀으로 다시 계산됩니다."
+                size="md"
+                onClose={() => setTeamIdPendingDelete(null)}
+            >
+                {teamPendingDelete && (
+                    <div className="space-y-4">
+                        <div className="rounded-[24px] border border-rose-200 bg-rose-50 px-4 py-4 text-sm leading-7 text-rose-900">
+                            이 팀에 연결된 멤버가 있더라도 삭제할 수 있습니다. 배정된 멤버의 대표 팀은 남아 있는 팀 중 첫 번째 팀으로 자동 재계산됩니다.
+                        </div>
+                        <div className="rounded-[24px] border border-slate-200 bg-slate-50 px-4 py-4">
+                            <div className="text-sm font-semibold text-slate-900">삭제 영향</div>
+                            <div className="mt-2 text-sm text-slate-600">
+                                총 {allMembers.filter((member) => (member.teamIds ?? []).includes(teamPendingDelete.id) || member.teamId === teamPendingDelete.id).length}명
+                                <span className="mx-2 text-slate-300">·</span>
+                                공개 {members.filter((member) => (member.teamIds ?? []).includes(teamPendingDelete.id) || member.teamId === teamPendingDelete.id).length}명
+                                <span className="mx-2 text-slate-300">·</span>
+                                숨김 {hiddenMembers.filter((member) => (member.teamIds ?? []).includes(teamPendingDelete.id) || member.teamId === teamPendingDelete.id).length}명
+                            </div>
+                        </div>
+                        <div className="flex flex-wrap justify-end gap-2">
+                            <button
+                                type="button"
+                                onClick={() => setTeamIdPendingDelete(null)}
+                                className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
+                            >
+                                취소
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    void handleDeleteTeamConfirm();
+                                }}
+                                disabled={isDeletingTeam}
+                                className="rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-rose-700 disabled:opacity-50"
+                            >
+                                {isDeletingTeam ? '삭제 중...' : '팀 삭제'}
+                            </button>
+                        </div>
+                    </div>
+                )}
+            </AppDialog>
+
+            <AppDialog
+                isOpen={Boolean(hiddenMemberPendingDelete)}
+                title={hiddenMemberPendingDelete ? `${hiddenMemberPendingDelete.name} 영구 삭제` : '영구 삭제'}
+                description="활동 기록이 남아 있는 숨김 멤버는 영구 삭제할 수 없습니다."
+                size="md"
+                onClose={() => setHiddenMemberIdPendingDelete(null)}
+            >
+                {hiddenMemberPendingDelete && (
+                    <div className="space-y-4">
+                        <div className="rounded-[24px] border border-rose-200 bg-rose-50 px-4 py-4 text-sm leading-7 text-rose-900">
+                            멤버 정보, 팀 연결, 배지, 계정 연결 정보가 함께 삭제됩니다. 이 작업은 되돌릴 수 없습니다.
+                        </div>
+                        <div className="rounded-[24px] border border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-600">
+                            활동 기록이 하나라도 있으면 서버에서 삭제를 거부하고 숨김 상태만 유지됩니다.
+                        </div>
+                        <div className="flex flex-wrap justify-end gap-2">
+                            <button
+                                type="button"
+                                onClick={() => setHiddenMemberIdPendingDelete(null)}
+                                className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
+                            >
+                                취소
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    void handleHardDeleteMemberConfirm();
+                                }}
+                                disabled={hardDeletingMemberId === hiddenMemberPendingDelete.id}
+                                className="rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-rose-700 disabled:opacity-50"
+                            >
+                                {hardDeletingMemberId === hiddenMemberPendingDelete.id ? '삭제 중...' : '영구 삭제'}
+                            </button>
                         </div>
                     </div>
                 )}

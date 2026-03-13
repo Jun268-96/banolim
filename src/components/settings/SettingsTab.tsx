@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { ArrowDown, ArrowUp, CalendarDays, ImagePlus, Megaphone, Plus, Settings, Trash2 } from 'lucide-react';
-import type { AnnouncementItem, ScheduleEventItem, SeasonStatus, SeasonSummary, SiteBanner } from '../../types';
+import type { AnnouncementItem, ScheduleEventItem, SeasonDataResetResult, SeasonStatus, SeasonSummary, SiteBanner } from '../../types';
 import {
     addAnnouncement,
     addScheduleEvent,
@@ -14,6 +14,9 @@ import {
     getSeasons,
     getSiteBanners,
     moveSiteBanner,
+    resetActivityDataCurrentSeason,
+    resetAttendanceDataCurrentSeason,
+    resetManualActivityDataCurrentSeason,
 } from '../../lib/db';
 import { SettingsDialog } from './SettingsDialog';
 
@@ -31,6 +34,7 @@ const badgeClassByStatus: Record<SeasonStatus, string> = {
 };
 
 type SettingsDialogType = 'season' | 'announcement' | 'schedule' | 'banner' | null;
+type DataResetAction = 'activity' | 'attendance' | 'manual';
 
 interface SectionHeaderProps {
     icon: React.ReactNode;
@@ -68,6 +72,28 @@ const EmptyState: React.FC<{ message: string }> = ({ message }) => (
     </div>
 );
 
+const dataResetConfig: Record<DataResetAction, {
+    title: string;
+    description: string;
+    confirmationText: string;
+}> = {
+    activity: {
+        title: '활동 내역 초기화',
+        description: '현재 시즌의 활동 기록, 포인트 원장, 정정 요청, 리캡 저장본을 비웁니다.',
+        confirmationText: '활동 내역 초기화',
+    },
+    attendance: {
+        title: '출석 세션 초기화',
+        description: '현재 시즌의 출석 세션, 출석 대상자, 출석 규칙 기반 활동 기록과 리캡 저장본을 비웁니다.',
+        confirmationText: '출석 세션 초기화',
+    },
+    manual: {
+        title: '기록 세션 초기화',
+        description: '현재 시즌의 일반 활동 기록만 비우고 출석 기록은 유지합니다. 리캡 저장본은 함께 제거됩니다.',
+        confirmationText: '기록 세션 초기화',
+    },
+};
+
 export const SettingsTab: React.FC = () => {
     const [seasons, setSeasons] = useState<SeasonSummary[]>([]);
     const [announcements, setAnnouncements] = useState<AnnouncementItem[]>([]);
@@ -99,6 +125,10 @@ export const SettingsTab: React.FC = () => {
 
     const [activeDialog, setActiveDialog] = useState<SettingsDialogType>(null);
     const [isLoading, setIsLoading] = useState(true);
+    const [pendingResetAction, setPendingResetAction] = useState<DataResetAction | null>(null);
+    const [resetConfirmationInput, setResetConfirmationInput] = useState('');
+    const [isResettingData, setIsResettingData] = useState(false);
+    const [resetStatus, setResetStatus] = useState<string | null>(null);
 
     const refreshData = async () => {
         setIsLoading(true);
@@ -144,11 +174,28 @@ export const SettingsTab: React.FC = () => {
         };
     }, []);
 
+    const activeSeason = [...seasons]
+        .filter((season) => season.status === 'active')
+        .sort((a, b) => b.startDate.localeCompare(a.startDate))[0] ?? null;
+
     const resetBannerDraft = () => {
         setNewBannerTitle('');
         setNewBannerUrl('');
         setNewBannerFileName('');
         setNewBannerFileData(null);
+    };
+
+    const resetResetDialog = () => {
+        setPendingResetAction(null);
+        setResetConfirmationInput('');
+    };
+
+    const formatResetStatus = (action: DataResetAction, result: SeasonDataResetResult) => {
+        if (action === 'attendance') {
+            return `${result.seasonName}: 출석 세션 ${result.attendanceSessionCount ?? 0}개, 대상 ${result.attendanceSessionMemberCount ?? 0}명, 활동 ${result.activityRecordCount}건 초기화`;
+        }
+
+        return `${result.seasonName}: 활동 ${result.activityRecordCount}건, 포인트 ${result.pointLedgerCount}건 초기화`;
     };
 
     const handleAddSeason = async (event: React.FormEvent) => {
@@ -270,6 +317,35 @@ export const SettingsTab: React.FC = () => {
         if (!confirm('이 배너를 숨길까요?')) return;
         await deleteSiteBanner(id);
         await refreshData();
+    };
+
+    const handleExecuteDataReset = async () => {
+        if (!pendingResetAction) {
+            return;
+        }
+
+        const config = dataResetConfig[pendingResetAction];
+        if (resetConfirmationInput.trim() !== config.confirmationText) {
+            return;
+        }
+
+        setIsResettingData(true);
+
+        try {
+            const result = pendingResetAction === 'activity'
+                ? await resetActivityDataCurrentSeason()
+                : pendingResetAction === 'attendance'
+                    ? await resetAttendanceDataCurrentSeason()
+                    : await resetManualActivityDataCurrentSeason();
+
+            setResetStatus(formatResetStatus(pendingResetAction, result));
+            await refreshData();
+            resetResetDialog();
+        } catch (error) {
+            alert(error instanceof Error ? error.message : '데이터를 초기화하지 못했습니다.');
+        } finally {
+            setIsResettingData(false);
+        }
     };
 
     if (isLoading) {
@@ -415,6 +491,41 @@ export const SettingsTab: React.FC = () => {
                                     </div>
                                 </div>
                             ))}
+                        </div>
+                    )}
+                </div>
+            </section>
+
+            <section className="overflow-hidden rounded-[32px] border border-rose-200 bg-white shadow-sm">
+                <SectionHeader
+                    icon={<Trash2 size={18} className="text-rose-600" />}
+                    title="데이터 초기화"
+                    description={activeSeason ? `${activeSeason.name} 시즌 기준으로만 초기화됩니다. 실제 삭제는 서버 함수에서 처리됩니다.` : '진행 중인 시즌이 있어야 초기화할 수 있습니다.'}
+                />
+                <div className="space-y-4 p-5 sm:p-6">
+                    <div className="grid gap-4 xl:grid-cols-3">
+                        {(Object.entries(dataResetConfig) as Array<[DataResetAction, typeof dataResetConfig[DataResetAction]]>).map(([action, config]) => (
+                            <div key={action} className="rounded-[28px] border border-slate-200 bg-slate-50 p-5">
+                                <div className="font-semibold text-slate-900">{config.title}</div>
+                                <div className="mt-2 text-sm leading-6 text-slate-600">{config.description}</div>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setPendingResetAction(action);
+                                        setResetConfirmationInput('');
+                                    }}
+                                    disabled={!activeSeason}
+                                    className="mt-4 inline-flex h-11 items-center justify-center rounded-2xl bg-rose-600 px-4 text-sm font-semibold text-white transition-colors hover:bg-rose-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+                                >
+                                    {config.title}
+                                </button>
+                            </div>
+                        ))}
+                    </div>
+
+                    {resetStatus && (
+                        <div className="rounded-[24px] border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                            {resetStatus}
                         </div>
                     )}
                 </div>
@@ -797,6 +908,55 @@ export const SettingsTab: React.FC = () => {
                         )}
                     </div>
                 </div>
+            </SettingsDialog>
+
+            <SettingsDialog
+                isOpen={Boolean(pendingResetAction)}
+                onClose={resetResetDialog}
+                title={pendingResetAction ? dataResetConfig[pendingResetAction].title : '데이터 초기화'}
+                description={pendingResetAction ? dataResetConfig[pendingResetAction].description : undefined}
+                size="md"
+            >
+                {pendingResetAction && (
+                    <div className="space-y-5">
+                        <div className="rounded-[24px] border border-rose-200 bg-rose-50 px-4 py-4 text-sm leading-7 text-rose-900">
+                            현재 시즌 기준으로만 삭제되며, 실행 뒤에는 되돌릴 수 없습니다. 감사 로그는 서버에서 별도로 남깁니다.
+                        </div>
+                        <div className="rounded-[24px] border border-slate-200 bg-slate-50 px-4 py-4">
+                            <div className="text-sm font-semibold text-slate-900">확인 문구 입력</div>
+                            <div className="mt-2 text-sm text-slate-600">
+                                아래 문구를 정확히 입력해야 실행할 수 있습니다:
+                                <span className="ml-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700">
+                                    {dataResetConfig[pendingResetAction].confirmationText}
+                                </span>
+                            </div>
+                            <input
+                                type="text"
+                                value={resetConfirmationInput}
+                                onChange={(event) => setResetConfirmationInput(event.target.value)}
+                                className="mt-4 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none transition-all focus:border-rose-500 focus:ring-1 focus:ring-rose-500"
+                                placeholder={dataResetConfig[pendingResetAction].confirmationText}
+                            />
+                        </div>
+                        <div className="flex flex-wrap justify-end gap-2">
+                            <button
+                                type="button"
+                                onClick={resetResetDialog}
+                                className="inline-flex h-11 items-center justify-center rounded-2xl border border-slate-200 px-4 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50"
+                            >
+                                취소
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => void handleExecuteDataReset()}
+                                disabled={isResettingData || resetConfirmationInput.trim() !== dataResetConfig[pendingResetAction].confirmationText}
+                                className="inline-flex h-11 items-center justify-center rounded-2xl bg-rose-600 px-5 text-sm font-semibold text-white transition-colors hover:bg-rose-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+                            >
+                                {isResettingData ? '초기화 중...' : '초기화 실행'}
+                            </button>
+                        </div>
+                    </div>
+                )}
             </SettingsDialog>
         </div>
     );

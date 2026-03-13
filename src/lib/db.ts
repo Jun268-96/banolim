@@ -12,6 +12,7 @@ import type {
     Category,
     CorrectionRequest,
     CorrectionRequestStatus,
+    HardDeleteMemberResult,
     Member,
     MemberBadge,
     RecapSnapshot,
@@ -21,7 +22,10 @@ import type {
     RoleSummary,
     ScheduleEventItem,
     SeasonSummary,
+    SeasonDataResetResult,
     SiteBanner,
+    TeamDeleteResult,
+    TeamMemberUpdateResult,
     TeamSummary,
     TeamType,
     SeasonStatus,
@@ -105,7 +109,7 @@ const buildLocalMemberAuditSummary = (memberName: string, changes: Record<string
     if (changes.loginEmail) return `${memberName} · 로그인 이메일 변경`;
     if (changes.approval) return `${memberName} · 승인 상태 변경`;
     if (changes.status) return `${memberName} · 회원 상태 변경`;
-    if (changes.team) return `${memberName} · 소속 팀 변경`;
+    if (changes.team || changes.teams) return `${memberName} · 소속 팀 변경`;
     return `${memberName} · 회원 정보 수정`;
 };
 
@@ -139,6 +143,77 @@ const getErrorMessage = (error: unknown) => {
     }
 
     return '알 수 없는 오류';
+};
+
+const toRecord = (value: unknown): Record<string, unknown> =>
+    value && typeof value === 'object' && !Array.isArray(value)
+        ? value as Record<string, unknown>
+        : {};
+
+const getStringField = (value: unknown, key: string) => {
+    const record = toRecord(value);
+    return typeof record[key] === 'string' ? record[key] : '';
+};
+
+const getNumberField = (value: unknown, key: string) => {
+    const record = toRecord(value);
+    return typeof record[key] === 'number' ? record[key] : 0;
+};
+
+const getOptionalNumberField = (value: unknown, key: string) => {
+    const record = toRecord(value);
+    return typeof record[key] === 'number' ? record[key] : undefined;
+};
+
+const getBooleanField = (value: unknown, key: string) => {
+    const record = toRecord(value);
+    return Boolean(record[key]);
+};
+
+const parseTeamMemberUpdateResult = (value: unknown): TeamMemberUpdateResult => ({
+    teamId: getStringField(value, 'teamId'),
+    teamName: getStringField(value, 'teamName'),
+    memberCount: getNumberField(value, 'memberCount'),
+    addedCount: getNumberField(value, 'addedCount'),
+    removedCount: getNumberField(value, 'removedCount'),
+});
+
+const parseTeamDeleteResult = (value: unknown): TeamDeleteResult => ({
+    teamId: getStringField(value, 'teamId'),
+    teamName: getStringField(value, 'teamName'),
+    teamType: (getStringField(value, 'teamType') as TeamType) || 'core',
+    affectedMemberCount: getNumberField(value, 'affectedMemberCount'),
+});
+
+const parseSeasonDataResetResult = (value: unknown): SeasonDataResetResult => ({
+    seasonId: getStringField(value, 'seasonId'),
+    seasonName: getStringField(value, 'seasonName'),
+    activityRecordCount: getNumberField(value, 'activityRecordCount'),
+    pointLedgerCount: getNumberField(value, 'pointLedgerCount'),
+    correctionRequestCount: getOptionalNumberField(value, 'correctionRequestCount'),
+    recapSnapshotCount: getNumberField(value, 'recapSnapshotCount'),
+    affectedMemberCount: getNumberField(value, 'affectedMemberCount'),
+    badgeRefreshCount: getNumberField(value, 'badgeRefreshCount'),
+    attendanceSessionCount: getOptionalNumberField(value, 'attendanceSessionCount'),
+    attendanceSessionMemberCount: getOptionalNumberField(value, 'attendanceSessionMemberCount'),
+});
+
+const parseHardDeleteMemberResult = (value: unknown): HardDeleteMemberResult => {
+    const deletedCounts = toRecord(toRecord(value).deletedCounts);
+
+    return {
+        memberId: getStringField(value, 'memberId'),
+        memberName: getStringField(value, 'memberName'),
+        deletedAuthUser: getBooleanField(value, 'deletedAuthUser'),
+        deletedCounts: {
+            memberBadges: getNumberField(deletedCounts, 'memberBadges'),
+            memberTeamLinks: getNumberField(deletedCounts, 'memberTeamLinks'),
+            recapSnapshots: getNumberField(deletedCounts, 'recapSnapshots'),
+            userProfiles: getNumberField(deletedCounts, 'userProfiles'),
+            attendanceSessionMembers: getNumberField(deletedCounts, 'attendanceSessionMembers'),
+            attendanceCheckins: getNumberField(deletedCounts, 'attendanceCheckins'),
+        },
+    };
 };
 
 const isNetworkFetchError = (error: unknown) => {
@@ -575,6 +650,19 @@ const localSeasons: SeasonSummary[] = [
     },
 ];
 
+const getLocalCurrentSeasonSummary = () =>
+    [...localSeasons]
+        .filter((season) => season.status === 'active')
+        .sort((a, b) => b.startDate.localeCompare(a.startDate))[0] ?? null;
+
+const isTimestampInSeason = (timestamp: string, season: SeasonSummary) => {
+    const targetTime = new Date(timestamp).getTime();
+    const seasonStartTime = new Date(`${season.startDate}T00:00:00`).getTime();
+    const seasonEndTime = season.endDate ? new Date(`${season.endDate}T23:59:59.999`).getTime() : Number.POSITIVE_INFINITY;
+
+    return targetTime >= seasonStartTime && targetTime <= seasonEndTime;
+};
+
 let localAnnouncements: AnnouncementItem[] = [
     {
         id: 'notice_1',
@@ -643,6 +731,84 @@ const sortAttendanceSessions = (items: AttendanceSession[]) =>
 
         return b.startsAt.localeCompare(a.startsAt);
     });
+
+const getLocalCategoryById = (categoryId?: string | null) =>
+    localCategories.find((category) => category.id === categoryId) ?? null;
+
+const rebuildLocalAttendanceSessions = () => {
+    const teamMap = new Map(localTeams.map((team) => [team.id, team.name]));
+
+    localAttendanceSessions = sortAttendanceSessions(localAttendanceSessions.map((session) =>
+        mapAttendanceSession(
+            {
+                id: session.id,
+                title: session.title,
+                session_code: session.sessionCode,
+                point_rule_id: session.pointRuleId,
+                season_id: session.seasonId ?? null,
+                starts_at: session.startsAt,
+                ends_at: session.endsAt ?? null,
+                note: session.note ?? null,
+                is_active: session.isActive,
+                created_at: session.createdAt,
+                target_group_type: session.targetGroupType,
+                target_team_id: session.targetTeamId ?? null,
+            },
+            localAttendanceSessionMembers.filter((entry) => entry.sessionId === session.id),
+            teamMap,
+        ),
+    ));
+};
+
+const refreshLocalMemberBadgesForMembers = (memberIds: string[]) => {
+    const normalizedMemberIds = [...new Set(memberIds.filter(Boolean))];
+
+    if (normalizedMemberIds.length === 0) {
+        return 0;
+    }
+
+    for (let index = localMemberBadges.length - 1; index >= 0; index -= 1) {
+        if (normalizedMemberIds.includes(localMemberBadges[index].memberId)) {
+            localMemberBadges.splice(index, 1);
+        }
+    }
+
+    normalizedMemberIds.forEach((memberId) => syncLocalMemberBadges(memberId));
+
+    return localMemberBadges.filter((badge) => normalizedMemberIds.includes(badge.memberId)).length;
+};
+
+const removeLocalActivityRecords = (predicate: (log: ActivityLog, category: Category | null) => boolean) => {
+    const targetedLogs = localLogs.filter((log) => predicate(log, getLocalCategoryById(log.categoryId)));
+    const targetedRecordIds = new Set(targetedLogs.map((log) => log.recordId).filter((recordId): recordId is string => Boolean(recordId)));
+    const targetedMemberIds = [...new Set(targetedLogs.map((log) => log.memberId))];
+    const pointLedgerCount = localLogs.filter((log) => log.recordId && targetedRecordIds.has(log.recordId)).length;
+    const correctionRequestCount = localCorrectionRequests.filter((request) =>
+        Boolean(request.activityRecordId && targetedRecordIds.has(request.activityRecordId)),
+    ).length;
+
+    localLogs = localLogs.filter((log) => !log.recordId || !targetedRecordIds.has(log.recordId));
+    localAttendanceSessionMembers = localAttendanceSessionMembers.map((entry) =>
+        entry.activityRecordId && targetedRecordIds.has(entry.activityRecordId)
+            ? { ...entry, activityRecordId: null }
+            : entry,
+    );
+
+    for (let index = localCorrectionRequests.length - 1; index >= 0; index -= 1) {
+        if (localCorrectionRequests[index].activityRecordId && targetedRecordIds.has(localCorrectionRequests[index].activityRecordId!)) {
+            localCorrectionRequests.splice(index, 1);
+        }
+    }
+
+    rebuildLocalAttendanceSessions();
+
+    return {
+        activityRecordCount: targetedRecordIds.size,
+        pointLedgerCount,
+        correctionRequestCount,
+        memberIds: targetedMemberIds,
+    };
+};
 
 const enrichLocalLogs = () => {
     const memberMap = new Map(localMembers.map((member) => [member.id, member]));
@@ -729,10 +895,17 @@ const getEligibleLocalBadgeCodes = (memberId: string) => {
 
 const syncLocalMemberBadges = (memberId?: string | null) => {
     const targetIds = memberId ? [memberId] : localMembers.map((member) => member.id);
-    const activeSeasonId = localCurrentSeason.id;
+    const activeSeasonId = getLocalCurrentSeasonSummary()?.id ?? localCurrentSeason.id;
 
     targetIds.forEach((targetId) => {
         const eligibleCodes = getEligibleLocalBadgeCodes(targetId);
+
+        for (let index = localMemberBadges.length - 1; index >= 0; index -= 1) {
+            const badge = localMemberBadges[index];
+            if (badge.memberId === targetId && !eligibleCodes.has(badge.badgeCode)) {
+                localMemberBadges.splice(index, 1);
+            }
+        }
 
         for (const badge of localBadges) {
             if (!eligibleCodes.has(badge.code)) {
@@ -906,7 +1079,7 @@ const getAttendanceTargetGroupLabel = (
         return '팀 미지정';
     }
 
-    return targetTeamId ? teamMap.get(targetTeamId) ?? '선택 팀' : '선택 팀';
+    return targetTeamId ? teamMap.get(targetTeamId) ?? '삭제된 팀' : '삭제된 팀';
 };
 
 const mapAttendanceSessionMember = (
@@ -2309,7 +2482,7 @@ export const addMember = async (name: string, loginEmail?: string | null): Promi
 
 export const getCurrentSeason = async (): Promise<SeasonSummary | null> => {
     if (!isSupabaseConfigured) {
-        return localCurrentSeason;
+        return getLocalCurrentSeasonSummary();
     }
 
     try {
@@ -3391,6 +3564,203 @@ export const addTeam = async (name: string, type: TeamType): Promise<TeamSummary
     }
 };
 
+export const updateTeam = async (id: string, input: { name: string; type: TeamType }): Promise<TeamSummary> => {
+    const name = input.name.trim();
+
+    if (!name) {
+        throw new Error('팀 이름을 입력해 주세요.');
+    }
+
+    if (!isSupabaseConfigured) {
+        const teamIndex = localTeams.findIndex((team) => team.id === id);
+        if (teamIndex < 0) {
+            throw new Error('수정할 팀을 찾지 못했습니다.');
+        }
+
+        const previousTeam = localTeams[teamIndex];
+        const nextTeam: TeamSummary = {
+            ...previousTeam,
+            name,
+            type: input.type,
+        };
+
+        localTeams.splice(teamIndex, 1, nextTeam);
+        localMembers = localMembers.map((member) => {
+            const teamIds = getLocalMemberTeamIds(member.id);
+            const teamNames = teamIds
+                .map((teamId) => getLocalTeamById(teamId)?.name ?? null)
+                .filter((teamName): teamName is string => Boolean(teamName));
+
+            return {
+                ...member,
+                teamName: member.teamId ? getLocalTeamById(member.teamId)?.name ?? null : teamNames[0] ?? null,
+                teamIds,
+                teamNames,
+            };
+        });
+        rebuildLocalAttendanceSessions();
+        logLocalAuditEntry({
+            actorId: null,
+            actorName: '로컬 운영자',
+            entityType: 'team',
+            entityId: id,
+            action: 'updated',
+            summary: `${name} 팀 정보 수정`,
+            diff: {
+                summary: `${name} 팀 정보 수정`,
+                teamName: name,
+                changes: {
+                    name: { from: previousTeam.name, to: name },
+                    type: { from: previousTeam.type, to: input.type },
+                },
+            },
+        });
+        return nextTeam;
+    }
+
+    const client = getSupabaseClient();
+    const { data, error } = await client
+        .from('teams')
+        .update({
+            name,
+            type: input.type,
+        })
+        .eq('id', id)
+        .select('id, name, type, is_active')
+        .single();
+
+    if (error || !data) {
+        throw error ?? new Error('팀 정보를 수정하지 못했습니다.');
+    }
+
+    return {
+        id: data.id,
+        name: data.name,
+        type: data.type,
+        isActive: data.is_active,
+    };
+};
+
+export const replaceTeamMembers = async (teamId: string, memberIds: string[]): Promise<TeamMemberUpdateResult> => {
+    const normalizedMemberIds = [...new Set(memberIds.filter(Boolean))];
+
+    if (!isSupabaseConfigured) {
+        const team = localTeams.find((item) => item.id === teamId) ?? null;
+        if (!team) {
+            throw new Error('팀 정보를 찾지 못했습니다.');
+        }
+
+        const currentMemberIds = localMembers
+            .filter((member) => (member.teamIds ?? []).includes(teamId) || member.teamId === teamId)
+            .map((member) => member.id);
+        const affectedMemberIds = [...new Set([...currentMemberIds, ...normalizedMemberIds])];
+
+        affectedMemberIds.forEach((memberId) => {
+            const currentTeamIds = getLocalMemberTeamIds(memberId);
+            const nextTeamIds = normalizedMemberIds.includes(memberId)
+                ? dedupeTeamIds([...currentTeamIds, teamId])
+                : currentTeamIds.filter((currentTeamId) => currentTeamId !== teamId);
+            syncLocalMemberTeamState(memberId, nextTeamIds);
+        });
+
+        const result: TeamMemberUpdateResult = {
+            teamId,
+            teamName: team.name,
+            memberCount: normalizedMemberIds.length,
+            addedCount: normalizedMemberIds.filter((memberId) => !currentMemberIds.includes(memberId)).length,
+            removedCount: currentMemberIds.filter((memberId) => !normalizedMemberIds.includes(memberId)).length,
+        };
+
+        logLocalAuditEntry({
+            actorId: null,
+            actorName: '로컬 운영자',
+            entityType: 'team',
+            entityId: teamId,
+            action: 'members_replaced',
+            summary: `${team.name} 팀원 배정 저장`,
+            diff: {
+                summary: `${team.name} 팀원 배정 저장`,
+                teamName: team.name,
+                memberCount: result.memberCount,
+                addedCount: result.addedCount,
+                removedCount: result.removedCount,
+            },
+        });
+
+        return result;
+    }
+
+    const client = getSupabaseClient();
+    const { data, error } = await client.rpc('replace_team_members', {
+        p_team_id: teamId,
+        p_member_ids: normalizedMemberIds,
+    });
+
+    if (error) {
+        throw error;
+    }
+
+    return parseTeamMemberUpdateResult(data);
+};
+
+export const deleteTeam = async (teamId: string): Promise<TeamDeleteResult> => {
+    if (!isSupabaseConfigured) {
+        const teamIndex = localTeams.findIndex((team) => team.id === teamId);
+        if (teamIndex < 0) {
+            throw new Error('삭제할 팀을 찾지 못했습니다.');
+        }
+
+        const team = localTeams[teamIndex];
+        const affectedMemberIds = [...new Set(
+            localMembers
+                .filter((member) => (member.teamIds ?? []).includes(teamId) || member.teamId === teamId)
+                .map((member) => member.id),
+        )];
+
+        localMemberTeamLinks = localMemberTeamLinks.filter((link) => link.teamId !== teamId);
+        localTeams.splice(teamIndex, 1);
+        affectedMemberIds.forEach((memberId) => {
+            syncLocalMemberTeamState(memberId, getLocalMemberTeamIds(memberId));
+        });
+        rebuildLocalAttendanceSessions();
+
+        const result: TeamDeleteResult = {
+            teamId,
+            teamName: team.name,
+            teamType: team.type,
+            affectedMemberCount: affectedMemberIds.length,
+        };
+
+        logLocalAuditEntry({
+            actorId: null,
+            actorName: '로컬 운영자',
+            entityType: 'team',
+            entityId: teamId,
+            action: 'deleted',
+            summary: `${team.name} 팀 삭제`,
+            diff: {
+                summary: `${team.name} 팀 삭제`,
+                teamName: team.name,
+                teamType: team.type,
+                affectedMemberCount: affectedMemberIds.length,
+            },
+        });
+
+        return result;
+    }
+
+    const client = getSupabaseClient();
+    const { data, error } = await client.rpc('delete_team', {
+        p_team_id: teamId,
+    });
+
+    if (error) {
+        throw error;
+    }
+
+    return parseTeamDeleteResult(data);
+};
+
 export const setMemberTeams = async (memberId: string, nextTeamIds: string[]): Promise<void> => {
     const normalizedTeamIds = dedupeTeamIds(nextTeamIds);
 
@@ -3547,6 +3917,186 @@ export const addSeason = async (
     }
 };
 
+export const resetActivityDataCurrentSeason = async (): Promise<SeasonDataResetResult> => {
+    if (!isSupabaseConfigured) {
+        const season = getLocalCurrentSeasonSummary();
+        if (!season) {
+            throw new Error('현재 진행 중인 시즌이 없습니다.');
+        }
+
+        const recapSnapshotCount = localRecapSnapshots.filter((snapshot) => snapshot.seasonId === season.id).length;
+        localRecapSnapshots = localRecapSnapshots.filter((snapshot) => snapshot.seasonId !== season.id);
+
+        const removed = removeLocalActivityRecords((log) => isTimestampInSeason(log.timestamp, season));
+        const badgeRefreshCount = refreshLocalMemberBadgesForMembers(removed.memberIds);
+        const result: SeasonDataResetResult = {
+            seasonId: season.id,
+            seasonName: season.name,
+            activityRecordCount: removed.activityRecordCount,
+            pointLedgerCount: removed.pointLedgerCount,
+            correctionRequestCount: removed.correctionRequestCount,
+            recapSnapshotCount,
+            affectedMemberCount: removed.memberIds.length,
+            badgeRefreshCount,
+        };
+
+        logLocalAuditEntry({
+            actorId: null,
+            actorName: '로컬 운영자',
+            entityType: 'season',
+            entityId: season.id,
+            action: 'activity_data_reset',
+            summary: `${season.name} 시즌 활동 내역 초기화`,
+            diff: {
+                summary: `${season.name} 시즌 활동 내역 초기화`,
+                seasonId: season.id,
+                seasonName: season.name,
+                activityRecordCount: removed.activityRecordCount,
+                pointLedgerCount: removed.pointLedgerCount,
+                correctionRequestCount: removed.correctionRequestCount,
+                recapSnapshotCount,
+                affectedMemberCount: removed.memberIds.length,
+                badgeRefreshCount,
+            },
+        });
+
+        return result;
+    }
+
+    const client = getSupabaseClient();
+    const { data, error } = await client.rpc('reset_activity_data_current_season');
+
+    if (error) {
+        throw error;
+    }
+
+    return parseSeasonDataResetResult(data);
+};
+
+export const resetAttendanceDataCurrentSeason = async (): Promise<SeasonDataResetResult> => {
+    if (!isSupabaseConfigured) {
+        const season = getLocalCurrentSeasonSummary();
+        if (!season) {
+            throw new Error('현재 진행 중인 시즌이 없습니다.');
+        }
+
+        const sessionIds = new Set(localAttendanceSessions.filter((session) => session.seasonId === season.id).map((session) => session.id));
+        const attendanceSessionCount = sessionIds.size;
+        const attendanceSessionMemberCount = localAttendanceSessionMembers.filter((entry) => sessionIds.has(entry.sessionId)).length;
+        const recapSnapshotCount = localRecapSnapshots.filter((snapshot) => snapshot.seasonId === season.id).length;
+
+        localRecapSnapshots = localRecapSnapshots.filter((snapshot) => snapshot.seasonId !== season.id);
+        localAttendanceSessions = localAttendanceSessions.filter((session) => !sessionIds.has(session.id));
+        localAttendanceSessionMembers = localAttendanceSessionMembers.filter((entry) => !sessionIds.has(entry.sessionId));
+
+        const removed = removeLocalActivityRecords((log, category) =>
+            isTimestampInSeason(log.timestamp, season) && category?.groupName === 'attendance',
+        );
+        const badgeRefreshCount = refreshLocalMemberBadgesForMembers(removed.memberIds);
+        const result: SeasonDataResetResult = {
+            seasonId: season.id,
+            seasonName: season.name,
+            activityRecordCount: removed.activityRecordCount,
+            pointLedgerCount: removed.pointLedgerCount,
+            recapSnapshotCount,
+            affectedMemberCount: removed.memberIds.length,
+            badgeRefreshCount,
+            attendanceSessionCount,
+            attendanceSessionMemberCount,
+        };
+
+        logLocalAuditEntry({
+            actorId: null,
+            actorName: '로컬 운영자',
+            entityType: 'season',
+            entityId: season.id,
+            action: 'attendance_data_reset',
+            summary: `${season.name} 시즌 출석 세션 초기화`,
+            diff: {
+                summary: `${season.name} 시즌 출석 세션 초기화`,
+                seasonId: season.id,
+                seasonName: season.name,
+                attendanceSessionCount,
+                attendanceSessionMemberCount,
+                activityRecordCount: removed.activityRecordCount,
+                pointLedgerCount: removed.pointLedgerCount,
+                recapSnapshotCount,
+                affectedMemberCount: removed.memberIds.length,
+                badgeRefreshCount,
+            },
+        });
+
+        return result;
+    }
+
+    const client = getSupabaseClient();
+    const { data, error } = await client.rpc('reset_attendance_data_current_season');
+
+    if (error) {
+        throw error;
+    }
+
+    return parseSeasonDataResetResult(data);
+};
+
+export const resetManualActivityDataCurrentSeason = async (): Promise<SeasonDataResetResult> => {
+    if (!isSupabaseConfigured) {
+        const season = getLocalCurrentSeasonSummary();
+        if (!season) {
+            throw new Error('현재 진행 중인 시즌이 없습니다.');
+        }
+
+        const recapSnapshotCount = localRecapSnapshots.filter((snapshot) => snapshot.seasonId === season.id).length;
+        localRecapSnapshots = localRecapSnapshots.filter((snapshot) => snapshot.seasonId !== season.id);
+
+        const removed = removeLocalActivityRecords((log, category) =>
+            isTimestampInSeason(log.timestamp, season) && category?.groupName !== 'attendance',
+        );
+        const badgeRefreshCount = refreshLocalMemberBadgesForMembers(removed.memberIds);
+        const result: SeasonDataResetResult = {
+            seasonId: season.id,
+            seasonName: season.name,
+            activityRecordCount: removed.activityRecordCount,
+            pointLedgerCount: removed.pointLedgerCount,
+            correctionRequestCount: removed.correctionRequestCount,
+            recapSnapshotCount,
+            affectedMemberCount: removed.memberIds.length,
+            badgeRefreshCount,
+        };
+
+        logLocalAuditEntry({
+            actorId: null,
+            actorName: '로컬 운영자',
+            entityType: 'season',
+            entityId: season.id,
+            action: 'manual_activity_data_reset',
+            summary: `${season.name} 시즌 일반 활동 기록 초기화`,
+            diff: {
+                summary: `${season.name} 시즌 일반 활동 기록 초기화`,
+                seasonId: season.id,
+                seasonName: season.name,
+                activityRecordCount: removed.activityRecordCount,
+                pointLedgerCount: removed.pointLedgerCount,
+                correctionRequestCount: removed.correctionRequestCount,
+                recapSnapshotCount,
+                affectedMemberCount: removed.memberIds.length,
+                badgeRefreshCount,
+            },
+        });
+
+        return result;
+    }
+
+    const client = getSupabaseClient();
+    const { data, error } = await client.rpc('reset_manual_activity_data_current_season');
+
+    if (error) {
+        throw error;
+    }
+
+    return parseSeasonDataResetResult(data);
+};
+
 export const deleteMember = async (id: string): Promise<void> => {
     if (!isSupabaseConfigured) {
         const previousMember = localMembers.find((member) => member.id === id);
@@ -3599,6 +4149,122 @@ export const deleteMember = async (id: string): Promise<void> => {
         localLogs = localLogs.filter((log) => log.memberId !== id);
         fallback('deleteMember', () => undefined, error);
     }
+};
+
+export const hardDeleteHiddenMember = async (memberId: string): Promise<HardDeleteMemberResult> => {
+    if (!isSupabaseConfigured) {
+        const member = localMembers.find((entry) => entry.id === memberId) ?? null;
+        if (!member) {
+            throw new Error('멤버 정보를 찾지 못했습니다.');
+        }
+
+        if (member.isVisible !== false) {
+            throw new Error('숨김 처리된 멤버만 영구 삭제할 수 있습니다.');
+        }
+
+        if (localLogs.some((log) => log.memberId === memberId && Boolean(log.recordId))) {
+            throw new Error('활동 기록이 남아 있는 회원은 영구 삭제할 수 없습니다.');
+        }
+
+        const memberBadgeCount = localMemberBadges.filter((badge) => badge.memberId === memberId).length;
+        const memberTeamLinkCount = localMemberTeamLinks.filter((link) => link.memberId === memberId).length;
+        const recapSnapshotCount = localRecapSnapshots.filter((snapshot) => snapshot.memberId === memberId).length;
+        const attendanceSessionMemberCount = localAttendanceSessionMembers.filter((entry) => entry.memberId === memberId).length;
+        const deletedAuthUser = Boolean(member.authUserId);
+
+        for (let index = localMemberBadges.length - 1; index >= 0; index -= 1) {
+            if (localMemberBadges[index].memberId === memberId) {
+                localMemberBadges.splice(index, 1);
+            }
+        }
+
+        localMemberTeamLinks = localMemberTeamLinks.filter((link) => link.memberId !== memberId);
+        localRecapSnapshots = localRecapSnapshots.filter((snapshot) => snapshot.memberId !== memberId);
+        localAttendanceSessionMembers = localAttendanceSessionMembers.filter((entry) => entry.memberId !== memberId);
+
+        for (let index = localCorrectionRequests.length - 1; index >= 0; index -= 1) {
+            if (localCorrectionRequests[index].requesterMemberId === memberId) {
+                localCorrectionRequests.splice(index, 1);
+            }
+        }
+
+        localMembers = localMembers.filter((entry) => entry.id !== memberId);
+        rebuildLocalAttendanceSessions();
+
+        logLocalAuditEntry({
+            actorId: null,
+            actorName: '로컬 운영자',
+            entityType: 'member',
+            entityId: memberId,
+            action: 'hard_deleted',
+            summary: `${member.name} 멤버 영구 삭제`,
+            diff: {
+                summary: `${member.name} 멤버 영구 삭제`,
+                memberName: member.name,
+                deletedAuthUser,
+                relatedDeletes: {
+                    memberBadges: memberBadgeCount,
+                    memberTeamLinks: memberTeamLinkCount,
+                    recapSnapshots: recapSnapshotCount,
+                    userProfiles: 0,
+                    attendanceSessionMembers: attendanceSessionMemberCount,
+                    attendanceCheckins: 0,
+                },
+            },
+        });
+
+        return {
+            memberId,
+            memberName: member.name,
+            deletedAuthUser,
+            deletedCounts: {
+                memberBadges: memberBadgeCount,
+                memberTeamLinks: memberTeamLinkCount,
+                recapSnapshots: recapSnapshotCount,
+                userProfiles: 0,
+                attendanceSessionMembers: attendanceSessionMemberCount,
+                attendanceCheckins: 0,
+            },
+        };
+    }
+
+    const client = getSupabaseClient();
+    const {
+        data: { session },
+    } = await client.auth.getSession();
+
+    if (!session?.access_token) {
+        throw new Error('로그인 세션이 만료되었습니다. 다시 로그인한 뒤 멤버를 삭제해 주세요.');
+    }
+
+    if (!supabaseUrl || !supabaseAnonKey) {
+        throw new Error('Supabase 함수 엔드포인트 설정이 비어 있습니다.');
+    }
+
+    const response = await fetch(`${supabaseUrl}/functions/v1/hard-delete-member`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            apikey: supabaseAnonKey,
+            Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ memberId }),
+    });
+
+    const payload = await response
+        .json()
+        .catch(async () => ({ error: await response.text().catch(() => '') }));
+
+    if (!response.ok) {
+        const functionMessage =
+            payload && typeof payload === 'object' && 'error' in payload && typeof payload.error === 'string'
+                ? payload.error
+                : null;
+
+        throw new Error(functionMessage || '회원을 영구 삭제하지 못했습니다.');
+    }
+
+    return parseHardDeleteMemberResult(payload);
 };
 
 export const updateMember = async (

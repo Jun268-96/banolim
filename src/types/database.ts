@@ -830,6 +830,19 @@ export interface Database {
                 };
                 Returns: boolean;
             };
+            replace_team_members: {
+                Args: {
+                    p_member_ids: string[];
+                    p_team_id: string;
+                };
+                Returns: Json;
+            };
+            delete_team: {
+                Args: {
+                    p_team_id: string;
+                };
+                Returns: Json;
+            };
             get_my_activity_logs: {
                 Args: Record<string, never>;
                 Returns: {
@@ -879,6 +892,18 @@ export interface Database {
                     season_id: string | null;
                     tone: string;
                 }[];
+            };
+            reset_activity_data_current_season: {
+                Args: Record<string, never>;
+                Returns: Json;
+            };
+            reset_attendance_data_current_season: {
+                Args: Record<string, never>;
+                Returns: Json;
+            };
+            reset_manual_activity_data_current_season: {
+                Args: Record<string, never>;
+                Returns: Json;
             };
             reverse_activity_entry: {
                 Args: {

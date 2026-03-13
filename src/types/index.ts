@@ -33,6 +33,21 @@ export interface TeamSummary {
     isActive: boolean;
 }
 
+export interface TeamMemberUpdateResult {
+    teamId: string;
+    teamName: string;
+    memberCount: number;
+    addedCount: number;
+    removedCount: number;
+}
+
+export interface TeamDeleteResult {
+    teamId: string;
+    teamName: string;
+    teamType: TeamType;
+    affectedMemberCount: number;
+}
+
 export interface ActivityGroup {
     code: string;
     name: string;
@@ -199,6 +214,33 @@ export interface AuditLogEntry {
     summary: string;
     createdAt: string;
     diff?: Record<string, unknown> | null;
+}
+
+export interface SeasonDataResetResult {
+    seasonId: string;
+    seasonName: string;
+    activityRecordCount: number;
+    pointLedgerCount: number;
+    correctionRequestCount?: number;
+    recapSnapshotCount: number;
+    affectedMemberCount: number;
+    badgeRefreshCount: number;
+    attendanceSessionCount?: number;
+    attendanceSessionMemberCount?: number;
+}
+
+export interface HardDeleteMemberResult {
+    memberId: string;
+    memberName: string;
+    deletedAuthUser: boolean;
+    deletedCounts: {
+        memberBadges: number;
+        memberTeamLinks: number;
+        recapSnapshots: number;
+        userProfiles: number;
+        attendanceSessionMembers: number;
+        attendanceCheckins: number;
+    };
 }
 
 export interface CorrectionRequest {
