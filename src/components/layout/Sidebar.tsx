@@ -4,6 +4,8 @@ import clsx from 'clsx';
 import { isSupabaseConfigured } from '../../lib/supabase';
 import { useAuth } from '../auth/auth-context';
 
+const didiLogoUrl = new URL('../../../디디.png', import.meta.url).href;
+
 export type TabType = 'home' | 'dashboard' | 'activities' | 'settings' | 'stats';
 
 interface SidebarProps {
@@ -72,9 +74,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpe
             >
                 <div className="flex items-center justify-between border-b border-slate-100 px-5 py-5">
                     <div className="flex items-center gap-3">
-                        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-600 text-white font-bold">
-                            반
-                        </div>
+                        <img src={didiLogoUrl} alt="디디 로고" className="h-10 w-10 rounded-xl object-contain" />
                         <div>
                             <div className="text-lg font-bold text-transparent bg-gradient-to-r from-indigo-600 to-sky-500 bg-clip-text">반올림</div>
                             <div className="text-xs text-slate-400">운영 플랫폼</div>
@@ -99,9 +99,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpe
             <aside className="sticky top-0 hidden min-h-screen flex-col border-r border-slate-200 bg-white shadow-sm lg:flex">
                 <div className="border-b border-slate-100 px-4 py-5 xl:px-6">
                     <div className="flex items-center justify-center gap-3 xl:justify-start">
-                        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-600 text-white font-bold">
-                            반
-                        </div>
+                        <img src={didiLogoUrl} alt="디디 로고" className="h-10 w-10 rounded-xl object-contain" />
                         <div className="hidden xl:block">
                             <div className="text-xl font-bold text-transparent bg-gradient-to-r from-indigo-600 to-sky-500 bg-clip-text">
                                 반올림

@@ -10,6 +10,8 @@ import {
     subscribeToDataFallbackState,
 } from '../../lib/db';
 
+const bandiSchoolLogoUrl = new URL('../../../반디스쿨 로고1.png', import.meta.url).href;
+
 interface LayoutProps {
     activeTab: TabType;
     setActiveTab: (tab: TabType) => void;
@@ -73,23 +75,26 @@ export const Layout: React.FC<LayoutProps> = ({ activeTab, setActiveTab, childre
                         </div>
                     ) : null}
                     <div className="mb-5 flex flex-wrap items-start justify-between gap-3 lg:items-center">
-                        <div className="flex items-center gap-3 lg:hidden">
+                        <div className="flex min-w-0 items-center gap-3">
                             <button
                                 type="button"
                                 onClick={() => setIsSidebarOpen(true)}
-                                className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-700 shadow-sm transition-colors hover:bg-slate-50"
+                                className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-700 shadow-sm transition-colors hover:bg-slate-50 lg:hidden"
                                 aria-label="탭 메뉴 열기"
                             >
                                 <Menu size={20} />
                             </button>
-                            <div>
-                                <div className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-400">Banollim</div>
-                                <div className="text-lg font-bold text-slate-900">반올림 운영 공간</div>
+                            <div className="flex min-w-0 items-center gap-3 rounded-2xl border border-slate-200 bg-white px-3 py-2 shadow-sm">
+                                <img src={bandiSchoolLogoUrl} alt="반디스쿨 로고" className="h-11 w-auto shrink-0 object-contain sm:h-12" />
+                                <div className="min-w-0">
+                                    <div className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-400">Bandi School</div>
+                                    <div className="truncate text-sm font-bold text-slate-900 sm:text-base">반올림 운영 공간</div>
+                                </div>
                             </div>
                         </div>
 
                         <div className="ml-auto flex flex-wrap items-center justify-end gap-2 sm:gap-3">
-                            <div className="min-w-[180px] rounded-2xl border border-slate-200 bg-white px-4 py-2 text-right shadow-sm sm:min-w-[220px]">
+                            <div className="max-w-full rounded-2xl border border-slate-200 bg-white px-4 py-2 text-right shadow-sm">
                                 <div className="truncate text-sm font-semibold text-slate-900">{profile?.displayName || profile?.email || '로그인 사용자'}</div>
                                 <div className="text-xs text-slate-500">{roleLabels[role]}</div>
                             </div>
