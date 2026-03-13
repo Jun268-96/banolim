@@ -21,6 +21,7 @@ import type {
     RoleSummary,
     ScheduleEventItem,
     SeasonSummary,
+    SiteBanner,
     TeamSummary,
     TeamType,
     SeasonStatus,
@@ -38,6 +39,7 @@ type ActivityRecordRow = Database['public']['Tables']['activity_records']['Row']
 type PointLedgerRow = Database['public']['Tables']['point_ledgers']['Row'];
 type AuditLogRow = Database['public']['Tables']['audit_logs']['Row'];
 type CorrectionRequestRow = Database['public']['Tables']['correction_requests']['Row'];
+type SiteBannerRow = Database['public']['Tables']['site_banners']['Row'];
 type RecapSnapshotRow = Database['public']['Tables']['recap_snapshots']['Row'];
 type AttendanceSessionRow = Database['public']['Tables']['attendance_sessions']['Row'];
 type AttendanceSessionMemberRow = Database['public']['Tables']['attendance_session_members']['Row'];
@@ -109,9 +111,14 @@ const buildLocalMemberAuditSummary = (memberName: string, changes: Record<string
 
 let latestDataFallbackState: DataFallbackState | null = null;
 const dataFallbackListeners = new Set<() => void>();
+const siteBannerListeners = new Set<() => void>();
 
 const notifyDataFallbackListeners = () => {
     dataFallbackListeners.forEach((listener) => listener());
+};
+
+const notifySiteBannerListeners = () => {
+    siteBannerListeners.forEach((listener) => listener());
 };
 
 const getErrorMessage = (error: unknown) => {
@@ -178,6 +185,13 @@ export const subscribeToDataFallbackState = (listener: () => void) => {
 export const clearLatestDataFallbackState = () => {
     latestDataFallbackState = null;
     notifyDataFallbackListeners();
+};
+
+export const subscribeToSiteBannerChanges = (listener: () => void) => {
+    siteBannerListeners.add(listener);
+    return () => {
+        siteBannerListeners.delete(listener);
+    };
 };
 
 let localMembers: Member[] = [
@@ -604,6 +618,7 @@ let localScheduleEvents: ScheduleEventItem[] = [
     },
 ];
 
+let localSiteBanners: SiteBanner[] = [];
 let localRecapSnapshots: RecapSnapshot[] = [];
 let localAttendanceSessions: AttendanceSession[] = [];
 let localAttendanceSessionMembers: AttendanceSessionMember[] = [];
@@ -613,6 +628,8 @@ const sortAnnouncements = (items: AnnouncementItem[]) =>
     [...items].sort((a, b) => Number(b.isPinned) - Number(a.isPinned) || (b.startAt ?? b.createdAt).localeCompare(a.startAt ?? a.createdAt));
 const sortScheduleEvents = (items: ScheduleEventItem[]) =>
     [...items].sort((a, b) => a.startAt.localeCompare(b.startAt));
+const sortSiteBanners = (items: SiteBanner[]) =>
+    [...items].sort((a, b) => a.displayOrder - b.displayOrder || a.createdAt.localeCompare(b.createdAt));
 const sortAttendanceSessions = (items: AttendanceSession[]) =>
     [...items].sort((a, b) => {
         if (a.isActive !== b.isActive) {
@@ -2537,6 +2554,187 @@ export const getAnnouncements = async (): Promise<AnnouncementItem[]> => {
         }));
     } catch (error) {
         return fallback('getAnnouncements', () => sortAnnouncements(localAnnouncements.filter((item) => item.isActive)), error);
+    }
+};
+
+const mapSiteBanner = (
+    row: Pick<SiteBannerRow, 'id' | 'title' | 'image_url' | 'display_order' | 'is_active' | 'created_at'>,
+): SiteBanner => ({
+    id: row.id,
+    title: row.title,
+    imageUrl: row.image_url,
+    displayOrder: row.display_order,
+    isActive: row.is_active,
+    createdAt: row.created_at,
+});
+
+export const getSiteBanners = async (): Promise<SiteBanner[]> => {
+    if (!isSupabaseConfigured) {
+        return sortSiteBanners(localSiteBanners.filter((item) => item.isActive));
+    }
+
+    try {
+        const client = getSupabaseClient();
+        const { data, error } = await client
+            .from('site_banners')
+            .select('id, title, image_url, display_order, is_active, created_at')
+            .eq('is_active', true)
+            .order('display_order', { ascending: true })
+            .order('created_at', { ascending: true });
+
+        if (error) {
+            throw error;
+        }
+
+        return sortSiteBanners(
+            ((data ?? []) as Array<
+                Pick<SiteBannerRow, 'id' | 'title' | 'image_url' | 'display_order' | 'is_active' | 'created_at'>
+            >).map(mapSiteBanner),
+        );
+    } catch (error) {
+        if (isMissingSupabaseRelationError(error, ['site_banners'])) {
+            console.warn('[data] site_banners table is unavailable in Supabase; falling back to the bundled default banner.');
+            return [];
+        }
+
+        return fallback('getSiteBanners', () => sortSiteBanners(localSiteBanners.filter((item) => item.isActive)), error);
+    }
+};
+
+export const addSiteBanner = async (input: { title?: string | null; imageUrl: string }): Promise<SiteBanner> => {
+    const imageUrl = input.imageUrl.trim();
+    const title = input.title?.trim() || null;
+
+    if (!imageUrl) {
+        throw new Error('배너 이미지 링크 또는 파일을 선택해 주세요.');
+    }
+
+    if (!isSupabaseConfigured) {
+        const nextDisplayOrder = sortSiteBanners(localSiteBanners).at(-1)?.displayOrder ?? 0;
+        const item: SiteBanner = {
+            id: createLocalId('banner'),
+            title,
+            imageUrl,
+            displayOrder: nextDisplayOrder + 1,
+            isActive: true,
+            createdAt: new Date().toISOString(),
+        };
+        localSiteBanners.push(item);
+        notifySiteBannerListeners();
+        return item;
+    }
+
+    try {
+        const client = getSupabaseClient();
+        const currentBanners = await getSiteBanners();
+        const nextDisplayOrder = currentBanners.at(-1)?.displayOrder ?? 0;
+        const { data, error } = await client
+            .from('site_banners')
+            .insert({
+                title,
+                image_url: imageUrl,
+                display_order: nextDisplayOrder + 1,
+                is_active: true,
+            })
+            .select('id, title, image_url, display_order, is_active, created_at')
+            .single();
+
+        if (error || !data) {
+            throw error ?? new Error('배너를 추가하지 못했습니다.');
+        }
+
+        notifySiteBannerListeners();
+        return mapSiteBanner(data);
+    } catch (error) {
+        const nextDisplayOrder = sortSiteBanners(localSiteBanners).at(-1)?.displayOrder ?? 0;
+        const item: SiteBanner = {
+            id: createLocalId('banner'),
+            title,
+            imageUrl,
+            displayOrder: nextDisplayOrder + 1,
+            isActive: true,
+            createdAt: new Date().toISOString(),
+        };
+        localSiteBanners.push(item);
+        notifySiteBannerListeners();
+        return fallback('addSiteBanner', () => item, error);
+    }
+};
+
+export const moveSiteBanner = async (id: string, direction: 'up' | 'down'): Promise<void> => {
+    const moveLocal = () => {
+        const sorted = sortSiteBanners(localSiteBanners);
+        const currentIndex = sorted.findIndex((item) => item.id === id);
+        if (currentIndex === -1) {
+            return;
+        }
+
+        const targetIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
+        if (targetIndex < 0 || targetIndex >= sorted.length) {
+            return;
+        }
+
+        const current = sorted[currentIndex];
+        const target = sorted[targetIndex];
+        [current.displayOrder, target.displayOrder] = [target.displayOrder, current.displayOrder];
+        localSiteBanners = sortSiteBanners(sorted);
+        notifySiteBannerListeners();
+    };
+
+    if (!isSupabaseConfigured) {
+        moveLocal();
+        return;
+    }
+
+    try {
+        const banners = await getSiteBanners();
+        const currentIndex = banners.findIndex((item) => item.id === id);
+        if (currentIndex === -1) {
+            return;
+        }
+
+        const targetIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
+        if (targetIndex < 0 || targetIndex >= banners.length) {
+            return;
+        }
+
+        const current = banners[currentIndex];
+        const target = banners[targetIndex];
+        const client = getSupabaseClient();
+        const { error } = await client.rpc('swap_banner_display_order', {
+            p_first_banner_id: current.id,
+            p_second_banner_id: target.id,
+        });
+
+        if (error) {
+            throw error;
+        }
+
+        notifySiteBannerListeners();
+    } catch (error) {
+        moveLocal();
+        fallback('moveSiteBanner', () => undefined, error);
+    }
+};
+
+export const deleteSiteBanner = async (id: string): Promise<void> => {
+    if (!isSupabaseConfigured) {
+        localSiteBanners = localSiteBanners.filter((item) => item.id !== id);
+        notifySiteBannerListeners();
+        return;
+    }
+
+    try {
+        const client = getSupabaseClient();
+        const { error } = await client.from('site_banners').update({ is_active: false }).eq('id', id);
+        if (error) {
+            throw error;
+        }
+        notifySiteBannerListeners();
+    } catch (error) {
+        localSiteBanners = localSiteBanners.filter((item) => item.id !== id);
+        notifySiteBannerListeners();
+        fallback('deleteSiteBanner', () => undefined, error);
     }
 };
 

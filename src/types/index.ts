@@ -63,6 +63,15 @@ export interface ScheduleEventItem {
     createdAt: string;
 }
 
+export interface SiteBanner {
+    id: string;
+    title?: string | null;
+    imageUrl: string;
+    displayOrder: number;
+    isActive: boolean;
+    createdAt: string;
+}
+
 export interface AttendanceSession {
     id: string;
     title: string;

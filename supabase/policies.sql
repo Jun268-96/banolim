@@ -22,7 +22,9 @@ grant select on public.badges to authenticated;
 grant select on public.member_badges to authenticated;
 grant select, insert, update on public.announcements to authenticated;
 grant select, insert, update on public.schedule_events to authenticated;
+grant select, insert, update, delete on public.site_banners to authenticated;
 grant select, insert on public.recap_snapshots to authenticated;
+grant execute on function public.swap_banner_display_order(uuid, uuid) to authenticated;
 grant select, insert, update on public.attendance_sessions to authenticated;
 grant select, insert, update, delete on public.attendance_session_members to authenticated;
 grant select on public.attendance_checkins to authenticated;
@@ -57,6 +59,7 @@ alter table public.badges enable row level security;
 alter table public.member_badges enable row level security;
 alter table public.announcements enable row level security;
 alter table public.schedule_events enable row level security;
+alter table public.site_banners enable row level security;
 alter table public.recap_snapshots enable row level security;
 alter table public.attendance_sessions enable row level security;
 alter table public.attendance_session_members enable row level security;
@@ -216,6 +219,35 @@ for update
 to authenticated
 using (public.can_manage_admin_tables())
 with check (public.can_manage_admin_tables());
+
+drop policy if exists site_banners_select_authenticated on public.site_banners;
+create policy site_banners_select_authenticated
+on public.site_banners
+for select
+to authenticated
+using (true);
+
+drop policy if exists site_banners_insert_authenticated on public.site_banners;
+create policy site_banners_insert_authenticated
+on public.site_banners
+for insert
+to authenticated
+with check (public.can_manage_admin_tables());
+
+drop policy if exists site_banners_update_authenticated on public.site_banners;
+create policy site_banners_update_authenticated
+on public.site_banners
+for update
+to authenticated
+using (public.can_manage_admin_tables())
+with check (public.can_manage_admin_tables());
+
+drop policy if exists site_banners_delete_authenticated on public.site_banners;
+create policy site_banners_delete_authenticated
+on public.site_banners
+for delete
+to authenticated
+using (public.can_manage_admin_tables());
 
 drop policy if exists recap_snapshots_select_authenticated on public.recap_snapshots;
 create policy recap_snapshots_select_authenticated

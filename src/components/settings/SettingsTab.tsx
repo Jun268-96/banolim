@@ -1,15 +1,19 @@
 import React, { useEffect, useState } from 'react';
-import { CalendarDays, Megaphone, Plus, Settings, Trash2 } from 'lucide-react';
-import type { AnnouncementItem, ScheduleEventItem, SeasonStatus, SeasonSummary } from '../../types';
+import { ArrowDown, ArrowUp, CalendarDays, ImagePlus, Megaphone, Plus, Settings, Trash2 } from 'lucide-react';
+import type { AnnouncementItem, ScheduleEventItem, SeasonStatus, SeasonSummary, SiteBanner } from '../../types';
 import {
     addAnnouncement,
     addScheduleEvent,
+    addSiteBanner,
     addSeason,
     deleteAnnouncement,
+    deleteSiteBanner,
     deleteScheduleEvent,
     getAnnouncements,
     getScheduleEvents,
     getSeasons,
+    getSiteBanners,
+    moveSiteBanner,
 } from '../../lib/db';
 import { SettingsDialog } from './SettingsDialog';
 
@@ -26,7 +30,7 @@ const badgeClassByStatus: Record<SeasonStatus, string> = {
     closed: 'bg-slate-100 text-slate-700 border-slate-200',
 };
 
-type SettingsDialogType = 'season' | 'announcement' | 'schedule' | null;
+type SettingsDialogType = 'season' | 'announcement' | 'schedule' | 'banner' | null;
 
 interface SectionHeaderProps {
     icon: React.ReactNode;
@@ -68,6 +72,7 @@ export const SettingsTab: React.FC = () => {
     const [seasons, setSeasons] = useState<SeasonSummary[]>([]);
     const [announcements, setAnnouncements] = useState<AnnouncementItem[]>([]);
     const [scheduleEvents, setScheduleEvents] = useState<ScheduleEventItem[]>([]);
+    const [siteBanners, setSiteBanners] = useState<SiteBanner[]>([]);
 
     const [newSeasonName, setNewSeasonName] = useState('');
     const [newSeasonStartDate, setNewSeasonStartDate] = useState('');
@@ -87,19 +92,26 @@ export const SettingsTab: React.FC = () => {
     const [newScheduleEndAt, setNewScheduleEndAt] = useState('');
     const [newScheduleSeasonId, setNewScheduleSeasonId] = useState('');
 
+    const [newBannerTitle, setNewBannerTitle] = useState('');
+    const [newBannerUrl, setNewBannerUrl] = useState('');
+    const [newBannerFileName, setNewBannerFileName] = useState('');
+    const [newBannerFileData, setNewBannerFileData] = useState<string | null>(null);
+
     const [activeDialog, setActiveDialog] = useState<SettingsDialogType>(null);
     const [isLoading, setIsLoading] = useState(true);
 
     const refreshData = async () => {
         setIsLoading(true);
-        const [seasonsData, announcementsData, scheduleData] = await Promise.all([
+        const [seasonsData, announcementsData, scheduleData, bannersData] = await Promise.all([
             getSeasons(),
             getAnnouncements(),
             getScheduleEvents(),
+            getSiteBanners(),
         ]);
         setSeasons(seasonsData);
         setAnnouncements(announcementsData);
         setScheduleEvents(scheduleData);
+        setSiteBanners(bannersData);
         setIsLoading(false);
     };
 
@@ -107,10 +119,11 @@ export const SettingsTab: React.FC = () => {
         let isMounted = true;
 
         const initialize = async () => {
-            const [seasonsData, announcementsData, scheduleData] = await Promise.all([
+            const [seasonsData, announcementsData, scheduleData, bannersData] = await Promise.all([
                 getSeasons(),
                 getAnnouncements(),
                 getScheduleEvents(),
+                getSiteBanners(),
             ]);
 
             if (!isMounted) {
@@ -120,6 +133,7 @@ export const SettingsTab: React.FC = () => {
             setSeasons(seasonsData);
             setAnnouncements(announcementsData);
             setScheduleEvents(scheduleData);
+            setSiteBanners(bannersData);
             setIsLoading(false);
         };
 
@@ -129,6 +143,13 @@ export const SettingsTab: React.FC = () => {
             isMounted = false;
         };
     }, []);
+
+    const resetBannerDraft = () => {
+        setNewBannerTitle('');
+        setNewBannerUrl('');
+        setNewBannerFileName('');
+        setNewBannerFileData(null);
+    };
 
     const handleAddSeason = async (event: React.FormEvent) => {
         event.preventDefault();
@@ -199,6 +220,58 @@ export const SettingsTab: React.FC = () => {
         await refreshData();
     };
 
+    const handleBannerFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        if (!file) {
+            setNewBannerFileName('');
+            setNewBannerFileData(null);
+            return;
+        }
+
+        setNewBannerFileName(file.name);
+
+        const fileData = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => {
+                if (typeof reader.result === 'string') {
+                    resolve(reader.result);
+                    return;
+                }
+
+                reject(new Error('이미지 파일을 읽지 못했습니다.'));
+            };
+            reader.onerror = () => reject(new Error('이미지 파일을 읽지 못했습니다.'));
+            reader.readAsDataURL(file);
+        });
+
+        setNewBannerFileData(fileData);
+    };
+
+    const handleAddBanner = async (event: React.FormEvent) => {
+        event.preventDefault();
+        const imageUrl = newBannerFileData ?? newBannerUrl.trim();
+        if (!imageUrl) return;
+
+        await addSiteBanner({
+            title: newBannerTitle.trim() || null,
+            imageUrl,
+        });
+
+        resetBannerDraft();
+        await refreshData();
+    };
+
+    const handleMoveBanner = async (id: string, direction: 'up' | 'down') => {
+        await moveSiteBanner(id, direction);
+        await refreshData();
+    };
+
+    const handleDeleteBanner = async (id: string) => {
+        if (!confirm('이 배너를 숨길까요?')) return;
+        await deleteSiteBanner(id);
+        await refreshData();
+    };
+
     if (isLoading) {
         return (
             <div className="flex h-64 items-center justify-center">
@@ -212,12 +285,22 @@ export const SettingsTab: React.FC = () => {
 
     return (
         <div className="animate-in fade-in space-y-6 duration-500">
-            <header>
-                <h2 className="flex items-center gap-2 text-2xl font-bold text-slate-900">
-                    <Settings className="text-indigo-600" />
-                    운영 설정
-                </h2>
-                <p className="mt-1 text-slate-500">시즌, 공지, 일정을 관리합니다.</p>
+            <header className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                    <h2 className="flex items-center gap-2 text-2xl font-bold text-slate-900">
+                        <Settings className="text-indigo-600" />
+                        운영 설정
+                    </h2>
+                    <p className="mt-1 text-slate-500">시즌, 공지, 일정과 상단 배너를 관리합니다.</p>
+                </div>
+                <button
+                    type="button"
+                    onClick={() => setActiveDialog('banner')}
+                    className="inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-2xl border border-indigo-200 bg-indigo-50 px-4 text-sm font-semibold text-indigo-700 transition-colors hover:bg-indigo-100"
+                >
+                    <ImagePlus size={16} />
+                    배너 변경
+                </button>
             </header>
 
             <div className="grid grid-cols-1 gap-6 2xl:grid-cols-2">
@@ -574,6 +657,146 @@ export const SettingsTab: React.FC = () => {
                         </button>
                     </div>
                 </form>
+            </SettingsDialog>
+
+            <SettingsDialog
+                isOpen={activeDialog === 'banner'}
+                onClose={() => {
+                    setActiveDialog(null);
+                    resetBannerDraft();
+                }}
+                title="배너 변경"
+                description="권장 1600×480 이상 가로형 이미지입니다. JPG/PNG/WebP 파일을 첨부하거나 이미지 링크를 입력할 수 있습니다."
+                size="xl"
+            >
+                <div className="space-y-6">
+                    <form onSubmit={handleAddBanner} className="space-y-5 rounded-[28px] border border-slate-200 bg-slate-50 p-5">
+                        <div className="text-sm font-semibold text-slate-900">새 배너 추가</div>
+                        <div className="grid gap-4 md:grid-cols-2">
+                            <label className="space-y-1.5">
+                                <span className="text-sm font-medium text-slate-700">배너 제목</span>
+                                <input
+                                    type="text"
+                                    value={newBannerTitle}
+                                    onChange={(event) => setNewBannerTitle(event.target.value)}
+                                    placeholder="예: 2026 상반기 운영 배너"
+                                    className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                                />
+                            </label>
+                            <label className="space-y-1.5">
+                                <span className="text-sm font-medium text-slate-700">이미지 링크</span>
+                                <input
+                                    type="url"
+                                    value={newBannerUrl}
+                                    onChange={(event) => setNewBannerUrl(event.target.value)}
+                                    placeholder="https://..."
+                                    className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                                />
+                            </label>
+                        </div>
+
+                        <label className="block space-y-1.5">
+                            <span className="text-sm font-medium text-slate-700">이미지 파일 첨부</span>
+                            <input
+                                type="file"
+                                accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                                onChange={(event) => void handleBannerFileChange(event)}
+                                className="block w-full rounded-2xl border border-dashed border-slate-300 bg-white px-4 py-3 text-sm text-slate-600 file:mr-3 file:rounded-xl file:border-0 file:bg-indigo-50 file:px-3 file:py-2 file:font-semibold file:text-indigo-700 hover:file:bg-indigo-100"
+                            />
+                            <p className="text-xs text-slate-500">
+                                {newBannerFileName ? `선택된 파일: ${newBannerFileName}` : '권장 비율은 가로 3:1 ~ 4:1입니다. 업로드 파일이 있으면 링크보다 우선 사용합니다.'}
+                            </p>
+                        </label>
+
+                        {(newBannerFileData || newBannerUrl.trim()) && (
+                            <div className="overflow-hidden rounded-[24px] bg-slate-950">
+                                <img
+                                    src={newBannerFileData ?? newBannerUrl}
+                                    alt="배너 미리보기"
+                                    className="h-40 w-full object-cover object-center"
+                                />
+                            </div>
+                        )}
+
+                        <div className="flex flex-wrap justify-end gap-2">
+                            <button
+                                type="button"
+                                onClick={resetBannerDraft}
+                                className="inline-flex h-11 items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50"
+                            >
+                                입력 초기화
+                            </button>
+                            <button
+                                type="submit"
+                                className="inline-flex h-11 items-center justify-center rounded-2xl bg-indigo-600 px-5 text-sm font-semibold text-white transition-colors hover:bg-indigo-700"
+                            >
+                                배너 추가
+                            </button>
+                        </div>
+                    </form>
+
+                    <div className="space-y-3">
+                        <div className="text-sm font-semibold text-slate-900">등록된 배너</div>
+                        {siteBanners.length === 0 ? (
+                            <EmptyState message="아직 등록된 배너가 없습니다. 기본 배너가 상단에 노출됩니다." />
+                        ) : (
+                            <div className="space-y-3">
+                                {siteBanners.map((banner, index) => (
+                                    <div key={banner.id} className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm">
+                                        <div className="flex flex-col gap-4 lg:flex-row lg:items-center">
+                                            <div className="overflow-hidden rounded-[20px] bg-slate-950 lg:w-72">
+                                                <img
+                                                    src={banner.imageUrl}
+                                                    alt={banner.title || '등록된 배너'}
+                                                    className="h-28 w-full object-cover object-center"
+                                                />
+                                            </div>
+                                            <div className="min-w-0 flex-1">
+                                                <div className="text-sm font-semibold text-slate-900">
+                                                    {banner.title || `배너 ${index + 1}`}
+                                                </div>
+                                                <div className="mt-1 text-xs text-slate-500">
+                                                    순서 {index + 1} · {banner.createdAt.slice(0, 10)}
+                                                </div>
+                                                <div className="mt-2 truncate text-xs text-slate-400">
+                                                    {banner.imageUrl.startsWith('data:') ? '첨부 이미지로 등록됨' : banner.imageUrl}
+                                                </div>
+                                            </div>
+                                            <div className="flex flex-wrap gap-2">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => void handleMoveBanner(banner.id, 'up')}
+                                                    disabled={index === 0}
+                                                    className="inline-flex h-11 items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                                                >
+                                                    <ArrowUp size={16} />
+                                                    위로
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => void handleMoveBanner(banner.id, 'down')}
+                                                    disabled={index === siteBanners.length - 1}
+                                                    className="inline-flex h-11 items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                                                >
+                                                    <ArrowDown size={16} />
+                                                    아래로
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => void handleDeleteBanner(banner.id)}
+                                                    className="inline-flex h-11 items-center justify-center gap-2 rounded-2xl border border-rose-200 bg-rose-50 px-4 text-sm font-semibold text-rose-700 transition-colors hover:bg-rose-100"
+                                                >
+                                                    <Trash2 size={16} />
+                                                    삭제
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                </div>
             </SettingsDialog>
         </div>
     );

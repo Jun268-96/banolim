@@ -549,6 +549,36 @@ export interface Database {
                 };
                 Relationships: [];
             };
+            site_banners: {
+                Row: {
+                    id: string;
+                    title: string | null;
+                    image_url: string;
+                    display_order: number;
+                    is_active: boolean;
+                    created_by: string | null;
+                    created_at: string;
+                };
+                Insert: {
+                    id?: string;
+                    title?: string | null;
+                    image_url: string;
+                    display_order?: number;
+                    is_active?: boolean;
+                    created_by?: string | null;
+                    created_at?: string;
+                };
+                Update: {
+                    id?: string;
+                    title?: string | null;
+                    image_url?: string;
+                    display_order?: number;
+                    is_active?: boolean;
+                    created_by?: string | null;
+                    created_at?: string;
+                };
+                Relationships: [];
+            };
             recap_snapshots: {
                 Row: {
                     id: string;
@@ -856,6 +886,13 @@ export interface Database {
                     p_record_id: string;
                 };
                 Returns: string;
+            };
+            swap_banner_display_order: {
+                Args: {
+                    p_first_banner_id: string;
+                    p_second_banner_id: string;
+                };
+                Returns: undefined;
             };
             submit_correction_request: {
                 Args: {

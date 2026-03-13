@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Menu, TriangleAlert, X } from 'lucide-react';
 import { Sidebar, type TabType } from './Sidebar';
+import { HeaderBannerCarousel } from './HeaderBannerCarousel';
 import { useAuth } from '../auth/auth-context';
 import { roleLabels } from '../../lib/permissions';
 import { isAuthBypassed, isSupabaseConfigured } from '../../lib/supabase';
@@ -9,8 +10,6 @@ import {
     getLatestDataFallbackState,
     subscribeToDataFallbackState,
 } from '../../lib/db';
-
-const bandiSchoolLogoUrl = new URL('../../../반디스쿨 로고1.png', import.meta.url).href;
 
 interface LayoutProps {
     activeTab: TabType;
@@ -84,13 +83,7 @@ export const Layout: React.FC<LayoutProps> = ({ activeTab, setActiveTab, childre
                             >
                                 <Menu size={20} />
                             </button>
-                            <div className="flex min-w-0 flex-1 items-center overflow-hidden px-1 py-1">
-                                <img
-                                    src={bandiSchoolLogoUrl}
-                                    alt="반디스쿨 로고"
-                                    className="h-20 w-auto max-w-full object-contain object-left sm:h-24 lg:h-28 xl:h-32"
-                                />
-                            </div>
+                            <HeaderBannerCarousel />
                         </div>
 
                         <div className="ml-auto flex flex-wrap items-center justify-end gap-2 sm:gap-3">
