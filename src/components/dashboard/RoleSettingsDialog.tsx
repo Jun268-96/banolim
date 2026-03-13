@@ -260,18 +260,20 @@ export const RoleSettingsDialog: React.FC<RoleSettingsDialogProps> = ({
                                                     <button
                                                         type="button"
                                                         onClick={() => void handleSaveRole(role.id)}
-                                                        className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-3 text-sm font-semibold text-indigo-700 transition-colors hover:bg-indigo-100"
+                                                        aria-label={`${role.name} 역할 저장`}
+                                                        title="저장"
+                                                        className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-indigo-200 bg-indigo-50 text-indigo-700 transition-colors hover:bg-indigo-100"
                                                     >
                                                         <Save size={15} />
-                                                        저장
                                                     </button>
                                                     <button
                                                         type="button"
                                                         onClick={() => void handleDeleteRole(role)}
-                                                        className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 text-sm font-semibold text-rose-700 transition-colors hover:bg-rose-100"
+                                                        aria-label={`${role.name} 역할 삭제`}
+                                                        title="삭제"
+                                                        className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-rose-200 bg-rose-50 text-rose-700 transition-colors hover:bg-rose-100"
                                                     >
                                                         <Trash2 size={15} />
-                                                        삭제
                                                     </button>
                                                 </div>
                                             </td>
