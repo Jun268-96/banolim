@@ -2,9 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Menu, TriangleAlert, X } from 'lucide-react';
 import { Sidebar, type TabType } from './Sidebar';
 import { HeaderBannerCarousel } from './HeaderBannerCarousel';
-import { useAuth } from '../auth/auth-context';
-import { roleLabels } from '../../lib/permissions';
-import { isAuthBypassed, isSupabaseConfigured } from '../../lib/supabase';
+import { isSupabaseConfigured } from '../../lib/supabase';
 import {
     clearLatestDataFallbackState,
     getLatestDataFallbackState,
@@ -18,7 +16,6 @@ interface LayoutProps {
 }
 
 export const Layout: React.FC<LayoutProps> = ({ activeTab, setActiveTab, children }) => {
-    const { profile, role, signOut } = useAuth();
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
     const [dataFallbackState, setDataFallbackState] = useState(() => getLatestDataFallbackState());
     const [dismissedFallbackId, setDismissedFallbackId] = useState<string | null>(null);
@@ -73,7 +70,7 @@ export const Layout: React.FC<LayoutProps> = ({ activeTab, setActiveTab, childre
                             </button>
                         </div>
                     ) : null}
-                    <div className="mb-5 flex flex-wrap items-start justify-between gap-3 lg:items-start">
+                    <div className="mb-5 flex items-start gap-3">
                         <div className="flex min-w-0 flex-1 items-center gap-3">
                             <button
                                 type="button"
@@ -84,26 +81,6 @@ export const Layout: React.FC<LayoutProps> = ({ activeTab, setActiveTab, childre
                                 <Menu size={20} />
                             </button>
                             <HeaderBannerCarousel />
-                        </div>
-
-                        <div className="ml-auto flex flex-wrap items-center justify-end gap-2 sm:gap-3">
-                            <div className="max-w-full rounded-2xl border border-slate-200 bg-white px-4 py-2 text-right shadow-sm">
-                                <div className="truncate text-sm font-semibold text-slate-900">{profile?.displayName || profile?.email || '로그인 사용자'}</div>
-                                <div className="text-xs text-slate-500">{roleLabels[role]}</div>
-                            </div>
-                            {isAuthBypassed ? (
-                                <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-2 text-sm font-medium text-amber-800 shadow-sm">
-                                    개발용 관리자 우회
-                                </div>
-                            ) : (
-                                <button
-                                    type="button"
-                                    onClick={() => void signOut()}
-                                    className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
-                                >
-                                    로그아웃
-                                </button>
-                            )}
                         </div>
                     </div>
                     <div className="min-w-0">{children}</div>
