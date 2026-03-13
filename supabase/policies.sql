@@ -7,6 +7,8 @@ grant select on public.activity_log_feed to anon, authenticated;
 grant select on public.roles to anon, authenticated;
 grant insert, update, delete on public.roles to authenticated;
 grant select, insert, update on public.teams to anon, authenticated;
+grant select on public.activity_groups to anon, authenticated;
+grant insert, update, delete on public.activity_groups to authenticated;
 grant select, insert, delete on public.member_team_links to authenticated;
 grant select, insert, update on public.seasons to anon, authenticated;
 grant select, insert, update on public.members to anon, authenticated;
@@ -41,6 +43,7 @@ grant execute on function public.update_correction_request_status(uuid, public.c
 
 alter table public.roles enable row level security;
 alter table public.teams enable row level security;
+alter table public.activity_groups enable row level security;
 alter table public.member_team_links enable row level security;
 alter table public.seasons enable row level security;
 alter table public.members enable row level security;
@@ -74,6 +77,15 @@ drop policy if exists teams_insert_all on public.teams;
 create policy teams_insert_all on public.teams for insert to authenticated with check (public.can_manage_admin_tables());
 drop policy if exists teams_update_all on public.teams;
 create policy teams_update_all on public.teams for update to authenticated using (public.can_manage_admin_tables()) with check (public.can_manage_admin_tables());
+
+drop policy if exists activity_groups_select_all on public.activity_groups;
+create policy activity_groups_select_all on public.activity_groups for select to anon, authenticated using (true);
+drop policy if exists activity_groups_insert_all on public.activity_groups;
+create policy activity_groups_insert_all on public.activity_groups for insert to authenticated with check (public.can_manage_admin_tables());
+drop policy if exists activity_groups_update_all on public.activity_groups;
+create policy activity_groups_update_all on public.activity_groups for update to authenticated using (public.can_manage_admin_tables()) with check (public.can_manage_admin_tables());
+drop policy if exists activity_groups_delete_all on public.activity_groups;
+create policy activity_groups_delete_all on public.activity_groups for delete to authenticated using (public.can_manage_admin_tables());
 
 drop policy if exists member_team_links_select_authenticated on public.member_team_links;
 create policy member_team_links_select_authenticated

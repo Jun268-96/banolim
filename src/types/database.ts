@@ -180,6 +180,30 @@ export interface Database {
                 };
                 Relationships: [];
             };
+            activity_groups: {
+                Row: {
+                    code: string;
+                    name: string;
+                    sort_order: number;
+                    is_active: boolean;
+                    created_at: string;
+                };
+                Insert: {
+                    code: string;
+                    name: string;
+                    sort_order?: number;
+                    is_active?: boolean;
+                    created_at?: string;
+                };
+                Update: {
+                    code?: string;
+                    name?: string;
+                    sort_order?: number;
+                    is_active?: boolean;
+                    created_at?: string;
+                };
+                Relationships: [];
+            };
             point_rules: {
                 Row: {
                     id: string;

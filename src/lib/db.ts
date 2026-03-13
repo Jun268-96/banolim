@@ -1,4 +1,5 @@
 import type {
+    ActivityGroup,
     ActivityLog,
     AttendanceSession,
     AttendanceSessionMember,
@@ -32,6 +33,7 @@ type RoleRow = Database['public']['Tables']['roles']['Row'];
 type TeamRow = Database['public']['Tables']['teams']['Row'];
 type MemberTeamLinkRow = Database['public']['Tables']['member_team_links']['Row'];
 type SeasonRow = Database['public']['Tables']['seasons']['Row'];
+type ActivityGroupRow = Database['public']['Tables']['activity_groups']['Row'];
 type ActivityRecordRow = Database['public']['Tables']['activity_records']['Row'];
 type PointLedgerRow = Database['public']['Tables']['point_ledgers']['Row'];
 type AuditLogRow = Database['public']['Tables']['audit_logs']['Row'];
@@ -57,6 +59,16 @@ export type DataFallbackState = {
 
 const createLocalId = (prefix: string) => `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
 const createAttendanceCode = () => Math.random().toString(36).replace(/[^a-z0-9]/gi, '').toUpperCase().slice(0, 8);
+const createActivityGroupCode = (name: string) => {
+    const asciiSlug = name
+        .normalize('NFKD')
+        .replace(/[^\p{ASCII}]/gu, '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '');
+    const base = asciiSlug || 'group';
+    return `${base}-${Math.random().toString(36).slice(2, 6)}`;
+};
 const createTemporaryPassword = () => {
     const base = Math.random().toString(36).slice(2, 8);
     const suffix = Math.random().toString(36).slice(2, 6).toUpperCase();
@@ -301,6 +313,16 @@ let localCategories: Category[] = [
         isActive: true,
     },
 ];
+
+const defaultActivityGroups: ActivityGroup[] = [
+    { code: 'attendance', name: '출석', sortOrder: 10, isActive: true },
+    { code: 'study', name: '스터디', sortOrder: 20, isActive: true },
+    { code: 'contribution', name: '기여', sortOrder: 30, isActive: true },
+    { code: 'operations', name: '운영', sortOrder: 40, isActive: true },
+    { code: 'manual', name: '기타', sortOrder: 50, isActive: true },
+];
+
+let localActivityGroups: ActivityGroup[] = [...defaultActivityGroups];
 
 let localLogs: ActivityLog[] = [
     {
@@ -958,9 +980,13 @@ const getConditionSummary = (value: Json | Record<string, unknown> | null | unde
 interface CategoryInput {
     categoryName: string;
     pointValue: number;
-    penaltyPoint?: number;
     conditionSummary?: string;
     groupName?: string;
+}
+
+interface ActivityGroupInput {
+    name: string;
+    sortOrder: number;
 }
 
 interface ActivityEntryOptions {
@@ -1424,6 +1450,163 @@ export const completeMyPasswordSetup = async (): Promise<void> => {
     }
 };
 
+export const getActivityGroups = async (): Promise<ActivityGroup[]> => {
+    if (!isSupabaseConfigured) {
+        return [...localActivityGroups]
+            .filter((group) => group.isActive)
+            .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
+    }
+
+    try {
+        const client = getSupabaseClient();
+        const { data, error } = await client
+            .from('activity_groups')
+            .select('code, name, sort_order, is_active')
+            .eq('is_active', true)
+            .order('sort_order', { ascending: true });
+
+        if (error) {
+            throw error;
+        }
+
+        return ((data ?? []) as Pick<ActivityGroupRow, 'code' | 'name' | 'sort_order' | 'is_active'>[]).map((group) => ({
+            code: group.code,
+            name: group.name,
+            sortOrder: group.sort_order,
+            isActive: group.is_active,
+        }));
+    } catch (error) {
+        return fallback(
+            'getActivityGroups',
+            () =>
+                [...localActivityGroups]
+                    .filter((group) => group.isActive)
+                    .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name)),
+            error,
+        );
+    }
+};
+
+export const addActivityGroup = async ({ name, sortOrder }: ActivityGroupInput): Promise<ActivityGroup> => {
+    const normalizedName = name.trim();
+    const nextSortOrder = Number.isFinite(sortOrder) ? sortOrder : 100;
+
+    if (!normalizedName) {
+        throw new Error('활동 분류 이름을 입력해 주세요.');
+    }
+
+    const code = createActivityGroupCode(normalizedName);
+
+    if (!isSupabaseConfigured) {
+        const nextGroup: ActivityGroup = {
+            code,
+            name: normalizedName,
+            sortOrder: nextSortOrder,
+            isActive: true,
+        };
+        localActivityGroups.push(nextGroup);
+        return nextGroup;
+    }
+
+    const client = getSupabaseClient();
+    const { data, error } = await client
+        .from('activity_groups')
+        .insert({
+            code,
+            name: normalizedName,
+            sort_order: nextSortOrder,
+            is_active: true,
+        })
+        .select('code, name, sort_order, is_active')
+        .single();
+
+    if (error) {
+        throw error;
+    }
+
+    return {
+        code: data.code,
+        name: data.name,
+        sortOrder: data.sort_order,
+        isActive: data.is_active,
+    };
+};
+
+export const updateActivityGroup = async (
+    code: string,
+    { name, sortOrder }: ActivityGroupInput,
+): Promise<ActivityGroup> => {
+    const normalizedName = name.trim();
+    const nextSortOrder = Number.isFinite(sortOrder) ? sortOrder : 100;
+
+    if (!normalizedName) {
+        throw new Error('활동 분류 이름을 입력해 주세요.');
+    }
+
+    if (!isSupabaseConfigured) {
+        const nextGroup: ActivityGroup = {
+            code,
+            name: normalizedName,
+            sortOrder: nextSortOrder,
+            isActive: true,
+        };
+        localActivityGroups = localActivityGroups.map((group) => (group.code === code ? nextGroup : group));
+        return nextGroup;
+    }
+
+    const client = getSupabaseClient();
+    const { data, error } = await client
+        .from('activity_groups')
+        .update({
+            name: normalizedName,
+            sort_order: nextSortOrder,
+        })
+        .eq('code', code)
+        .select('code, name, sort_order, is_active')
+        .single();
+
+    if (error) {
+        throw error;
+    }
+
+    return {
+        code: data.code,
+        name: data.name,
+        sortOrder: data.sort_order,
+        isActive: data.is_active,
+    };
+};
+
+export const deleteActivityGroup = async (code: string): Promise<void> => {
+    const isUsedLocally = localCategories.some((category) => category.groupName === code);
+    if (!isSupabaseConfigured) {
+        if (isUsedLocally) {
+            throw new Error('이 분류를 사용하는 규칙이 있어 삭제할 수 없습니다.');
+        }
+        localActivityGroups = localActivityGroups.filter((group) => group.code !== code);
+        return;
+    }
+
+    const client = getSupabaseClient();
+    const { count, error: usageError } = await client
+        .from('activity_types')
+        .select('id', { count: 'exact', head: true })
+        .eq('group_name', code);
+
+    if (usageError) {
+        throw usageError;
+    }
+
+    if ((count ?? 0) > 0) {
+        throw new Error('이 분류를 사용하는 규칙이 있어 삭제할 수 없습니다.');
+    }
+
+    const { error } = await client.from('activity_groups').delete().eq('code', code);
+    if (error) {
+        throw error;
+    }
+};
+
 export const getCategories = async (): Promise<Category[]> => {
     if (!isSupabaseConfigured) {
         return localCategories
@@ -1768,6 +1951,10 @@ export const getRecapSnapshots = async (options?: {
             .map((row) => mapRecapSnapshot(row, row.created_by ? creatorMap.get(row.created_by) ?? null : null))
             .filter((snapshot): snapshot is RecapSnapshot => Boolean(snapshot));
     } catch (error) {
+        if (isMissingSupabaseRelationError(error, ['recap_snapshots'])) {
+            return [];
+        }
+
         return fallback(
             'getRecapSnapshots',
             () =>
@@ -1833,6 +2020,10 @@ export const createRecapSnapshots = async (drafts: RecapSnapshotDraft[]): Promis
             .map((row) => mapRecapSnapshot(row))
             .filter((snapshot): snapshot is RecapSnapshot => Boolean(snapshot));
     } catch (error) {
+        if (isMissingSupabaseRelationError(error, ['recap_snapshots'])) {
+            throw new Error('리캡 저장본 테이블이 아직 적용되지 않았습니다. Supabase에서 recap_snapshots migration을 먼저 실행해 주세요.');
+        }
+
         const createdAt = new Date().toISOString();
         const snapshots = drafts.map((draft) => ({
             ...draft,
@@ -3315,7 +3506,6 @@ export const updateMember = async (
 export const addCategory = async ({
     categoryName,
     pointValue,
-    penaltyPoint = 0,
     conditionSummary = '',
     groupName = 'manual',
 }: CategoryInput): Promise<Category> => {
@@ -3330,7 +3520,7 @@ export const addCategory = async ({
             categoryName,
             groupName: normalizedGroupName,
             pointValue,
-            penaltyPoint,
+            penaltyPoint: 0,
             conditionSummary: normalizedConditionSummary || null,
             conditionJson,
             version: 1,
@@ -3361,7 +3551,7 @@ export const addCategory = async ({
             .insert({
                 activity_type_id: activityType.id,
                 base_point: pointValue,
-                penalty_point: penaltyPoint,
+                penalty_point: 0,
                 condition_json: conditionJson,
                 is_active: true,
                 version: 1,
@@ -3379,7 +3569,7 @@ export const addCategory = async ({
             categoryName,
             groupName: activityType.group_name,
             pointValue: pointRule.base_point,
-            penaltyPoint: pointRule.penalty_point,
+            penaltyPoint: 0,
             conditionSummary: normalizedConditionSummary || null,
             conditionJson: parseJsonObject(pointRule.condition_json),
             version: pointRule.version,
@@ -3392,7 +3582,7 @@ export const addCategory = async ({
             categoryName,
             groupName: normalizedGroupName,
             pointValue,
-            penaltyPoint,
+            penaltyPoint: 0,
             conditionSummary: normalizedConditionSummary || null,
             conditionJson,
             version: 1,
@@ -3407,9 +3597,8 @@ export const createCategoryVersion = async (
     sourceRuleId: string,
     {
         pointValue,
-        penaltyPoint = 0,
         conditionSummary = '',
-    }: Pick<CategoryInput, 'pointValue' | 'penaltyPoint' | 'conditionSummary'>,
+    }: Pick<CategoryInput, 'pointValue' | 'conditionSummary'>,
 ): Promise<Category | null> => {
     const normalizedConditionSummary = conditionSummary.trim();
     const conditionJson = normalizedConditionSummary ? { summary: normalizedConditionSummary } : {};
@@ -3435,7 +3624,7 @@ export const createCategoryVersion = async (
             categoryName: sourceCategory.categoryName,
             groupName: sourceCategory.groupName ?? 'manual',
             pointValue,
-            penaltyPoint,
+            penaltyPoint: 0,
             conditionSummary: normalizedConditionSummary || null,
             conditionJson,
             version: (sourceCategory.version ?? 1) + 1,
@@ -3450,7 +3639,7 @@ export const createCategoryVersion = async (
         const { data: newRuleId, error: createError } = await client.rpc('create_point_rule_version', {
             p_source_rule_id: sourceRuleId,
             p_base_point: pointValue,
-            p_penalty_point: penaltyPoint,
+            p_penalty_point: 0,
             p_condition_json: conditionJson,
         });
 
@@ -3474,7 +3663,7 @@ export const createCategoryVersion = async (
             categoryName: insertedRule.category_name,
             groupName: insertedRule.group_name,
             pointValue: insertedRule.point_value,
-            penaltyPoint: insertedRule.penalty_point,
+            penaltyPoint: 0,
             conditionSummary: getConditionSummary(insertedRule.condition_json),
             conditionJson: parseJsonObject(insertedRule.condition_json),
             version: insertedRule.version,

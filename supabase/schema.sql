@@ -48,6 +48,14 @@ create table if not exists public.teams (
     created_at timestamptz not null default now()
 );
 
+create table if not exists public.activity_groups (
+    code text primary key,
+    name text not null unique,
+    sort_order integer not null default 100,
+    is_active boolean not null default true,
+    created_at timestamptz not null default now()
+);
+
 create table if not exists public.seasons (
     id uuid primary key default gen_random_uuid(),
     name text not null unique,

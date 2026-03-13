@@ -101,7 +101,7 @@ const isAttendanceCategory = (category: Category) => {
         return true;
     }
 
-    return category.groupName?.trim() === '출석';
+    return category.groupName?.trim() === 'attendance';
 };
 
 export const ActivitiesTab: React.FC = () => {

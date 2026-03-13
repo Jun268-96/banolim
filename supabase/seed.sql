@@ -18,6 +18,15 @@ values
     ('스터디', 'study')
 on conflict (name) do nothing;
 
+insert into public.activity_groups (code, name, sort_order)
+values
+    ('attendance', '출석', 10),
+    ('study', '스터디', 20),
+    ('contribution', '기여', 30),
+    ('operations', '운영', 40),
+    ('manual', '기타', 50)
+on conflict (code) do nothing;
+
 insert into public.seasons (name, start_date, end_date, status)
 values
     ('2026 상반기', '2026-03-01', '2026-08-31', 'active')

@@ -33,6 +33,13 @@ export interface TeamSummary {
     isActive: boolean;
 }
 
+export interface ActivityGroup {
+    code: string;
+    name: string;
+    sortOrder: number;
+    isActive: boolean;
+}
+
 export interface AnnouncementItem {
     id: string;
     title: string;
