@@ -111,7 +111,7 @@ export const HeaderBannerCarousel: React.FC = () => {
                             <img
                                 src={banner.imageUrl}
                                 alt={banner.title || '반올림스쿨 배너'}
-                                className="h-full w-full select-none object-cover object-center"
+                                className="h-full w-full select-none object-contain object-left"
                                 draggable={false}
                             />
                         </div>
