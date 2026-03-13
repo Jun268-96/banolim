@@ -61,9 +61,11 @@ const normalizeLoginEmail = (value: string) => {
 
 const dedupeTeamIds = (teamIds: Array<string | null | undefined>) => [...new Set(teamIds.filter((teamId): teamId is string => Boolean(teamId)))];
 
-type MemberViewMode = 'all' | 'pending' | 'approved' | 'inactive';
 type MemberDisplayMode = 'table' | 'teams' | 'organization';
 type MemberSortMode = 'name-asc' | 'name-desc' | 'joined-desc' | 'role-order';
+type MemberStatusFilter = 'all' | MemberStatus;
+type MemberAccountFilter = 'all' | 'needs-email' | 'needs-account' | 'password-reset' | 'ready';
+type MemberFilterPanel = 'team' | 'role' | 'status' | 'account' | null;
 
 type BulkImportRow = {
     line: number;
@@ -213,6 +215,29 @@ const getAccessPrepTags = (member: Member) => {
 
 const isAccessReady = (member: Member) => Boolean(member.loginEmail) && Boolean(member.authUserId) && member.status === 'active';
 
+const getMemberAccountFilterKey = (member: Member): Exclude<MemberAccountFilter, 'all'> => {
+    if (!member.loginEmail) {
+        return 'needs-email';
+    }
+
+    if (!member.authUserId) {
+        return 'needs-account';
+    }
+
+    if (member.passwordResetRequired) {
+        return 'password-reset';
+    }
+
+    return 'ready';
+};
+
+const memberAccountFilterLabels: Record<Exclude<MemberAccountFilter, 'all'>, string> = {
+    'needs-email': '이메일 미등록',
+    'needs-account': '계정 미발급',
+    'password-reset': '첫 로그인 대기',
+    ready: '계정 준비 완료',
+};
+
 const getAccountProvisionLabel = (member: Member) => {
     if (!member.loginEmail) {
         return { label: '이메일 필요', className: 'bg-slate-100 text-slate-600 border-slate-200' };
@@ -309,11 +334,13 @@ export const DashboardTab: React.FC = () => {
     const [newTeamName, setNewTeamName] = useState('');
     const [newTeamType, setNewTeamType] = useState<TeamType>('core');
     const [searchQuery, setSearchQuery] = useState('');
-    const [memberView, setMemberView] = useState<MemberViewMode>('all');
     const [displayMode, setDisplayMode] = useState<MemberDisplayMode>('table');
     const [sortMode, setSortMode] = useState<MemberSortMode>('role-order');
     const [selectedRoleFilter, setSelectedRoleFilter] = useState('all');
     const [selectedTeamFilter, setSelectedTeamFilter] = useState('all');
+    const [selectedStatusFilter, setSelectedStatusFilter] = useState<MemberStatusFilter>('all');
+    const [selectedAccountFilter, setSelectedAccountFilter] = useState<MemberAccountFilter>('all');
+    const [openFilterPanel, setOpenFilterPanel] = useState<MemberFilterPanel>(null);
     const [selectedTeamManagementId, setSelectedTeamManagementId] = useState<string | null>(null);
     const [teamAssignmentQuery, setTeamAssignmentQuery] = useState('');
     const [historyMemberId, setHistoryMemberId] = useState<string | null>(null);
@@ -401,39 +428,63 @@ export const DashboardTab: React.FC = () => {
         [members],
     );
 
-    const viewScopedMembers = useMemo(() => {
-        if (memberView === 'pending') {
-            return approvalQueue;
-        }
-
-        if (memberView === 'approved') {
-            return members.filter((member) => isAccessReady(member));
-        }
-
-        if (memberView === 'inactive') {
-            return members.filter((member) => member.status === 'inactive');
-        }
-
-        return members;
-    }, [approvalQueue, memberView, members]);
-
     const roleById = useMemo(() => new Map(roles.map((role) => [role.id, role])), [roles]);
     const roleByName = useMemo(() => new Map(roles.map((role) => [role.name.trim().toLowerCase(), role])), [roles]);
     const teamByName = useMemo(() => new Map(teams.map((team) => [team.name.trim().toLowerCase(), team])), [teams]);
 
-    const filteredMembers = useMemo(() => {
-        const query = searchQuery.trim().toLowerCase();
-        const roleFiltered = selectedRoleFilter === 'all'
-            ? viewScopedMembers
-            : viewScopedMembers.filter((member) => (member.roleId ?? '') === selectedRoleFilter);
-        const teamFiltered = selectedTeamFilter === 'all'
-            ? roleFiltered
-            : roleFiltered.filter((member) => (member.teamIds ?? []).includes(selectedTeamFilter) || (member.teamId ?? '') === selectedTeamFilter);
-        const searched = query
-            ? teamFiltered.filter((member) => member.name.toLowerCase().includes(query))
-            : teamFiltered;
+    const matchesMemberFilters = (
+        member: Member,
+        {
+            query,
+            roleFilter,
+            teamFilter,
+            statusFilter,
+            accountFilter,
+        }: {
+            query: string;
+            roleFilter: string;
+            teamFilter: string;
+            statusFilter: MemberStatusFilter;
+            accountFilter: MemberAccountFilter;
+        },
+    ) => {
+        if (query && !member.name.toLowerCase().includes(query)) {
+            return false;
+        }
 
-        return [...searched].sort((a, b) => {
+        if (roleFilter !== 'all' && (member.roleId ?? '') !== roleFilter) {
+            return false;
+        }
+
+        if (teamFilter !== 'all' && !(member.teamIds ?? []).includes(teamFilter) && (member.teamId ?? '') !== teamFilter) {
+            return false;
+        }
+
+        if (statusFilter !== 'all' && (member.status ?? 'active') !== statusFilter) {
+            return false;
+        }
+
+        if (accountFilter !== 'all' && getMemberAccountFilterKey(member) !== accountFilter) {
+            return false;
+        }
+
+        return true;
+    };
+
+    const searchQueryNormalized = searchQuery.trim().toLowerCase();
+
+    const filteredMembers = useMemo(() => {
+        const scoped = members.filter((member) =>
+            matchesMemberFilters(member, {
+                query: searchQueryNormalized,
+                roleFilter: selectedRoleFilter,
+                teamFilter: selectedTeamFilter,
+                statusFilter: selectedStatusFilter,
+                accountFilter: selectedAccountFilter,
+            }),
+        );
+
+        return [...scoped].sort((a, b) => {
             switch (sortMode) {
                 case 'name-asc':
                     return a.name.localeCompare(b.name);
@@ -450,7 +501,7 @@ export const DashboardTab: React.FC = () => {
                     return a.name.localeCompare(b.name);
             }
         });
-    }, [roleById, searchQuery, selectedRoleFilter, selectedTeamFilter, sortMode, viewScopedMembers]);
+    }, [members, roleById, searchQueryNormalized, selectedRoleFilter, selectedTeamFilter, selectedStatusFilter, selectedAccountFilter, sortMode]);
 
     const accessPreparation = useMemo(
         () => ({
@@ -460,6 +511,78 @@ export const DashboardTab: React.FC = () => {
             dormantOrInactive: members.filter((member) => member.status === 'dormant' || member.status === 'inactive').length,
         }),
         [members],
+    );
+
+    const roleFilterOptions = useMemo(
+        () =>
+            roles.map((role) => ({
+                id: role.id,
+                label: role.name,
+                count: members.filter((member) =>
+                    matchesMemberFilters(member, {
+                        query: searchQueryNormalized,
+                        roleFilter: 'all',
+                        teamFilter: selectedTeamFilter,
+                        statusFilter: selectedStatusFilter,
+                        accountFilter: selectedAccountFilter,
+                    }) && (member.roleId ?? '') === role.id,
+                ).length,
+            })),
+        [members, roles, searchQueryNormalized, selectedAccountFilter, selectedStatusFilter, selectedTeamFilter],
+    );
+
+    const teamFilterOptions = useMemo(
+        () =>
+            teams.map((team) => ({
+                id: team.id,
+                label: team.name,
+                count: members.filter((member) =>
+                    matchesMemberFilters(member, {
+                        query: searchQueryNormalized,
+                        roleFilter: selectedRoleFilter,
+                        teamFilter: 'all',
+                        statusFilter: selectedStatusFilter,
+                        accountFilter: selectedAccountFilter,
+                    }) && ((member.teamIds ?? []).includes(team.id) || member.teamId === team.id),
+                ).length,
+            })),
+        [members, teams, searchQueryNormalized, selectedAccountFilter, selectedRoleFilter, selectedStatusFilter],
+    );
+
+    const statusFilterOptions = useMemo(
+        () =>
+            memberStatusOptions.map((status) => ({
+                id: status,
+                label: memberStatusLabels[status],
+                count: members.filter((member) =>
+                    matchesMemberFilters(member, {
+                        query: searchQueryNormalized,
+                        roleFilter: selectedRoleFilter,
+                        teamFilter: selectedTeamFilter,
+                        statusFilter: 'all',
+                        accountFilter: selectedAccountFilter,
+                    }) && (member.status ?? 'active') === status,
+                ).length,
+            })),
+        [members, searchQueryNormalized, selectedAccountFilter, selectedRoleFilter, selectedTeamFilter],
+    );
+
+    const accountFilterOptions = useMemo(
+        () =>
+            (Object.entries(memberAccountFilterLabels) as Array<[Exclude<MemberAccountFilter, 'all'>, string]>).map(([id, label]) => ({
+                id,
+                label,
+                count: members.filter((member) =>
+                    matchesMemberFilters(member, {
+                        query: searchQueryNormalized,
+                        roleFilter: selectedRoleFilter,
+                        teamFilter: selectedTeamFilter,
+                        statusFilter: selectedStatusFilter,
+                        accountFilter: 'all',
+                    }) && getMemberAccountFilterKey(member) === id,
+                ).length,
+            })),
+        [members, searchQueryNormalized, selectedRoleFilter, selectedStatusFilter, selectedTeamFilter],
     );
 
     const selectedTeamForManagement = useMemo(
@@ -770,7 +893,7 @@ export const DashboardTab: React.FC = () => {
                 </div>
 
                 <div className="flex flex-col gap-3 rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm">
-                    <div className="grid gap-3 xl:grid-cols-[minmax(0,1.2fr)_repeat(3,minmax(0,0.72fr))]">
+                    <div className="grid gap-3 xl:grid-cols-[minmax(0,1.2fr)_220px_120px]">
                         <label className="relative block">
                             <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                             <input
@@ -788,32 +911,6 @@ export const DashboardTab: React.FC = () => {
                             </datalist>
                         </label>
 
-                        <select
-                            value={selectedRoleFilter}
-                            onChange={(event) => setSelectedRoleFilter(event.target.value)}
-                            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                        >
-                            <option value="all">전체 직책</option>
-                            {roles.map((role) => (
-                                <option key={role.id} value={role.id}>
-                                    {role.name}
-                                </option>
-                            ))}
-                        </select>
-
-                        <select
-                            value={selectedTeamFilter}
-                            onChange={(event) => setSelectedTeamFilter(event.target.value)}
-                            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                        >
-                            <option value="all">전체 팀</option>
-                            {teams.map((team) => (
-                                <option key={team.id} value={team.id}>
-                                    {team.name}
-                                </option>
-                            ))}
-                        </select>
-
                         <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-600">
                             <ArrowUpDown size={16} className="text-slate-400" />
                             <select
@@ -827,7 +924,225 @@ export const DashboardTab: React.FC = () => {
                                 <option value="joined-desc">최근 가입 순</option>
                             </select>
                         </label>
+
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setSearchQuery('');
+                                setSelectedRoleFilter('all');
+                                setSelectedTeamFilter('all');
+                                setSelectedStatusFilter('all');
+                                setSelectedAccountFilter('all');
+                                setOpenFilterPanel(null);
+                            }}
+                            className="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50"
+                        >
+                            초기화
+                        </button>
                     </div>
+
+                    <div className="flex flex-wrap gap-2">
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setSelectedRoleFilter('all');
+                                setSelectedTeamFilter('all');
+                                setSelectedStatusFilter('all');
+                                setSelectedAccountFilter('all');
+                                setOpenFilterPanel(null);
+                            }}
+                            className={`rounded-full px-3 py-1.5 text-sm font-semibold transition-colors ${
+                                selectedRoleFilter === 'all' && selectedTeamFilter === 'all' && selectedStatusFilter === 'all' && selectedAccountFilter === 'all'
+                                    ? 'bg-indigo-600 text-white'
+                                    : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                            }`}
+                        >
+                            전체 {filteredMembers.length}
+                        </button>
+                        {([
+                            {
+                                id: 'team' as const,
+                                label: `팀별${selectedTeamFilter !== 'all' ? `: ${teams.find((team) => team.id === selectedTeamFilter)?.name ?? '전체'}` : ''}`,
+                            },
+                            {
+                                id: 'role' as const,
+                                label: `직책별${selectedRoleFilter !== 'all' ? `: ${roles.find((role) => role.id === selectedRoleFilter)?.name ?? '전체'}` : ''}`,
+                            },
+                            {
+                                id: 'status' as const,
+                                label: `상태별${selectedStatusFilter !== 'all' ? `: ${memberStatusLabels[selectedStatusFilter]}` : ''}`,
+                            },
+                            {
+                                id: 'account' as const,
+                                label: `계정상태${selectedAccountFilter !== 'all' ? `: ${memberAccountFilterLabels[selectedAccountFilter]}` : ''}`,
+                            },
+                        ]).map((option) => (
+                            <button
+                                key={option.id}
+                                type="button"
+                                onClick={() => setOpenFilterPanel((current) => (current === option.id ? null : option.id))}
+                                className={`rounded-full px-3 py-1.5 text-sm font-semibold transition-colors ${
+                                    openFilterPanel === option.id
+                                        ? 'bg-slate-900 text-white'
+                                        : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                                }`}
+                            >
+                                {option.label} ▾
+                            </button>
+                        ))}
+                    </div>
+
+                    {openFilterPanel === 'team' && (
+                        <div className="rounded-[24px] border border-slate-200 bg-slate-50 p-3">
+                            <div className="flex flex-wrap gap-2">
+                                <button
+                                    type="button"
+                                    onClick={() => setSelectedTeamFilter('all')}
+                                    className={`rounded-full px-3 py-1.5 text-sm font-semibold transition-colors ${
+                                        selectedTeamFilter === 'all'
+                                            ? 'bg-indigo-600 text-white'
+                                            : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                                    }`}
+                                >
+                                    전체({members.filter((member) => matchesMemberFilters(member, {
+                                        query: searchQueryNormalized,
+                                        roleFilter: selectedRoleFilter,
+                                        teamFilter: 'all',
+                                        statusFilter: selectedStatusFilter,
+                                        accountFilter: selectedAccountFilter,
+                                    })).length})
+                                </button>
+                                {teamFilterOptions.map((team) => (
+                                    <button
+                                        key={team.id}
+                                        type="button"
+                                        onClick={() => setSelectedTeamFilter(team.id)}
+                                        className={`rounded-full px-3 py-1.5 text-sm font-semibold transition-colors ${
+                                            selectedTeamFilter === team.id
+                                                ? 'bg-indigo-600 text-white'
+                                                : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                                        }`}
+                                    >
+                                        {team.label}({team.count})
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {openFilterPanel === 'role' && (
+                        <div className="rounded-[24px] border border-slate-200 bg-slate-50 p-3">
+                            <div className="flex flex-wrap gap-2">
+                                <button
+                                    type="button"
+                                    onClick={() => setSelectedRoleFilter('all')}
+                                    className={`rounded-full px-3 py-1.5 text-sm font-semibold transition-colors ${
+                                        selectedRoleFilter === 'all'
+                                            ? 'bg-indigo-600 text-white'
+                                            : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                                    }`}
+                                >
+                                    전체({members.filter((member) => matchesMemberFilters(member, {
+                                        query: searchQueryNormalized,
+                                        roleFilter: 'all',
+                                        teamFilter: selectedTeamFilter,
+                                        statusFilter: selectedStatusFilter,
+                                        accountFilter: selectedAccountFilter,
+                                    })).length})
+                                </button>
+                                {roleFilterOptions.map((role) => (
+                                    <button
+                                        key={role.id}
+                                        type="button"
+                                        onClick={() => setSelectedRoleFilter(role.id)}
+                                        className={`rounded-full px-3 py-1.5 text-sm font-semibold transition-colors ${
+                                            selectedRoleFilter === role.id
+                                                ? 'bg-indigo-600 text-white'
+                                                : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                                        }`}
+                                    >
+                                        {role.label}({role.count})
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {openFilterPanel === 'status' && (
+                        <div className="rounded-[24px] border border-slate-200 bg-slate-50 p-3">
+                            <div className="flex flex-wrap gap-2">
+                                <button
+                                    type="button"
+                                    onClick={() => setSelectedStatusFilter('all')}
+                                    className={`rounded-full px-3 py-1.5 text-sm font-semibold transition-colors ${
+                                        selectedStatusFilter === 'all'
+                                            ? 'bg-indigo-600 text-white'
+                                            : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                                    }`}
+                                >
+                                    전체({members.filter((member) => matchesMemberFilters(member, {
+                                        query: searchQueryNormalized,
+                                        roleFilter: selectedRoleFilter,
+                                        teamFilter: selectedTeamFilter,
+                                        statusFilter: 'all',
+                                        accountFilter: selectedAccountFilter,
+                                    })).length})
+                                </button>
+                                {statusFilterOptions.map((status) => (
+                                    <button
+                                        key={status.id}
+                                        type="button"
+                                        onClick={() => setSelectedStatusFilter(status.id)}
+                                        className={`rounded-full px-3 py-1.5 text-sm font-semibold transition-colors ${
+                                            selectedStatusFilter === status.id
+                                                ? 'bg-indigo-600 text-white'
+                                                : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                                        }`}
+                                    >
+                                        {status.label}({status.count})
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {openFilterPanel === 'account' && (
+                        <div className="rounded-[24px] border border-slate-200 bg-slate-50 p-3">
+                            <div className="flex flex-wrap gap-2">
+                                <button
+                                    type="button"
+                                    onClick={() => setSelectedAccountFilter('all')}
+                                    className={`rounded-full px-3 py-1.5 text-sm font-semibold transition-colors ${
+                                        selectedAccountFilter === 'all'
+                                            ? 'bg-indigo-600 text-white'
+                                            : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                                    }`}
+                                >
+                                    전체({members.filter((member) => matchesMemberFilters(member, {
+                                        query: searchQueryNormalized,
+                                        roleFilter: selectedRoleFilter,
+                                        teamFilter: selectedTeamFilter,
+                                        statusFilter: selectedStatusFilter,
+                                        accountFilter: 'all',
+                                    })).length})
+                                </button>
+                                {accountFilterOptions.map((status) => (
+                                    <button
+                                        key={status.id}
+                                        type="button"
+                                        onClick={() => setSelectedAccountFilter(status.id)}
+                                        className={`rounded-full px-3 py-1.5 text-sm font-semibold transition-colors ${
+                                            selectedAccountFilter === status.id
+                                                ? 'bg-indigo-600 text-white'
+                                                : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                                        }`}
+                                    >
+                                        {status.label}({status.count})
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    )}
 
                     {permissions.canManageMembers && (
                         <div className="flex flex-wrap gap-2">
@@ -874,28 +1189,6 @@ export const DashboardTab: React.FC = () => {
                     로그인 이메일과 계정 발급이 완료된 회원만 실제 서비스에 로그인할 수 있습니다. 표 보기는 기본 관리용, 팀 지정은 다중 소속 관리용, 조직도는 구조 파악용입니다.
                 </div>
                 <div className="flex flex-col gap-4 border-b border-slate-100 px-5 py-4 sm:px-6 2xl:flex-row 2xl:items-center 2xl:justify-between">
-                    <div className="flex flex-wrap items-center gap-2">
-                        {([
-                            { id: 'all' as const, label: '전체', count: members.length },
-                            { id: 'pending' as const, label: '접근 준비 필요', count: approvalQueue.length },
-                            { id: 'approved' as const, label: '즉시 접근 가능', count: members.filter((member) => isAccessReady(member)).length },
-                            { id: 'inactive' as const, label: '비활성', count: members.filter((member) => member.status === 'inactive').length },
-                        ]).map((option) => (
-                            <button
-                                key={option.id}
-                                type="button"
-                                onClick={() => setMemberView(option.id)}
-                                className={`rounded-full px-3 py-1.5 text-sm font-semibold transition-colors ${
-                                    memberView === option.id
-                                        ? 'bg-indigo-600 text-white'
-                                        : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-                                }`}
-                            >
-                                {option.label} {option.count}
-                            </button>
-                        ))}
-                    </div>
-
                     <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
                         <div className="grid grid-cols-1 gap-2 rounded-[24px] border border-slate-200 bg-slate-50 p-2 sm:grid-cols-3">
                             {([
