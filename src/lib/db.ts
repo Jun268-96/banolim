@@ -1939,6 +1939,9 @@ const mapMyMemberOverviewRow = (row: MyMemberOverviewRow): Member => ({
     status: row.status,
     joinedAt: row.joined_at,
     isVisible: row.is_visible,
+    authUserId: row.auth_user_id,
+    authProvisionedAt: row.auth_provisioned_at,
+    passwordResetRequired: row.password_reset_required,
 });
 
 const mapMyActivityLogRow = (row: MyActivityLogRow): ActivityLog => ({

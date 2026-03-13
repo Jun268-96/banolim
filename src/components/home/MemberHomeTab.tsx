@@ -289,7 +289,20 @@ export const MemberHomeTab: React.FC = () => {
 
     const latestLog = effectiveLogs[0] ?? null;
     const homeRecentLogs = effectiveLogs.slice(0, 4);
-    const accountLabel = member?.authUserId ? '계정 활성' : '계정 미발급';
+    const accountStatus = !member?.authUserId
+        ? {
+            label: '계정 미발급',
+            className: 'border-amber-200 bg-amber-50 text-amber-700',
+        }
+        : member.passwordResetRequired
+            ? {
+                label: '첫 로그인 대기',
+                className: 'border-sky-200 bg-sky-50 text-sky-700',
+            }
+            : {
+                label: '계정 활성',
+                className: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+            };
     const status = member?.status ?? 'active';
     const statusClass = member ? memberStatusClasses[status] : memberStatusClasses.active;
     const seasonScore = seasonLogs.reduce((sum, log) => sum + log.pointDelta, 0);
@@ -973,8 +986,8 @@ export const MemberHomeTab: React.FC = () => {
                                 </div>
                                 <div className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
                                     <span className="text-sm text-slate-500">계정 상태</span>
-                                    <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${member.authUserId ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-amber-200 bg-amber-50 text-amber-700'}`}>
-                                        {accountLabel}
+                                    <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${accountStatus.className}`}>
+                                        {accountStatus.label}
                                     </span>
                                 </div>
                                 <div className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">

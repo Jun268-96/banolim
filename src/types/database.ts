@@ -865,11 +865,14 @@ export interface Database {
             get_my_member_overview: {
                 Args: Record<string, never>;
                 Returns: {
+                    auth_provisioned_at: string | null;
+                    auth_user_id: string | null;
                     id: string;
                     is_approved: boolean;
                     is_visible: boolean;
                     joined_at: string | null;
                     name: string;
+                    password_reset_required: boolean;
                     role_id: string | null;
                     role_name: string | null;
                     score: number;
