@@ -163,11 +163,28 @@ create table if not exists public.badges (
     name text not null,
     description text not null,
     icon_key text not null,
+    image_url text,
     tone text not null default 'sky',
+    evaluation_scope text not null default 'season',
+    criteria_json jsonb not null default '{}'::jsonb,
     sort_order integer not null default 100,
     is_active boolean not null default true,
     created_at timestamptz not null default now()
 );
+
+alter table public.badges
+    drop constraint if exists badges_evaluation_scope_check;
+
+alter table public.badges
+    add constraint badges_evaluation_scope_check
+    check (evaluation_scope in ('season', 'lifetime'));
+
+alter table public.badges
+    drop constraint if exists badges_criteria_json_object_check;
+
+alter table public.badges
+    add constraint badges_criteria_json_object_check
+    check (jsonb_typeof(criteria_json) = 'object');
 
 create table if not exists public.member_badges (
     id uuid primary key default gen_random_uuid(),
@@ -1127,13 +1144,12 @@ security definer
 set search_path = public
 as $$
 declare
-    v_activity_count integer := 0;
-    v_attendance_count integer := 0;
-    v_spotlight_count integer := 0;
-    v_unique_activity_types integer := 0;
-    v_evidence_count integer := 0;
-    v_active_days integer := 0;
     v_active_season_id uuid;
+    v_badge record;
+    v_existing_badge record;
+    v_target_season_id uuid;
+    v_metrics jsonb;
+    v_is_eligible boolean := false;
     v_awarded integer := 0;
     v_row_count integer := 0;
 begin
@@ -1152,20 +1168,120 @@ begin
     order by seasons.start_date desc
     limit 1;
 
+    for v_badge in
+        select id, evaluation_scope, criteria_json, is_active
+        from public.badges
+    loop
+        select *
+        into v_existing_badge
+        from public.member_badges
+        where member_badges.member_id = p_member_id
+          and member_badges.badge_id = v_badge.id
+        limit 1;
+
+        if not coalesce(v_badge.is_active, false) then
+            if v_existing_badge.id is not null then
+                delete from public.member_badges
+                where member_badges.id = v_existing_badge.id;
+            end if;
+            continue;
+        end if;
+
+        v_target_season_id := null;
+        if coalesce(v_badge.evaluation_scope, 'season') = 'season' then
+            v_target_season_id := coalesce(v_existing_badge.season_id, v_active_season_id);
+        end if;
+
+        v_metrics := public.get_member_badge_metrics(
+            p_member_id,
+            coalesce(v_badge.evaluation_scope, 'season'),
+            v_target_season_id
+        );
+        v_is_eligible := public.badge_criteria_met(v_badge.criteria_json, v_metrics);
+
+        if v_is_eligible and v_existing_badge.id is null then
+            insert into public.member_badges (member_id, badge_id, season_id)
+            values (
+                p_member_id,
+                v_badge.id,
+                case
+                    when coalesce(v_badge.evaluation_scope, 'season') = 'season' then v_target_season_id
+                    else null
+                end
+            )
+            on conflict (member_id, badge_id) do nothing;
+            get diagnostics v_row_count = row_count;
+            v_awarded := v_awarded + v_row_count;
+        elsif not v_is_eligible and v_existing_badge.id is not null then
+            delete from public.member_badges
+            where member_badges.id = v_existing_badge.id;
+        end if;
+    end loop;
+
+    return v_awarded;
+end;
+$$;
+
+create or replace function public.get_member_badge_metrics(
+    p_member_id uuid,
+    p_scope text default 'season',
+    p_season_id uuid default null
+)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+    v_activity_count integer := 0;
+    v_attendance_count integer := 0;
+    v_spotlight_count integer := 0;
+    v_unique_activity_types integer := 0;
+    v_evidence_count integer := 0;
+    v_active_days integer := 0;
+    v_total_points integer := 0;
+begin
+    if p_member_id is null then
+        return jsonb_build_object(
+            'activityCount', 0,
+            'attendanceCount', 0,
+            'spotlightCount', 0,
+            'uniqueActivityTypeCount', 0,
+            'evidenceCount', 0,
+            'activeDayCount', 0,
+            'totalPoints', 0
+        );
+    end if;
+
+    if p_scope = 'season' and p_season_id is null then
+        return jsonb_build_object(
+            'activityCount', 0,
+            'attendanceCount', 0,
+            'spotlightCount', 0,
+            'uniqueActivityTypeCount', 0,
+            'evidenceCount', 0,
+            'activeDayCount', 0,
+            'totalPoints', 0
+        );
+    end if;
+
     select
         count(*)::integer,
-        count(*) filter (where activity_types.name ~* '(출석|참석|지각|불참)')::integer,
-        count(*) filter (where point_ledgers.delta >= 20 or activity_types.name ~* '(발표|세션|리딩)')::integer,
+        count(*) filter (where activity_types.name ~* '(출석|참석|지각|불참|attendance|present|late|absent)')::integer,
+        count(*) filter (where point_ledgers.delta >= 20 or activity_types.name ~* '(발표|세션|리딩|presentation|session|reading)')::integer,
         count(distinct activity_records.activity_type_id)::integer,
         count(*) filter (where nullif(btrim(coalesce(activity_records.evidence_url, '')), '') is not null)::integer,
-        count(distinct (activity_records.occurred_at::date))::integer
+        count(distinct (activity_records.occurred_at::date))::integer,
+        coalesce(sum(point_ledgers.delta), 0)::integer
     into
         v_activity_count,
         v_attendance_count,
         v_spotlight_count,
         v_unique_activity_types,
         v_evidence_count,
-        v_active_days
+        v_active_days,
+        v_total_points
     from public.activity_records
     join public.point_ledgers on point_ledgers.record_id = activity_records.id
         and point_ledgers.member_id = activity_records.member_id
@@ -1173,75 +1289,52 @@ begin
     join public.point_rules on point_rules.id = point_ledgers.point_rule_id
     join public.activity_types on activity_types.id = point_rules.activity_type_id
     where activity_records.member_id = p_member_id
-      and coalesce(activity_records.status, 'confirmed') <> 'reversed';
+      and coalesce(activity_records.status, 'confirmed') <> 'reversed'
+      and (
+          p_scope <> 'season'
+          or activity_records.season_id = p_season_id
+      );
 
-    if v_activity_count > 0 then
-        insert into public.member_badges (member_id, badge_id, season_id)
-        select p_member_id, badges.id, v_active_season_id
-        from public.badges
-        where badges.code = 'first_step'
-          and badges.is_active = true
-        on conflict (member_id, badge_id) do nothing;
-        get diagnostics v_row_count = row_count;
-        v_awarded := v_awarded + v_row_count;
+    return jsonb_build_object(
+        'activityCount', coalesce(v_activity_count, 0),
+        'attendanceCount', coalesce(v_attendance_count, 0),
+        'spotlightCount', coalesce(v_spotlight_count, 0),
+        'uniqueActivityTypeCount', coalesce(v_unique_activity_types, 0),
+        'evidenceCount', coalesce(v_evidence_count, 0),
+        'activeDayCount', coalesce(v_active_days, 0),
+        'totalPoints', coalesce(v_total_points, 0)
+    );
+end;
+$$;
+
+create or replace function public.badge_criteria_met(
+    p_criteria jsonb,
+    p_metrics jsonb
+)
+returns boolean
+language plpgsql
+immutable
+set search_path = public
+as $$
+declare
+    v_criteria jsonb := coalesce(p_criteria, '{}'::jsonb);
+    v_metric_key text;
+    v_target integer;
+begin
+    if jsonb_typeof(v_criteria) <> 'object' or v_criteria = '{}'::jsonb then
+        return false;
     end if;
 
-    if v_active_days >= 3 then
-        insert into public.member_badges (member_id, badge_id, season_id)
-        select p_member_id, badges.id, v_active_season_id
-        from public.badges
-        where badges.code = 'steady_rhythm'
-          and badges.is_active = true
-        on conflict (member_id, badge_id) do nothing;
-        get diagnostics v_row_count = row_count;
-        v_awarded := v_awarded + v_row_count;
-    end if;
+    for v_metric_key, v_target in
+        select key, value::integer
+        from jsonb_each_text(v_criteria)
+    loop
+        if coalesce((p_metrics ->> v_metric_key)::integer, 0) < v_target then
+            return false;
+        end if;
+    end loop;
 
-    if v_attendance_count >= 5 then
-        insert into public.member_badges (member_id, badge_id, season_id)
-        select p_member_id, badges.id, v_active_season_id
-        from public.badges
-        where badges.code = 'attendance_radar'
-          and badges.is_active = true
-        on conflict (member_id, badge_id) do nothing;
-        get diagnostics v_row_count = row_count;
-        v_awarded := v_awarded + v_row_count;
-    end if;
-
-    if v_spotlight_count >= 1 then
-        insert into public.member_badges (member_id, badge_id, season_id)
-        select p_member_id, badges.id, v_active_season_id
-        from public.badges
-        where badges.code = 'spotlight'
-          and badges.is_active = true
-        on conflict (member_id, badge_id) do nothing;
-        get diagnostics v_row_count = row_count;
-        v_awarded := v_awarded + v_row_count;
-    end if;
-
-    if v_unique_activity_types >= 4 then
-        insert into public.member_badges (member_id, badge_id, season_id)
-        select p_member_id, badges.id, v_active_season_id
-        from public.badges
-        where badges.code = 'multi_tool'
-          and badges.is_active = true
-        on conflict (member_id, badge_id) do nothing;
-        get diagnostics v_row_count = row_count;
-        v_awarded := v_awarded + v_row_count;
-    end if;
-
-    if v_evidence_count >= 2 then
-        insert into public.member_badges (member_id, badge_id, season_id)
-        select p_member_id, badges.id, v_active_season_id
-        from public.badges
-        where badges.code = 'archive_keeper'
-          and badges.is_active = true
-        on conflict (member_id, badge_id) do nothing;
-        get diagnostics v_row_count = row_count;
-        v_awarded := v_awarded + v_row_count;
-    end if;
-
-    return v_awarded;
+    return true;
 end;
 $$;
 
@@ -1325,6 +1418,10 @@ declare
     v_normalized_member_ids uuid[];
     v_awarded_count integer := 0;
 begin
+    if not public.can_manage_admin_tables() then
+        raise exception '배지 상태를 갱신할 권한이 없습니다.';
+    end if;
+
     select coalesce(
         array_agg(distinct member_id),
         '{}'::uuid[]
@@ -1336,10 +1433,32 @@ begin
         return 0;
     end if;
 
-    delete from public.member_badges
-    where member_badges.member_id = any(v_normalized_member_ids);
-
     foreach v_member_id in array v_normalized_member_ids loop
+        v_awarded_count := v_awarded_count + coalesce(public.award_member_badges(v_member_id), 0);
+    end loop;
+
+    return v_awarded_count;
+end;
+$$;
+
+create or replace function public.refresh_all_member_badges()
+returns integer
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+    v_member_id uuid;
+    v_awarded_count integer := 0;
+begin
+    if not public.can_manage_admin_tables() then
+        raise exception '배지를 전체 갱신할 권한이 없습니다.';
+    end if;
+
+    for v_member_id in
+        select members.id
+        from public.members
+    loop
         v_awarded_count := v_awarded_count + coalesce(public.award_member_badges(v_member_id), 0);
     end loop;
 
@@ -1897,7 +2016,9 @@ begin
 end;
 $$;
 
-create or replace function public.get_my_member_badges()
+drop function if exists public.get_my_member_badges();
+
+create function public.get_my_member_badges()
 returns table (
     id uuid,
     member_id uuid,
@@ -1906,7 +2027,10 @@ returns table (
     badge_name text,
     badge_description text,
     icon_key text,
+    image_url text,
     tone text,
+    evaluation_scope text,
+    criteria_json jsonb,
     awarded_at timestamptz,
     season_id uuid
 )
@@ -1934,7 +2058,10 @@ begin
         badges.name as badge_name,
         badges.description as badge_description,
         badges.icon_key,
+        badges.image_url,
         badges.tone,
+        badges.evaluation_scope,
+        badges.criteria_json,
         member_badges.awarded_at,
         member_badges.season_id
     from public.member_badges
@@ -1945,7 +2072,9 @@ begin
 end;
 $$;
 
-create or replace function public.get_my_member_overview()
+drop function if exists public.get_my_member_overview();
+
+create function public.get_my_member_overview()
 returns table (
     id uuid,
     name text,
@@ -2361,19 +2490,21 @@ create index if not exists idx_attendance_sessions_active on public.attendance_s
 create unique index if not exists idx_attendance_session_members_unique on public.attendance_session_members (session_id, member_id);
 create index if not exists idx_attendance_session_members_member on public.attendance_session_members (member_id, updated_at desc);
 
-insert into public.badges (code, name, description, icon_key, tone, sort_order, is_active)
+insert into public.badges (code, name, description, icon_key, tone, evaluation_scope, criteria_json, sort_order, is_active)
 values
-    ('first_step', '첫 발자국', '첫 활동 기록을 남겼습니다.', 'bandi-core', 'gold', 10, true),
-    ('steady_rhythm', '꾸준한 리듬', '서로 다른 날짜에 3회 이상 활동을 이어갔습니다.', 'bandi-orbit', 'emerald', 20, true),
-    ('attendance_radar', '출석 레이더', '출석 계열 활동을 5회 이상 기록했습니다.', 'school-signal', 'sky', 30, true),
-    ('spotlight', '스포트라이트', '발표 또는 고점수 기여를 남겼습니다.', 'bandi-flash', 'rose', 40, true),
-    ('multi_tool', '멀티 플레이어', '서로 다른 활동 유형 4개 이상을 경험했습니다.', 'didi-toolkit', 'sky', 50, true),
-    ('archive_keeper', '기록 보관자', '증빙 링크가 포함된 활동을 2건 이상 남겼습니다.', 'didi-archive', 'emerald', 60, true)
+    ('first_step', '첫 발자국', '첫 활동 기록을 남겼습니다.', 'bandi-core', 'gold', 'season', jsonb_build_object('activityCount', 1), 10, true),
+    ('steady_rhythm', '꾸준한 리듬', '서로 다른 날짜에 3회 이상 활동을 이어갔습니다.', 'bandi-orbit', 'emerald', 'season', jsonb_build_object('activeDayCount', 3), 20, true),
+    ('attendance_radar', '출석 레이더', '출석 계열 활동을 5회 이상 기록했습니다.', 'school-signal', 'sky', 'season', jsonb_build_object('attendanceCount', 5), 30, true),
+    ('spotlight', '스포트라이트', '발표 또는 고점수 기여를 남겼습니다.', 'bandi-flash', 'rose', 'season', jsonb_build_object('spotlightCount', 1), 40, true),
+    ('multi_tool', '멀티 플레이어', '서로 다른 활동 유형 4개 이상을 경험했습니다.', 'didi-toolkit', 'sky', 'season', jsonb_build_object('uniqueActivityTypeCount', 4), 50, true),
+    ('archive_keeper', '기록 보관자', '증빙 링크가 포함된 활동을 2건 이상 남겼습니다.', 'didi-archive', 'emerald', 'season', jsonb_build_object('evidenceCount', 2), 60, true)
 on conflict (code) do update
 set
     name = excluded.name,
     description = excluded.description,
     icon_key = excluded.icon_key,
+    evaluation_scope = excluded.evaluation_scope,
+    criteria_json = excluded.criteria_json,
     tone = excluded.tone,
     sort_order = excluded.sort_order,
     is_active = excluded.is_active;

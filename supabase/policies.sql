@@ -18,7 +18,7 @@ grant select on public.activity_records to anon, authenticated;
 grant select on public.point_ledgers to anon, authenticated;
 grant select on public.audit_logs to authenticated;
 grant select on public.correction_requests to authenticated;
-grant select on public.badges to authenticated;
+grant select, insert, update, delete on public.badges to authenticated;
 grant select on public.member_badges to authenticated;
 grant select, insert, update on public.announcements to authenticated;
 grant select, insert, update on public.schedule_events to authenticated;
@@ -38,6 +38,7 @@ grant execute on function public.get_my_activity_logs() to authenticated;
 grant execute on function public.get_my_member_badges() to authenticated;
 grant execute on function public.get_my_member_overview() to authenticated;
 grant execute on function public.is_registered_login_email(text) to anon, authenticated;
+grant execute on function public.refresh_all_member_badges() to authenticated;
 grant execute on function public.replace_team_members(uuid, uuid[]) to authenticated;
 grant execute on function public.delete_team(uuid) to authenticated;
 grant execute on function public.reset_activity_data_current_season() to authenticated;
@@ -173,6 +174,28 @@ on public.badges
 for select
 to authenticated
 using (true);
+
+drop policy if exists badges_insert_authenticated on public.badges;
+create policy badges_insert_authenticated
+on public.badges
+for insert
+to authenticated
+with check (public.can_manage_admin_tables());
+
+drop policy if exists badges_update_authenticated on public.badges;
+create policy badges_update_authenticated
+on public.badges
+for update
+to authenticated
+using (public.can_manage_admin_tables())
+with check (public.can_manage_admin_tables());
+
+drop policy if exists badges_delete_authenticated on public.badges;
+create policy badges_delete_authenticated
+on public.badges
+for delete
+to authenticated
+using (public.can_manage_admin_tables());
 
 drop policy if exists member_badges_select_authenticated on public.member_badges;
 create policy member_badges_select_authenticated

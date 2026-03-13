@@ -4,6 +4,7 @@ export type SeasonStatus = 'planned' | 'active' | 'closed';
 export type AppRole = 'super_admin' | 'operator' | 'team_lead' | 'member';
 export type CorrectionRequestStatus = 'pending' | 'reviewing' | 'resolved' | 'rejected';
 export type BadgeTone = 'gold' | 'sky' | 'emerald' | 'rose';
+export type BadgeEvaluationScope = 'season' | 'lifetime';
 export type RecapSnapshotScope = 'member' | 'overall';
 export type RecapSnapshotPeriod = 'month' | 'season';
 export type RecapSnapshotTheme = 'member' | 'overall';
@@ -169,7 +170,10 @@ export interface Badge {
     name: string;
     description: string;
     iconKey: string;
+    imageUrl?: string | null;
     tone?: BadgeTone;
+    evaluationScope?: BadgeEvaluationScope;
+    criteria?: BadgeCriteria;
     sortOrder?: number;
     isActive?: boolean;
 }
@@ -182,9 +186,35 @@ export interface MemberBadge {
     badgeName: string;
     badgeDescription: string;
     iconKey: string;
+    imageUrl?: string | null;
     tone?: BadgeTone;
+    evaluationScope?: BadgeEvaluationScope;
+    criteria?: BadgeCriteria;
     awardedAt: string;
     seasonId?: string | null;
+}
+
+export interface BadgeCriteria {
+    activityCount?: number;
+    attendanceCount?: number;
+    spotlightCount?: number;
+    uniqueActivityTypeCount?: number;
+    evidenceCount?: number;
+    activeDayCount?: number;
+    totalPoints?: number;
+}
+
+export interface BadgeUpsertInput {
+    code: string;
+    name: string;
+    description: string;
+    iconKey: string;
+    imageUrl?: string | null;
+    tone: BadgeTone;
+    evaluationScope: BadgeEvaluationScope;
+    criteria: BadgeCriteria;
+    sortOrder: number;
+    isActive: boolean;
 }
 
 export interface ActivityLog {

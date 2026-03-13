@@ -8,7 +8,10 @@ import type {
     AnnouncementItem,
     AuditLogEntry,
     Badge,
+    BadgeCriteria,
+    BadgeEvaluationScope,
     BadgeTone,
+    BadgeUpsertInput,
     Category,
     CorrectionRequest,
     CorrectionRequestStatus,
@@ -32,10 +35,19 @@ import type {
 } from '../types';
 import { isSupabaseConfigured, supabase, supabaseAnonKey, supabaseUrl } from './supabase';
 import type { Database, Json } from '../types/database';
+import {
+    computeBadgeMetrics,
+    getBadgeCriteriaSummary,
+    hasBadgeCriteria,
+    isBadgeEarnedByMetrics,
+    normalizeBadgeCode,
+    normalizeBadgeCriteria,
+} from './badges';
 
 type MemberRow = Database['public']['Tables']['members']['Row'];
 type RoleRow = Database['public']['Tables']['roles']['Row'];
 type TeamRow = Database['public']['Tables']['teams']['Row'];
+type BadgeRow = Database['public']['Tables']['badges']['Row'];
 type MemberTeamLinkRow = Database['public']['Tables']['member_team_links']['Row'];
 type SeasonRow = Database['public']['Tables']['seasons']['Row'];
 type ActivityGroupRow = Database['public']['Tables']['activity_groups']['Row'];
@@ -168,6 +180,72 @@ const getOptionalNumberField = (value: unknown, key: string) => {
 const getBooleanField = (value: unknown, key: string) => {
     const record = toRecord(value);
     return Boolean(record[key]);
+};
+
+const parseBadgeEvaluationScope = (value: unknown): BadgeEvaluationScope =>
+    value === 'lifetime' ? 'lifetime' : 'season';
+
+const parseBadgeCriteriaValue = (value: unknown): BadgeCriteria => {
+    const record = toRecord(value);
+    return normalizeBadgeCriteria({
+        activityCount: typeof record.activityCount === 'number' ? record.activityCount : undefined,
+        attendanceCount: typeof record.attendanceCount === 'number' ? record.attendanceCount : undefined,
+        spotlightCount: typeof record.spotlightCount === 'number' ? record.spotlightCount : undefined,
+        uniqueActivityTypeCount: typeof record.uniqueActivityTypeCount === 'number' ? record.uniqueActivityTypeCount : undefined,
+        evidenceCount: typeof record.evidenceCount === 'number' ? record.evidenceCount : undefined,
+        activeDayCount: typeof record.activeDayCount === 'number' ? record.activeDayCount : undefined,
+        totalPoints: typeof record.totalPoints === 'number' ? record.totalPoints : undefined,
+    });
+};
+
+const mapBadgeRow = (
+    row: Pick<BadgeRow, 'id' | 'code' | 'name' | 'description' | 'icon_key' | 'image_url' | 'tone' | 'evaluation_scope' | 'criteria_json' | 'sort_order' | 'is_active'>,
+): Badge => ({
+    id: row.id,
+    code: row.code,
+    name: row.name,
+    description: row.description,
+    iconKey: row.icon_key,
+    imageUrl: row.image_url,
+    tone: (row.tone as BadgeTone | null) ?? 'sky',
+    evaluationScope: parseBadgeEvaluationScope(row.evaluation_scope),
+    criteria: parseBadgeCriteriaValue(row.criteria_json),
+    sortOrder: row.sort_order,
+    isActive: row.is_active,
+});
+
+const normalizeBadgeInput = (input: BadgeUpsertInput): BadgeUpsertInput => {
+    const finalCode = normalizeBadgeCode(input.code);
+    const normalizedCriteria = normalizeBadgeCriteria(input.criteria);
+
+    if (!input.name.trim()) {
+        throw new Error('배지 이름을 입력해 주세요.');
+    }
+
+    if (!finalCode) {
+        throw new Error('배지 코드를 입력해 주세요.');
+    }
+
+    if (!input.description.trim()) {
+        throw new Error('배지 설명을 입력해 주세요.');
+    }
+
+    if (input.isActive && !hasBadgeCriteria(normalizedCriteria)) {
+        throw new Error('활성 배지는 최소 한 개 이상의 획득 조건이 필요합니다.');
+    }
+
+    return {
+        code: finalCode,
+        name: input.name.trim(),
+        description: input.description.trim(),
+        iconKey: input.iconKey.trim() || 'bandi-core',
+        imageUrl: input.imageUrl?.trim() ? input.imageUrl.trim() : null,
+        tone: input.tone,
+        evaluationScope: input.evaluationScope,
+        criteria: normalizedCriteria,
+        sortOrder: Number.isFinite(input.sortOrder) ? Math.max(0, Math.floor(input.sortOrder)) : 100,
+        isActive: input.isActive,
+    };
 };
 
 const parseTeamMemberUpdateResult = (value: unknown): TeamMemberUpdateResult => ({
@@ -504,14 +582,17 @@ const localCorrectionRequests: CorrectionRequest[] = [
     },
 ];
 
-const localBadges: Badge[] = [
+let localBadges: Badge[] = [
     {
         id: 'badge_first_step',
         code: 'first_step',
         name: '첫 발자국',
         description: '첫 활동 기록을 남겼습니다.',
         iconKey: 'bandi-core',
+        imageUrl: null,
         tone: 'gold',
+        evaluationScope: 'season',
+        criteria: { activityCount: 1 },
         sortOrder: 10,
         isActive: true,
     },
@@ -521,7 +602,10 @@ const localBadges: Badge[] = [
         name: '꾸준한 리듬',
         description: '서로 다른 날짜에 3회 이상 활동을 이어갔습니다.',
         iconKey: 'bandi-orbit',
+        imageUrl: null,
         tone: 'emerald',
+        evaluationScope: 'season',
+        criteria: { activeDayCount: 3 },
         sortOrder: 20,
         isActive: true,
     },
@@ -531,7 +615,10 @@ const localBadges: Badge[] = [
         name: '출석 레이더',
         description: '출석 계열 활동을 5회 이상 기록했습니다.',
         iconKey: 'school-signal',
+        imageUrl: null,
         tone: 'sky',
+        evaluationScope: 'season',
+        criteria: { attendanceCount: 5 },
         sortOrder: 30,
         isActive: true,
     },
@@ -541,7 +628,10 @@ const localBadges: Badge[] = [
         name: '스포트라이트',
         description: '발표 또는 고점수 기여를 남겼습니다.',
         iconKey: 'bandi-flash',
+        imageUrl: null,
         tone: 'rose',
+        evaluationScope: 'season',
+        criteria: { spotlightCount: 1 },
         sortOrder: 40,
         isActive: true,
     },
@@ -551,7 +641,10 @@ const localBadges: Badge[] = [
         name: '멀티 플레이어',
         description: '서로 다른 활동 유형 4개 이상을 경험했습니다.',
         iconKey: 'didi-toolkit',
+        imageUrl: null,
         tone: 'sky',
+        evaluationScope: 'season',
+        criteria: { uniqueActivityTypeCount: 4 },
         sortOrder: 50,
         isActive: true,
     },
@@ -561,7 +654,10 @@ const localBadges: Badge[] = [
         name: '기록 보관자',
         description: '증빙 링크가 포함된 활동을 2건 이상 남겼습니다.',
         iconKey: 'didi-archive',
+        imageUrl: null,
         tone: 'emerald',
+        evaluationScope: 'season',
+        criteria: { evidenceCount: 2 },
         sortOrder: 60,
         isActive: true,
     },
@@ -767,12 +863,6 @@ const refreshLocalMemberBadgesForMembers = (memberIds: string[]) => {
         return 0;
     }
 
-    for (let index = localMemberBadges.length - 1; index >= 0; index -= 1) {
-        if (normalizedMemberIds.includes(localMemberBadges[index].memberId)) {
-            localMemberBadges.splice(index, 1);
-        }
-    }
-
     normalizedMemberIds.forEach((memberId) => syncLocalMemberBadges(memberId));
 
     return localMemberBadges.filter((badge) => normalizedMemberIds.includes(badge.memberId)).length;
@@ -863,34 +953,19 @@ const getLocalCorrectionRequests = (requesterMemberId?: string | null) =>
             .map((request) => ({ ...request })),
     );
 
-const badgeToneByCode: Record<string, BadgeTone> = {
-    first_step: 'gold',
-    steady_rhythm: 'emerald',
-    attendance_radar: 'sky',
-    spotlight: 'rose',
-    multi_tool: 'sky',
-    archive_keeper: 'emerald',
-};
-
 const getEffectiveLocalLogsForMember = (memberId: string) =>
     enrichLocalLogs().filter((log) => log.memberId === memberId && !log.isReversal && log.recordStatus !== 'reversed');
 
-const getEligibleLocalBadgeCodes = (memberId: string) => {
-    const logs = getEffectiveLocalLogsForMember(memberId);
-    const attendanceCount = logs.filter((log) => /(출석|참석|지각|불참)/.test(log.categoryName ?? log.reason ?? '')).length;
-    const distinctActiveDays = new Set(logs.map((log) => log.timestamp.slice(0, 10))).size;
-    const spotlightCount = logs.filter((log) => log.pointDelta >= 20 || /(발표|세션|리딩)/.test(log.categoryName ?? log.reason ?? '')).length;
-    const uniqueCategoryCount = new Set(logs.map((log) => log.categoryName ?? log.categoryId)).size;
-    const evidenceCount = logs.filter((log) => Boolean(log.evidenceUrl)).length;
+const getLocalBadgeMetricsForScope = (memberId: string, badge: Badge, seasonId?: string | null) => {
+    const effectiveLogs = getEffectiveLocalLogsForMember(memberId);
+    const scopedLogs = badge.evaluationScope === 'lifetime'
+        ? effectiveLogs
+        : effectiveLogs.filter((log) => {
+            const targetSeason = localSeasons.find((season) => season.id === seasonId) ?? null;
+            return targetSeason ? isTimestampInSeason(log.timestamp, targetSeason) : false;
+        });
 
-    return new Set([
-        ...(logs.length > 0 ? ['first_step'] : []),
-        ...(distinctActiveDays >= 3 ? ['steady_rhythm'] : []),
-        ...(attendanceCount >= 5 ? ['attendance_radar'] : []),
-        ...(spotlightCount >= 1 ? ['spotlight'] : []),
-        ...(uniqueCategoryCount >= 4 ? ['multi_tool'] : []),
-        ...(evidenceCount >= 2 ? ['archive_keeper'] : []),
-    ]);
+    return computeBadgeMetrics(scopedLogs);
 };
 
 const syncLocalMemberBadges = (memberId?: string | null) => {
@@ -898,38 +973,59 @@ const syncLocalMemberBadges = (memberId?: string | null) => {
     const activeSeasonId = getLocalCurrentSeasonSummary()?.id ?? localCurrentSeason.id;
 
     targetIds.forEach((targetId) => {
-        const eligibleCodes = getEligibleLocalBadgeCodes(targetId);
+        const badgesBySort = [...localBadges].sort((a, b) => (a.sortOrder ?? 999) - (b.sortOrder ?? 999) || a.name.localeCompare(b.name));
 
-        for (let index = localMemberBadges.length - 1; index >= 0; index -= 1) {
-            const badge = localMemberBadges[index];
-            if (badge.memberId === targetId && !eligibleCodes.has(badge.badgeCode)) {
-                localMemberBadges.splice(index, 1);
+        badgesBySort.forEach((badge) => {
+            const existingAward = localMemberBadges.find((entry) => entry.memberId === targetId && entry.badgeId === badge.id) ?? null;
+            const targetSeasonId = badge.evaluationScope === 'season'
+                ? existingAward?.seasonId ?? activeSeasonId
+                : null;
+            const metrics = getLocalBadgeMetricsForScope(targetId, badge, targetSeasonId);
+            const isEligible = badge.isActive !== false && isBadgeEarnedByMetrics(badge.criteria, metrics);
+
+            if (isEligible && !existingAward) {
+                localMemberBadges.push({
+                    id: createLocalId('member_badge'),
+                    memberId: targetId,
+                    badgeId: badge.id,
+                    badgeCode: badge.code,
+                    badgeName: badge.name,
+                    badgeDescription: badge.description,
+                    iconKey: badge.iconKey,
+                    imageUrl: badge.imageUrl ?? null,
+                    tone: badge.tone ?? 'sky',
+                    evaluationScope: badge.evaluationScope ?? 'season',
+                    criteria: normalizeBadgeCriteria(badge.criteria),
+                    awardedAt: new Date().toISOString(),
+                    seasonId: targetSeasonId,
+                });
             }
-        }
 
-        for (const badge of localBadges) {
-            if (!eligibleCodes.has(badge.code)) {
-                continue;
+            if (!isEligible && existingAward) {
+                const targetIndex = localMemberBadges.findIndex((entry) => entry.id === existingAward.id);
+                if (targetIndex >= 0) {
+                    localMemberBadges.splice(targetIndex, 1);
+                }
             }
 
-            const alreadyAwarded = localMemberBadges.some((entry) => entry.memberId === targetId && entry.badgeCode === badge.code);
-            if (alreadyAwarded) {
-                continue;
+            if (isEligible && existingAward) {
+                const targetIndex = localMemberBadges.findIndex((entry) => entry.id === existingAward.id);
+                if (targetIndex >= 0) {
+                    localMemberBadges.splice(targetIndex, 1, {
+                        ...existingAward,
+                        badgeCode: badge.code,
+                        badgeName: badge.name,
+                        badgeDescription: badge.description,
+                        iconKey: badge.iconKey,
+                        imageUrl: badge.imageUrl ?? null,
+                        tone: badge.tone ?? 'sky',
+                        evaluationScope: badge.evaluationScope ?? 'season',
+                        criteria: normalizeBadgeCriteria(badge.criteria),
+                        seasonId: targetSeasonId,
+                    });
+                }
             }
-
-            localMemberBadges.push({
-                id: createLocalId('member_badge'),
-                memberId: targetId,
-                badgeId: badge.id,
-                badgeCode: badge.code,
-                badgeName: badge.name,
-                badgeDescription: badge.description,
-                iconKey: badge.iconKey,
-                tone: badge.tone ?? badgeToneByCode[badge.code] ?? 'sky',
-                awardedAt: new Date().toISOString(),
-                seasonId: activeSeasonId,
-            });
-        }
+        });
     });
 };
 
@@ -1969,7 +2065,10 @@ const mapMyMemberBadgeRow = (row: MyMemberBadgeRow): MemberBadge => ({
     badgeName: row.badge_name,
     badgeDescription: row.badge_description,
     iconKey: row.icon_key,
+    imageUrl: row.image_url,
     tone: (row.tone as BadgeTone | null) ?? 'sky',
+    evaluationScope: parseBadgeEvaluationScope(row.evaluation_scope),
+    criteria: parseBadgeCriteriaValue(row.criteria_json),
     awardedAt: row.awarded_at,
     seasonId: row.season_id,
 });
@@ -2064,6 +2163,46 @@ export const getMyMemberBadges = async (memberId?: string | null): Promise<Membe
     }
 };
 
+export const getBadges = async (options?: { includeInactive?: boolean }): Promise<Badge[]> => {
+    const includeInactive = options?.includeInactive ?? false;
+
+    if (!isSupabaseConfigured) {
+        return [...localBadges]
+            .filter((badge) => includeInactive || badge.isActive !== false)
+            .sort((a, b) => (a.sortOrder ?? 999) - (b.sortOrder ?? 999) || a.name.localeCompare(b.name));
+    }
+
+    try {
+        const client = getSupabaseClient();
+        let query = client
+            .from('badges')
+            .select('id, code, name, description, icon_key, image_url, tone, evaluation_scope, criteria_json, sort_order, is_active')
+            .order('sort_order', { ascending: true });
+
+        if (!includeInactive) {
+            query = query.eq('is_active', true);
+        }
+
+        const { data, error } = await query;
+
+        if (error) {
+            throw error;
+        }
+
+        return ((data ?? []) as Array<
+            Pick<BadgeRow, 'id' | 'code' | 'name' | 'description' | 'icon_key' | 'image_url' | 'tone' | 'evaluation_scope' | 'criteria_json' | 'sort_order' | 'is_active'>
+        >).map(mapBadgeRow);
+    } catch (error) {
+        return fallback(
+            'getBadges',
+            () => [...localBadges]
+                .filter((badge) => includeInactive || badge.isActive !== false)
+                .sort((a, b) => (a.sortOrder ?? 999) - (b.sortOrder ?? 999) || a.name.localeCompare(b.name)),
+            error,
+        );
+    }
+};
+
 export const getMemberBadges = async (): Promise<MemberBadge[]> => {
     if (!isSupabaseConfigured) {
         return getAllLocalMemberBadges();
@@ -2078,8 +2217,7 @@ export const getMemberBadges = async (): Promise<MemberBadge[]> => {
                 .order('awarded_at', { ascending: false }),
             client
                 .from('badges')
-                .select('id, code, name, description, icon_key, tone, sort_order, is_active')
-                .eq('is_active', true),
+                .select('id, code, name, description, icon_key, image_url, tone, evaluation_scope, criteria_json, sort_order, is_active'),
         ]);
 
         if (memberBadgeResult.error) {
@@ -2091,7 +2229,7 @@ export const getMemberBadges = async (): Promise<MemberBadge[]> => {
         }
 
         const badgeRows = (badgeResult.data ?? []) as Array<
-            Pick<Database['public']['Tables']['badges']['Row'], 'id' | 'code' | 'name' | 'description' | 'icon_key' | 'tone' | 'sort_order' | 'is_active'>
+            Pick<Database['public']['Tables']['badges']['Row'], 'id' | 'code' | 'name' | 'description' | 'icon_key' | 'image_url' | 'tone' | 'evaluation_scope' | 'criteria_json' | 'sort_order' | 'is_active'>
         >;
         const memberBadgeRows = (memberBadgeResult.data ?? []) as Array<
             Pick<Database['public']['Tables']['member_badges']['Row'], 'id' | 'member_id' | 'badge_id' | 'awarded_at' | 'season_id'>
@@ -2113,13 +2251,147 @@ export const getMemberBadges = async (): Promise<MemberBadge[]> => {
                 badgeName: badge.name,
                 badgeDescription: badge.description,
                 iconKey: badge.icon_key,
+                imageUrl: badge.image_url,
                 tone: (badge.tone as BadgeTone | null) ?? 'sky',
+                evaluationScope: parseBadgeEvaluationScope(badge.evaluation_scope),
+                criteria: parseBadgeCriteriaValue(badge.criteria_json),
                 awardedAt: entry.awarded_at,
                 seasonId: entry.season_id,
             }];
         });
     } catch (error) {
         return fallback('getMemberBadges', () => getAllLocalMemberBadges(), error);
+    }
+};
+
+export const addBadge = async (input: BadgeUpsertInput): Promise<Badge> => {
+    const normalizedInput = normalizeBadgeInput(input);
+
+    if (!isSupabaseConfigured) {
+        const badge: Badge = {
+            id: createLocalId('badge'),
+            ...normalizedInput,
+        };
+        localBadges = [...localBadges, badge].sort((a, b) => (a.sortOrder ?? 999) - (b.sortOrder ?? 999) || a.name.localeCompare(b.name));
+        refreshLocalMemberBadgesForMembers(localMembers.map((member) => member.id));
+        logLocalAuditEntry({
+            actorId: null,
+            actorName: '로컬 운영자',
+            entityType: 'badge',
+            entityId: badge.id,
+            action: 'created',
+            summary: `${badge.name} 배지 등록`,
+            diff: {
+                summary: `${badge.name} 배지 등록`,
+                badgeId: badge.id,
+                badgeCode: badge.code,
+                criteria: badge.criteria,
+                criteriaSummary: getBadgeCriteriaSummary(badge.criteria, badge.evaluationScope),
+            },
+        });
+        return badge;
+    }
+
+    const client = getSupabaseClient();
+    const { data, error } = await client
+        .from('badges')
+        .insert({
+            code: normalizedInput.code,
+            name: normalizedInput.name,
+            description: normalizedInput.description,
+            icon_key: normalizedInput.iconKey,
+            image_url: normalizedInput.imageUrl ?? null,
+            tone: normalizedInput.tone,
+            evaluation_scope: normalizedInput.evaluationScope,
+            criteria_json: normalizedInput.criteria as unknown as Json,
+            sort_order: normalizedInput.sortOrder,
+            is_active: normalizedInput.isActive,
+        })
+        .select('id, code, name, description, icon_key, image_url, tone, evaluation_scope, criteria_json, sort_order, is_active')
+        .single();
+
+    if (error) {
+        throw error;
+    }
+
+    const { error: refreshError } = await client.rpc('refresh_all_member_badges');
+    if (refreshError) {
+        throw refreshError;
+    }
+    return mapBadgeRow(data);
+};
+
+export const updateBadge = async (id: string, input: BadgeUpsertInput): Promise<Badge> => {
+    const normalizedInput = normalizeBadgeInput(input);
+
+    if (!isSupabaseConfigured) {
+        const existingBadge = localBadges.find((badge) => badge.id === id);
+        if (!existingBadge) {
+            throw new Error('수정할 배지를 찾지 못했습니다.');
+        }
+
+        const nextBadge: Badge = {
+            ...existingBadge,
+            ...normalizedInput,
+        };
+        localBadges = localBadges
+            .map((badge) => (badge.id === id ? nextBadge : badge))
+            .sort((a, b) => (a.sortOrder ?? 999) - (b.sortOrder ?? 999) || a.name.localeCompare(b.name));
+        refreshLocalMemberBadgesForMembers(localMembers.map((member) => member.id));
+        return nextBadge;
+    }
+
+    const client = getSupabaseClient();
+    const { data, error } = await client
+        .from('badges')
+        .update({
+            code: normalizedInput.code,
+            name: normalizedInput.name,
+            description: normalizedInput.description,
+            icon_key: normalizedInput.iconKey,
+            image_url: normalizedInput.imageUrl ?? null,
+            tone: normalizedInput.tone,
+            evaluation_scope: normalizedInput.evaluationScope,
+            criteria_json: normalizedInput.criteria as unknown as Json,
+            sort_order: normalizedInput.sortOrder,
+            is_active: normalizedInput.isActive,
+        })
+        .eq('id', id)
+        .select('id, code, name, description, icon_key, image_url, tone, evaluation_scope, criteria_json, sort_order, is_active')
+        .single();
+
+    if (error) {
+        throw error;
+    }
+
+    const { error: refreshError } = await client.rpc('refresh_all_member_badges');
+    if (refreshError) {
+        throw refreshError;
+    }
+    return mapBadgeRow(data);
+};
+
+export const deleteBadge = async (id: string): Promise<void> => {
+    if (!isSupabaseConfigured) {
+        localBadges = localBadges.filter((badge) => badge.id !== id);
+        for (let index = localMemberBadges.length - 1; index >= 0; index -= 1) {
+            if (localMemberBadges[index].badgeId === id) {
+                localMemberBadges.splice(index, 1);
+            }
+        }
+        return;
+    }
+
+    const client = getSupabaseClient();
+    const { error } = await client.from('badges').delete().eq('id', id);
+
+    if (error) {
+        throw error;
+    }
+
+    const { error: refreshError } = await client.rpc('refresh_all_member_badges');
+    if (refreshError) {
+        throw refreshError;
     }
 };
 

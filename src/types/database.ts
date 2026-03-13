@@ -383,33 +383,42 @@ export interface Database {
             };
             badges: {
                 Row: {
+                    criteria_json: Json;
                     id: string;
                     code: string;
                     name: string;
                     description: string;
+                    evaluation_scope: string;
                     icon_key: string;
+                    image_url: string | null;
                     tone: string;
                     sort_order: number;
                     is_active: boolean;
                     created_at: string;
                 };
                 Insert: {
+                    criteria_json?: Json;
                     id?: string;
                     code: string;
                     name: string;
                     description: string;
+                    evaluation_scope?: string;
                     icon_key: string;
+                    image_url?: string | null;
                     tone?: string;
                     sort_order?: number;
                     is_active?: boolean;
                     created_at?: string;
                 };
                 Update: {
+                    criteria_json?: Json;
                     id?: string;
                     code?: string;
                     name?: string;
                     description?: string;
+                    evaluation_scope?: string;
                     icon_key?: string;
+                    image_url?: string | null;
                     tone?: string;
                     sort_order?: number;
                     is_active?: boolean;
@@ -889,12 +898,19 @@ export interface Database {
                     badge_description: string;
                     badge_id: string;
                     badge_name: string;
+                    criteria_json: Json;
+                    evaluation_scope: string;
                     icon_key: string;
                     id: string;
+                    image_url: string | null;
                     member_id: string;
                     season_id: string | null;
                     tone: string;
                 }[];
+            };
+            refresh_all_member_badges: {
+                Args: Record<string, never>;
+                Returns: number;
             };
             reset_activity_data_current_season: {
                 Args: Record<string, never>;

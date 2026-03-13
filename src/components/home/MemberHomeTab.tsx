@@ -3,6 +3,7 @@ import { Activity, BadgeCheck, Flame, Link2, Medal, MessageSquareWarning, PlayCi
 import type {
     ActivityLog,
     AnnouncementItem,
+    Badge,
     CorrectionRequest,
     CorrectionRequestStatus,
     Member,
@@ -14,6 +15,7 @@ import type {
 } from '../../types';
 import {
     getAnnouncements,
+    getBadges,
     getCorrectionRequests,
     getCurrentSeason,
     getMyActivityLogs,
@@ -23,6 +25,12 @@ import {
     getScheduleEvents,
     submitCorrectionRequest,
 } from '../../lib/db';
+import {
+    badgeScopeLabels,
+    computeBadgeMetrics,
+    getBadgeArtworkUrl,
+    getBadgeRequirementEntries,
+} from '../../lib/badges';
 import { roleLabels } from '../../lib/permissions';
 import { useAuth } from '../auth/auth-context';
 import { MemberRecapViewer } from './MemberRecapViewer';
@@ -73,11 +81,6 @@ const bandiMascotUrl = new URL('../../../반디.png', import.meta.url).href;
 const didiMascotUrl = new URL('../../../디디.png', import.meta.url).href;
 const banollimSchoolLogoUrl = new URL('../../../반디스쿨 로고1.png', import.meta.url).href;
 
-const getBadgeMascotUrl = (iconKey: string) =>
-    iconKey.startsWith('didi')
-        ? didiMascotUrl
-        : bandiMascotUrl;
-
 const formatDate = (value?: string | null) =>
     value
         ? new Intl.DateTimeFormat('ko-KR', { dateStyle: 'medium' }).format(new Date(value))
@@ -108,6 +111,7 @@ export const MemberHomeTab: React.FC = () => {
     const [season, setSeason] = useState<SeasonSummary | null>(null);
     const [member, setMember] = useState<Member | null>(null);
     const [logs, setLogs] = useState<ActivityLog[]>([]);
+    const [badgeCatalog, setBadgeCatalog] = useState<Badge[]>([]);
     const [memberBadges, setMemberBadges] = useState<MemberBadge[]>([]);
     const [recapSnapshots, setRecapSnapshots] = useState<RecapSnapshot[]>([]);
     const [announcements, setAnnouncements] = useState<AnnouncementItem[]>([]);
@@ -126,10 +130,11 @@ export const MemberHomeTab: React.FC = () => {
         let isMounted = true;
 
         const loadData = async () => {
-            const [seasonData, memberData, logData, memberBadgeData, correctionRequestData, announcementData, scheduleData] = await Promise.all([
+            const [seasonData, memberData, logData, badgeCatalogData, memberBadgeData, correctionRequestData, announcementData, scheduleData] = await Promise.all([
                 getCurrentSeason(),
                 getMyMemberOverview(profile?.memberId ?? null),
                 getMyActivityLogs(profile?.memberId ?? null),
+                getBadges(),
                 getMyMemberBadges(profile?.memberId ?? null),
                 getCorrectionRequests({ requesterMemberId: profile?.memberId ?? null }),
                 getAnnouncements(),
@@ -146,6 +151,7 @@ export const MemberHomeTab: React.FC = () => {
             setSeason(seasonData);
             setMember(memberData);
             setLogs(logData);
+            setBadgeCatalog(badgeCatalogData);
             setMemberBadges(memberBadgeData);
             setRecapSnapshots(recapSnapshotData);
             setCorrectionRequests(correctionRequestData);
@@ -289,6 +295,22 @@ export const MemberHomeTab: React.FC = () => {
 
     const latestLog = effectiveLogs[0] ?? null;
     const homeRecentLogs = effectiveLogs.slice(0, 4);
+    const earnedBadgeMap = useMemo(
+        () => new Map(memberBadges.map((badge) => [badge.badgeId, badge])),
+        [memberBadges],
+    );
+    const badgeCards = useMemo(() => badgeCatalog.map((badge) => {
+        const earnedBadge = earnedBadgeMap.get(badge.id) ?? null;
+        const scopedLogs = (badge.evaluationScope ?? 'season') === 'lifetime' ? effectiveLogs : seasonLogs;
+        const metrics = computeBadgeMetrics(scopedLogs);
+        const requirementEntries = getBadgeRequirementEntries(badge.criteria, metrics);
+
+        return {
+            badge,
+            earnedBadge,
+            requirementEntries,
+        };
+    }), [badgeCatalog, earnedBadgeMap, effectiveLogs, seasonLogs]);
     const accountStatus = !member?.authUserId
         ? {
             label: '계정 미발급',
@@ -312,7 +334,7 @@ export const MemberHomeTab: React.FC = () => {
         : member?.teamName ?? '미지정';
     const badgeChallengeCopy = memberBadges.length >= 4
         ? '이제 희귀 배지 단계입니다. 증빙 기록과 다양한 역할 참여를 더 쌓아 보세요.'
-        : '출석, 발표, 증빙 기록이 쌓일수록 반디와 디디가 새로운 배지를 열어 줍니다.';
+        : '배지마다 시즌 누적 또는 전체 누적 기준이 다르게 적용됩니다. 조건을 채우면 잠금 카드가 바로 열립니다.';
     const growthDescription = recentSnapshot.growthRate === null
         ? '직전 30일 기록이 없어 이번 달 흐름이 새로 시작되었습니다.'
         : recentSnapshot.growthRate > 0
@@ -460,9 +482,9 @@ export const MemberHomeTab: React.FC = () => {
                                     <div className="mt-1 text-sm text-slate-500">이번 시즌 누적 활동</div>
                                 </div>
                                 <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                                    <div className="text-sm text-slate-500">획득 배지</div>
+                                    <div className="text-sm text-slate-500">공식 배지</div>
                                     <div className="mt-2 text-2xl font-bold text-indigo-600">{memberBadges.length}개</div>
-                                    <div className="mt-1 text-sm text-slate-500">시즌과 무관한 전체 누적</div>
+                                    <div className="mt-1 text-sm text-slate-500">활성 조건을 만족한 현재 배지 수</div>
                                 </div>
                             </div>
                         </section>
@@ -869,7 +891,7 @@ export const MemberHomeTab: React.FC = () => {
                                             공식 배지 컬렉션
                                         </div>
                                         <div className="mt-2 text-sm leading-6 text-slate-600">
-                                            활동 누적치가 기준을 넘으면 배지가 자동으로 열립니다. 반디는 공식 성취, 디디는 희귀·기록형 배지를 맡습니다.
+                                            활성 배지는 현재 기록 기준으로 실시간 계산됩니다. 아직 잠긴 배지도 조건과 함께 미리 볼 수 있습니다.
                                         </div>
                                     </div>
                                     <img
@@ -882,36 +904,63 @@ export const MemberHomeTab: React.FC = () => {
 
                             <div className="space-y-5 p-6">
                                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                                    {memberBadges.map((badge) => (
-                                        <div key={badge.id} className={`overflow-hidden rounded-[24px] border p-4 ${badgeToneClasses[badge.tone ?? 'sky']}`}>
+                                    {badgeCards.map(({ badge, earnedBadge, requirementEntries }) => (
+                                        <div
+                                            key={badge.id}
+                                            className={`overflow-hidden rounded-[24px] border p-4 ${
+                                                earnedBadge
+                                                    ? badgeToneClasses[earnedBadge.tone ?? 'sky']
+                                                    : 'border-slate-200 bg-slate-50 text-slate-700'
+                                            }`}
+                                        >
                                             <div className="flex items-start justify-between gap-4">
                                                 <div className="flex items-center gap-3">
-                                                    <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-white/70 bg-white/80 shadow-sm">
+                                                    <div className={`flex h-14 w-14 items-center justify-center rounded-2xl border shadow-sm ${earnedBadge ? 'border-white/70 bg-white/80' : 'border-slate-200 bg-white'}`}>
                                                         <img
-                                                            src={getBadgeMascotUrl(badge.iconKey)}
-                                                            alt={badge.badgeName}
+                                                            src={getBadgeArtworkUrl(earnedBadge ?? badge)}
+                                                            alt={badge.name}
                                                             className="h-10 w-auto object-contain"
                                                         />
                                                     </div>
                                                     <div>
                                                         <div className="flex items-center gap-2 text-sm font-semibold">
                                                             <BadgeCheck size={16} />
-                                                            {badge.badgeName}
+                                                            {badge.name}
                                                         </div>
-                                                        <div className="mt-1 text-xs opacity-80">{new Date(badge.awardedAt).toLocaleDateString('ko-KR')} 획득</div>
+                                                        <div className="mt-1 text-xs opacity-80">
+                                                            {earnedBadge
+                                                                ? `${new Date(earnedBadge.awardedAt).toLocaleDateString('ko-KR')} 획득`
+                                                                : `${badgeScopeLabels[badge.evaluationScope ?? 'season']} 잠금`}
+                                                        </div>
                                                     </div>
                                                 </div>
-                                                <div className="rounded-full border border-white/70 bg-white/80 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] opacity-90">
-                                                    {badge.badgeCode.replace(/_/g, ' ')}
+                                                <div className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] ${earnedBadge ? 'border-white/70 bg-white/80 opacity-90' : 'border-slate-200 bg-white text-slate-500'}`}>
+                                                    {(earnedBadge?.badgeCode ?? badge.code).replace(/_/g, ' ')}
                                                 </div>
                                             </div>
                                             <div className="mt-4 text-sm leading-6">
-                                                {badge.badgeDescription}
+                                                {badge.description}
+                                            </div>
+                                            <div className="mt-4 flex flex-wrap gap-2">
+                                                {requirementEntries.map((entry) => (
+                                                    <span
+                                                        key={`${badge.id}-${entry.key}`}
+                                                        className={`rounded-full border px-3 py-1 text-xs font-semibold ${
+                                                            entry.satisfied
+                                                                ? earnedBadge
+                                                                    ? 'border-white/70 bg-white/80'
+                                                                    : 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                                                : 'border-slate-200 bg-white text-slate-500'
+                                                        }`}
+                                                    >
+                                                        {entry.label} {entry.current}/{entry.target}{entry.unit}
+                                                    </span>
+                                                ))}
                                             </div>
                                         </div>
                                     ))}
 
-                                    {memberBadges.length === 0 && (
+                                    {badgeCards.length === 0 && (
                                         <div className="rounded-[24px] border border-dashed border-slate-200 bg-slate-50 px-5 py-8 text-center text-sm text-slate-500 sm:col-span-2">
                                             <img
                                                 src={didiMascotUrl}
