@@ -18,7 +18,7 @@ import { Chart as ChartJS, ArcElement, Tooltip, Legend, CategoryScale, LinearSca
 import { Doughnut, Bar } from 'react-chartjs-2';
 import type { ActivityLog, Member, MemberBadge, RecapSnapshot, RecapSnapshotPeriod, SeasonSummary } from '../../types';
 import { createRecapSnapshots, getCurrentSeason, getLogs, getMemberBadges, getMembers, getRecapSnapshots, getSeasons } from '../../lib/db';
-import { buildMemberRecapSnapshotDraft, buildOverallRecapSnapshotDraft } from '../../lib/recapSnapshots';
+import { buildMemberRecapSnapshotDraft, buildOverallRecapSnapshotDraft, buildRecapScope } from '../../lib/recapSnapshots';
 import { RecapViewer } from './RecapViewer';
 import { RecapSnapshotViewer } from '../recap/RecapSnapshotViewer';
 
@@ -223,10 +223,21 @@ export const StatsTab: React.FC = () => {
         return selectedIndex >= 0 ? seasons[selectedIndex + 1] ?? null : null;
     }, [seasons, selectedSeason]);
 
-    const eligibleSnapshotMembers = useMemo(
-        () => members.filter((member) => member.status === 'active' && Boolean(member.authUserId)),
-        [members],
-    );
+    const eligibleSnapshotMembers = useMemo(() => {
+        const scope = buildRecapScope('season', selectedSeason ?? currentSeason);
+        const activeVisibleMembers = members.filter((member) => member.status === 'active' && (member.isVisible ?? true));
+        const effectiveLogs = logs.filter((log) => !log.isReversal && log.recordStatus !== 'reversed');
+        const loggedMemberIds = new Set(
+            effectiveLogs
+                .filter((log) => {
+                    const timestamp = new Date(log.timestamp);
+                    return timestamp >= scope.start && timestamp <= scope.end;
+                })
+                .map((log) => log.memberId),
+        );
+
+        return activeVisibleMembers.filter((member) => loggedMemberIds.has(member.id));
+    }, [currentSeason, logs, members, selectedSeason]);
 
     const stats = useMemo(() => {
         const effectiveLogs = logs.filter((log) => !log.isReversal && log.recordStatus !== 'reversed');
