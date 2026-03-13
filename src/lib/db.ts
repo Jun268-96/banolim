@@ -111,6 +111,7 @@ const buildLocalMemberAuditSummary = (memberName: string, changes: Record<string
 
 let latestDataFallbackState: DataFallbackState | null = null;
 const dataFallbackListeners = new Set<() => void>();
+const cachedMemberResults = new Map<string, Member[]>();
 const siteBannerListeners = new Set<() => void>();
 
 const notifyDataFallbackListeners = () => {
@@ -172,6 +173,10 @@ const reportDataFallback = (task: string, error: unknown) => {
     };
     notifyDataFallbackListeners();
 };
+
+const sleep = (ms: number) => new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+});
 
 export const getLatestDataFallbackState = () => latestDataFallbackState;
 
@@ -1223,6 +1228,7 @@ export const reverseActivityEntryRecord = async (recordId: string, note?: string
 export const getMembers = async (options?: { includeLoginEmail?: boolean; includeHidden?: boolean }): Promise<Member[]> => {
     const includeLoginEmail = options?.includeLoginEmail ?? false;
     const includeHidden = options?.includeHidden ?? false;
+    const cacheKey = `members:${includeLoginEmail ? 'email' : 'public'}:${includeHidden ? 'all' : 'visible'}`;
 
     if (!isSupabaseConfigured) {
         return sortMembers(
@@ -1259,20 +1265,33 @@ export const getMembers = async (options?: { includeLoginEmail?: boolean; includ
             client.from('member_team_links').select('member_id, team_id'),
         ]);
 
-        let summaryResult;
-        let memberResult;
-        let roleResult;
-        let teamResult;
-        let memberTeamLinkResult;
+        let results: Awaited<ReturnType<typeof loadMemberData>> | null = null;
 
         try {
-            [summaryResult, memberResult, roleResult, teamResult, memberTeamLinkResult] = await loadMemberData();
+            results = await loadMemberData();
         } catch (error) {
             if (!isNetworkFetchError(error)) {
                 throw error;
             }
-            [summaryResult, memberResult, roleResult, teamResult, memberTeamLinkResult] = await loadMemberData();
+
+            for (const delay of [300, 900]) {
+                await sleep(delay);
+                try {
+                    results = await loadMemberData();
+                    break;
+                } catch (retryError) {
+                    if (!isNetworkFetchError(retryError)) {
+                        throw retryError;
+                    }
+                }
+            }
+
+            if (!results) {
+                throw error;
+            }
         }
+
+        const [summaryResult, memberResult, roleResult, teamResult, memberTeamLinkResult] = results;
 
         if (summaryResult.error) throw summaryResult.error;
         if (memberResult.error) throw memberResult.error;
@@ -1300,7 +1319,7 @@ export const getMembers = async (options?: { includeLoginEmail?: boolean; includ
             memberTeamMap.set(link.member_id, dedupeTeamIds([...current, link.team_id]));
         });
 
-        return sortMembers(
+        const members = sortMembers(
             memberRows.map((member) => {
                 const summary = summaryMap.get(member.id);
                 const teamIds = dedupeTeamIds([member.team_id, ...(memberTeamMap.get(member.id) ?? [])]);
@@ -1329,8 +1348,17 @@ export const getMembers = async (options?: { includeLoginEmail?: boolean; includ
                 };
             }),
         );
+        cachedMemberResults.set(cacheKey, members);
+        return members;
     } catch (error) {
         if (isSupabaseConfigured && isNetworkFetchError(error)) {
+            const cached = cachedMemberResults.get(cacheKey);
+            if (cached) {
+                reportDataFallback('getMembers', `${getErrorMessage(error)} · 마지막으로 불러온 멤버 목록을 표시합니다.`);
+                console.warn('[data] getMembers failed after retry, returning the last successful cached member list.', error);
+                return cached.map((member) => ({ ...member }));
+            }
+
             reportDataFallback('getMembers', error);
             console.warn('[data] getMembers failed after retry, returning an empty list instead of local fallback.', error);
             return [];

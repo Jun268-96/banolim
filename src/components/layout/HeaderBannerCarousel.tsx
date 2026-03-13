@@ -98,7 +98,7 @@ export const HeaderBannerCarousel: React.FC = () => {
     return (
         <div className="relative min-w-0 flex-1 overflow-hidden">
             <div
-                className="group relative h-32 w-full overflow-hidden rounded-[36px] bg-transparent sm:h-36 lg:h-40 xl:h-44 2xl:h-48"
+                className="group relative aspect-[20/3] w-full overflow-hidden rounded-[36px] bg-transparent max-sm:min-h-[88px] sm:min-h-[104px] lg:min-h-0"
                 onPointerDown={handlePointerDown}
                 onPointerUp={handlePointerUp}
             >

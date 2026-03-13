@@ -666,7 +666,7 @@ export const SettingsTab: React.FC = () => {
                     resetBannerDraft();
                 }}
                 title="배너 변경"
-                description="권장 1600×480 이상 가로형 이미지입니다. JPG/PNG/WebP 파일을 첨부하거나 이미지 링크를 입력할 수 있습니다."
+                description="권장 3200×480 가로 배너입니다. JPG/PNG/WebP 파일을 첨부하거나 이미지 링크를 입력할 수 있습니다."
                 size="xl"
             >
                 <div className="space-y-6">
@@ -704,7 +704,7 @@ export const SettingsTab: React.FC = () => {
                                 className="block w-full rounded-2xl border border-dashed border-slate-300 bg-white px-4 py-3 text-sm text-slate-600 file:mr-3 file:rounded-xl file:border-0 file:bg-indigo-50 file:px-3 file:py-2 file:font-semibold file:text-indigo-700 hover:file:bg-indigo-100"
                             />
                             <p className="text-xs text-slate-500">
-                                {newBannerFileName ? `선택된 파일: ${newBannerFileName}` : '권장 비율은 가로 3:1 ~ 4:1입니다. 업로드 파일이 있으면 링크보다 우선 사용합니다.'}
+                                {newBannerFileName ? `선택된 파일: ${newBannerFileName}` : '권장 비율은 가로 20:3(예: 3200×480)입니다. 1600×480 이미지는 좌우 여백이 남을 수 있습니다.'}
                             </p>
                         </label>
 
