@@ -2171,6 +2171,114 @@ export const addRole = async (name: string, permissionScope: string, rankOrder: 
     }
 };
 
+export const updateRole = async (
+    id: string,
+    {
+        name,
+        permissionScope,
+        rankOrder,
+    }: {
+        name: string;
+        permissionScope: string;
+        rankOrder: number;
+    },
+): Promise<RoleSummary> => {
+    if (!isSupabaseConfigured) {
+        const roleIndex = localRoles.findIndex((role) => role.id === id);
+        const previousRole = roleIndex >= 0 ? localRoles[roleIndex] : null;
+
+        if (roleIndex >= 0) {
+            localRoles.splice(roleIndex, 1, {
+                ...localRoles[roleIndex],
+                name,
+                permissionScope,
+                rankOrder,
+            });
+        }
+
+        if (previousRole && previousRole.name !== name) {
+            localMembers = localMembers.map((member) =>
+                member.roleId === id
+                    ? {
+                        ...member,
+                        roleName: name,
+                    }
+                    : member,
+            );
+        }
+
+        const updated = localRoles.find((role) => role.id === id);
+        if (!updated) {
+            throw new Error('수정할 역할을 찾지 못했습니다.');
+        }
+
+        return updated;
+    }
+
+    try {
+        const client = getSupabaseClient();
+        const { data, error } = await client
+            .from('roles')
+            .update({
+                name,
+                permission_scope: permissionScope,
+                rank_order: rankOrder,
+            })
+            .eq('id', id)
+            .select('id, name, permission_scope, rank_order')
+            .single();
+
+        if (error) {
+            throw error;
+        }
+
+        return {
+            id: data.id,
+            name: data.name,
+            permissionScope: data.permission_scope,
+            rankOrder: data.rank_order,
+        };
+    } catch (error) {
+        return fallback('updateRole', () => {
+            const role = localRoles.find((item) => item.id === id);
+            if (!role) {
+                throw new Error('수정할 역할을 찾지 못했습니다.');
+            }
+            return role;
+        }, error);
+    }
+};
+
+export const deleteRole = async (id: string): Promise<void> => {
+    if (!isSupabaseConfigured) {
+        const roleIndex = localRoles.findIndex((role) => role.id === id);
+        if (roleIndex >= 0) {
+            localRoles.splice(roleIndex, 1);
+        }
+        localMembers = localMembers.map((member) =>
+            member.roleId === id
+                ? {
+                    ...member,
+                    roleId: null,
+                    roleName: null,
+                }
+                : member,
+        );
+        return;
+    }
+
+    try {
+        const client = getSupabaseClient();
+        const { error } = await client.from('roles').delete().eq('id', id);
+
+        if (error) {
+            throw error;
+        }
+    } catch (error) {
+        fallback('deleteRole', () => undefined, error);
+    }
+};
+
 export const getTeams = async (): Promise<TeamSummary[]> => {
     if (!isSupabaseConfigured) {
         return [...localTeams].sort((a, b) => a.name.localeCompare(b.name));
@@ -3207,7 +3315,7 @@ export const updateMember = async (
 export const addCategory = async ({
     categoryName,
     pointValue,
-    penaltyPoint = pointValue < 0 ? Math.abs(pointValue) : 0,
+    penaltyPoint = 0,
     conditionSummary = '',
     groupName = 'manual',
 }: CategoryInput): Promise<Category> => {

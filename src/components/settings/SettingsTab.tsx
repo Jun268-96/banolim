@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { CalendarDays, Megaphone, Plus, Settings, ShieldCheck, Trash2, Workflow } from 'lucide-react';
+import { CalendarDays, Megaphone, Plus, Save, Settings, ShieldCheck, Trash2, Workflow } from 'lucide-react';
 import type { AnnouncementItem, AppRole, Category, RoleSummary, ScheduleEventItem, SeasonStatus, SeasonSummary } from '../../types';
 import {
     addAnnouncement,
@@ -10,12 +10,14 @@ import {
     createCategoryVersion,
     deleteAnnouncement,
     deleteCategory,
+    deleteRole,
     deleteScheduleEvent,
     getAnnouncements,
     getCategories,
     getRoles,
     getScheduleEvents,
     getSeasons,
+    updateRole,
 } from '../../lib/db';
 import { roleLabels, roleScopeDescriptions } from '../../lib/permissions';
 import { SettingsDialog } from './SettingsDialog';
@@ -42,6 +44,12 @@ const badgeClassByStatus: Record<SeasonStatus, string> = {
 };
 
 type SettingsDialogType = 'rule' | 'role' | 'season' | 'announcement' | 'schedule' | null;
+
+type RoleDraft = {
+    name: string;
+    permissionScope: AppRole;
+    rankOrder: number;
+};
 
 interface SectionHeaderProps {
     icon: React.ReactNode;
@@ -79,6 +87,16 @@ const EmptyState: React.FC<{ message: string }> = ({ message }) => (
     </div>
 );
 
+const buildRoleDrafts = (roles: RoleSummary[]): Record<string, RoleDraft> =>
+    roles.reduce<Record<string, RoleDraft>>((acc, role) => {
+        acc[role.id] = {
+            name: role.name,
+            permissionScope: role.permissionScope as AppRole,
+            rankOrder: role.rankOrder,
+        };
+        return acc;
+    }, {});
+
 export const SettingsTab: React.FC = () => {
     const [categories, setCategories] = useState<Category[]>([]);
     const [roles, setRoles] = useState<RoleSummary[]>([]);
@@ -88,7 +106,6 @@ export const SettingsTab: React.FC = () => {
 
     const [newCatName, setNewCatName] = useState('');
     const [newCatValue, setNewCatValue] = useState<number>(10);
-    const [newCatPenaltyPoint, setNewCatPenaltyPoint] = useState<number>(0);
     const [newCatGroupName, setNewCatGroupName] = useState('manual');
     const [newCatConditionSummary, setNewCatConditionSummary] = useState('');
     const [versionSourceRuleId, setVersionSourceRuleId] = useState<string | null>(null);
@@ -117,6 +134,7 @@ export const SettingsTab: React.FC = () => {
 
     const [activeDialog, setActiveDialog] = useState<SettingsDialogType>(null);
     const [isLoading, setIsLoading] = useState(true);
+    const [roleDrafts, setRoleDrafts] = useState<Record<string, RoleDraft>>({});
 
     const versionSourceCategory = useMemo(
         () => categories.find((category) => category.id === versionSourceRuleId) ?? null,
@@ -127,7 +145,6 @@ export const SettingsTab: React.FC = () => {
     const resetCategoryForm = () => {
         setNewCatName('');
         setNewCatValue(10);
-        setNewCatPenaltyPoint(0);
         setNewCatGroupName('manual');
         setNewCatConditionSummary('');
         setVersionSourceRuleId(null);
@@ -149,6 +166,7 @@ export const SettingsTab: React.FC = () => {
         ]);
         setCategories(categoriesData);
         setRoles(rolesData);
+        setRoleDrafts(buildRoleDrafts(rolesData));
         setSeasons(seasonsData);
         setAnnouncements(announcementsData);
         setScheduleEvents(scheduleData);
@@ -173,6 +191,7 @@ export const SettingsTab: React.FC = () => {
 
             setCategories(categoriesData);
             setRoles(rolesData);
+            setRoleDrafts(buildRoleDrafts(rolesData));
             setSeasons(seasonsData);
             setAnnouncements(announcementsData);
             setScheduleEvents(scheduleData);
@@ -193,14 +212,12 @@ export const SettingsTab: React.FC = () => {
         if (versionSourceRuleId) {
             await createCategoryVersion(versionSourceRuleId, {
                 pointValue: newCatValue,
-                penaltyPoint: newCatPenaltyPoint,
                 conditionSummary: newCatConditionSummary,
             });
         } else {
             await addCategory({
                 categoryName: newCatName.trim(),
                 pointValue: newCatValue,
-                penaltyPoint: newCatPenaltyPoint,
                 conditionSummary: newCatConditionSummary,
                 groupName: newCatGroupName,
             });
@@ -214,7 +231,6 @@ export const SettingsTab: React.FC = () => {
         setVersionSourceRuleId(category.id);
         setNewCatName(category.categoryName);
         setNewCatValue(category.pointValue);
-        setNewCatPenaltyPoint(category.penaltyPoint ?? 0);
         setNewCatGroupName(category.groupName ?? 'manual');
         setNewCatConditionSummary(category.conditionSummary ?? '');
         setActiveDialog('rule');
@@ -236,6 +252,39 @@ export const SettingsTab: React.FC = () => {
         setNewRoleScope('member');
         setNewRoleOrder(100);
         setActiveDialog(null);
+        await refreshData();
+    };
+
+    const handleRoleDraftChange = <K extends keyof RoleDraft>(roleId: string, key: K, value: RoleDraft[K]) => {
+        setRoleDrafts((current) => ({
+            ...current,
+            [roleId]: {
+                ...(current[roleId] ?? { name: '', permissionScope: 'member', rankOrder: 100 }),
+                [key]: value,
+            },
+        }));
+    };
+
+    const handleSaveRole = async (roleId: string) => {
+        const draft = roleDrafts[roleId];
+        if (!draft || !draft.name.trim()) {
+            return;
+        }
+
+        await updateRole(roleId, {
+            name: draft.name.trim(),
+            permissionScope: draft.permissionScope,
+            rankOrder: draft.rankOrder,
+        });
+        await refreshData();
+    };
+
+    const handleDeleteRole = async (role: RoleSummary) => {
+        if (!confirm(`“${role.name}” 역할을 삭제할까요? 연결된 멤버의 직책은 비워집니다.`)) {
+            return;
+        }
+
+        await deleteRole(role.id);
         await refreshData();
     };
 
@@ -331,110 +380,81 @@ export const SettingsTab: React.FC = () => {
                     <Settings className="text-indigo-600" />
                     운영 설정
                 </h2>
-                <p className="mt-1 text-slate-500">리스트는 넓게 보고, 생성과 수정은 집중형 모달에서 처리하도록 재구성했습니다.</p>
+                <p className="mt-1 text-slate-500">점수 규칙과 역할은 테이블에서 바로 관리하고, 생성만 모달에서 처리합니다.</p>
             </header>
-
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-                <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-                    <div className="text-sm text-slate-500">활성 규칙</div>
-                    <div className="mt-2 text-3xl font-bold text-slate-900">{categories.length}</div>
-                </div>
-                <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-                    <div className="text-sm text-slate-500">역할</div>
-                    <div className="mt-2 text-3xl font-bold text-slate-900">{roles.length}</div>
-                </div>
-                <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-                    <div className="text-sm text-slate-500">시즌</div>
-                    <div className="mt-2 text-3xl font-bold text-slate-900">{seasons.length}</div>
-                </div>
-            </div>
 
             <section className="overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-sm">
                 <SectionHeader
                     icon={<Settings size={18} className="text-indigo-600" />}
                     title="점수 규칙"
-                    description="과거 기록 해석이 바뀌지 않도록 규칙은 덮어쓰지 않고 버전으로 관리합니다. 조회는 본문에서 넓게 보고, 생성은 모달에서 진행합니다."
+                    description="점수 기준이 바뀌면 새 버전을 추가해 과거 기록은 유지합니다. 점수는 기본 점수 하나로만 관리하고, 규칙 설명은 운영 메모로 남깁니다."
                     actionLabel="새 규칙 추가"
                     onAction={handleOpenNewRuleDialog}
                 />
-                <div className="space-y-4 p-5 sm:p-6">
-                    <div className="grid gap-3 lg:grid-cols-3">
-                        <div className="rounded-[28px] border border-slate-200 bg-slate-50 p-4">
-                            <div className="text-sm font-semibold text-slate-900">규칙 버전</div>
-                            <p className="mt-2 text-sm leading-6 text-slate-600">점수 기준이 바뀔 때 올리는 번호입니다. 예전 기록은 당시 버전 기준으로 고정됩니다.</p>
-                        </div>
-                        <div className="rounded-[28px] border border-slate-200 bg-slate-50 p-4">
-                            <div className="text-sm font-semibold text-slate-900">예외 차감</div>
-                            <p className="mt-2 text-sm leading-6 text-slate-600">지각·불참처럼 기본 지급과 별도로 참고하는 차감값입니다. 필요 없으면 0으로 둡니다.</p>
-                        </div>
-                        <div className="rounded-[28px] border border-slate-200 bg-slate-50 p-4">
-                            <div className="text-sm font-semibold text-slate-900">규칙 설명</div>
-                            <p className="mt-2 text-sm leading-6 text-slate-600">운영진이 이 규칙의 사용 맥락을 바로 이해할 수 있도록 남기는 내부 메모입니다.</p>
-                        </div>
-                    </div>
-
+                <div className="p-5 sm:p-6">
                     {categories.length === 0 ? (
                         <EmptyState message="아직 등록된 점수 규칙이 없습니다." />
                     ) : (
-                        <div className="space-y-4">
-                            {categories.map((category) => {
-                                const groupLabel = ruleGroupOptions.find((option) => option.value === (category.groupName ?? 'manual'))?.label ?? category.groupName ?? '기타';
-                                const penaltyPoint = category.penaltyPoint ?? 0;
-
-                                return (
-                                    <article key={category.id} className="rounded-[30px] border border-slate-200 bg-slate-50/75 p-5">
-                                        <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-                                            <div className="min-w-0 flex-1">
-                                                <div className="flex flex-wrap items-center gap-2">
-                                                    <h4 className="text-lg font-semibold text-slate-900">{category.categoryName}</h4>
-                                                    <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600">{groupLabel}</span>
-                                                    <span className="rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700">
-                                                        v{category.version ?? 1}
+                        <div className="overflow-x-auto">
+                            <table className="min-w-full border-collapse text-left">
+                                <thead>
+                                    <tr className="border-b border-slate-200 bg-slate-50 text-sm font-semibold text-slate-600">
+                                        <th className="px-4 py-3">활동 이름</th>
+                                        <th className="px-4 py-3">분류</th>
+                                        <th className="px-4 py-3">기본 점수</th>
+                                        <th className="px-4 py-3">규칙 설명</th>
+                                        <th className="px-4 py-3">버전</th>
+                                        <th className="px-4 py-3 text-right">관리</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100">
+                                    {categories.map((category) => {
+                                        const groupLabel = ruleGroupOptions.find((option) => option.value === (category.groupName ?? 'manual'))?.label ?? category.groupName ?? '기타';
+                                        return (
+                                            <tr key={category.id} className="align-top hover:bg-slate-50/80">
+                                                <td className="px-4 py-4 font-semibold text-slate-900">{category.categoryName}</td>
+                                                <td className="px-4 py-4 text-sm text-slate-600">{groupLabel}</td>
+                                                <td className="px-4 py-4">
+                                                    <span className={`inline-flex rounded-full border px-3 py-1 text-sm font-semibold ${
+                                                        category.pointValue > 0
+                                                            ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                                            : category.pointValue < 0
+                                                                ? 'border-rose-200 bg-rose-50 text-rose-700'
+                                                                : 'border-slate-200 bg-slate-100 text-slate-700'
+                                                    }`}>
+                                                        {category.pointValue > 0 ? '+' : ''}
+                                                        {category.pointValue}점
                                                     </span>
-                                                </div>
-                                                <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,180px)_minmax(0,180px)_minmax(0,1fr)]">
-                                                    <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
-                                                        <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">기본 지급</div>
-                                                        <div className={`mt-2 inline-flex rounded-full border px-3 py-1 text-sm font-bold ${category.pointValue > 0 ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-rose-200 bg-rose-50 text-rose-700'}`}>
-                                                            {category.pointValue > 0 ? '+' : ''}
-                                                            {category.pointValue}점
-                                                        </div>
+                                                </td>
+                                                <td className="px-4 py-4 text-sm leading-6 text-slate-600">
+                                                    {category.conditionSummary?.trim() || '설명 없음'}
+                                                </td>
+                                                <td className="px-4 py-4 text-sm font-semibold text-indigo-700">v{category.version ?? 1}</td>
+                                                <td className="px-4 py-4">
+                                                    <div className="flex justify-end gap-2">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleStartVersioning(category)}
+                                                            className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-100"
+                                                        >
+                                                            <Workflow size={15} />
+                                                            새 버전
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleDeleteCategory(category.id)}
+                                                            className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 text-sm font-semibold text-rose-700 transition-colors hover:bg-rose-100"
+                                                        >
+                                                            <Trash2 size={15} />
+                                                            사용 중지
+                                                        </button>
                                                     </div>
-                                                    <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
-                                                        <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">예외 차감</div>
-                                                        <div className={`mt-2 inline-flex rounded-full border px-3 py-1 text-sm font-bold ${penaltyPoint > 0 ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-slate-200 bg-slate-100 text-slate-600'}`}>
-                                                            {penaltyPoint > 0 ? `-${penaltyPoint}점` : '없음'}
-                                                        </div>
-                                                    </div>
-                                                    <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
-                                                        <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">규칙 설명</div>
-                                                        <div className="mt-2 text-sm leading-6 text-slate-600">{category.conditionSummary?.trim() || '설명 없음'}</div>
-                                                    </div>
-                                                </div>
-                                            </div>
-
-                                            <div className="flex shrink-0 flex-wrap gap-2 xl:w-[230px] xl:justify-end">
-                                                <button
-                                                    type="button"
-                                                    onClick={() => handleStartVersioning(category)}
-                                                    className="inline-flex h-11 items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-100"
-                                                >
-                                                    <Workflow size={16} />
-                                                    새 버전
-                                                </button>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => handleDeleteCategory(category.id)}
-                                                    className="inline-flex h-11 items-center justify-center gap-2 rounded-2xl border border-rose-200 bg-rose-50 px-4 text-sm font-semibold text-rose-700 transition-colors hover:bg-rose-100"
-                                                >
-                                                    <Trash2 size={16} />
-                                                    사용 중지
-                                                </button>
-                                            </div>
-                                        </div>
-                                    </article>
-                                );
-                            })}
+                                                </td>
+                                            </tr>
+                                        );
+                                    })}
+                                </tbody>
+                            </table>
                         </div>
                     )}
                 </div>
@@ -445,35 +465,92 @@ export const SettingsTab: React.FC = () => {
                     <SectionHeader
                         icon={<ShieldCheck size={18} className="text-indigo-600" />}
                         title="역할"
-                        description="직책 이름과 시스템 권한은 분리됩니다. 회장과 개발 관리자는 다른 직책이어도 같은 최고 권한을 공유할 수 있습니다."
+                        description="직책 이름, 시스템 권한, 레이어 순서를 이 표에서 바로 수정할 수 있습니다."
                         actionLabel="새 역할 추가"
                         onAction={() => setActiveDialog('role')}
                     />
-                    <div className="space-y-3 p-5 sm:p-6">
-                        <div className="rounded-[28px] border border-indigo-100 bg-indigo-50/80 p-4 text-sm leading-6 text-slate-700">
-                            <span className="font-semibold text-slate-900">권한 범위는 시스템이 실제로 허용하는 기능</span>이고, 역할 이름은 화면에 보이는 직책 이름입니다.
-                        </div>
+                    <div className="p-5 sm:p-6">
                         {roles.length === 0 ? (
                             <EmptyState message="아직 등록된 역할이 없습니다." />
                         ) : (
-                            roles.map((role) => (
-                                <div key={role.id} className="rounded-[28px] border border-slate-200 bg-slate-50 px-4 py-4">
-                                    <div className="flex flex-wrap items-start justify-between gap-3">
-                                        <div>
-                                            <div className="flex flex-wrap items-center gap-2">
-                                                <div className="text-base font-semibold text-slate-900">{role.name}</div>
-                                                <span className="rounded-full border border-indigo-200 bg-white px-2.5 py-1 text-xs font-semibold text-indigo-700">
-                                                    {roleLabels[role.permissionScope as AppRole] ?? role.permissionScope}
-                                                </span>
-                                            </div>
-                                            <div className="mt-2 text-sm leading-6 text-slate-500">
-                                                {roleScopeDescriptions[role.permissionScope as AppRole] ?? '이 권한 범위 설명은 아직 등록되지 않았습니다.'}
-                                            </div>
-                                        </div>
-                                        <div className="text-sm font-semibold text-slate-500">#{role.rankOrder}</div>
-                                    </div>
-                                </div>
-                            ))
+                            <div className="overflow-x-auto">
+                                <table className="min-w-full border-collapse text-left">
+                                    <thead>
+                                        <tr className="border-b border-slate-200 bg-slate-50 text-sm font-semibold text-slate-600">
+                                            <th className="px-4 py-3">직책 이름</th>
+                                            <th className="px-4 py-3">권한 범위</th>
+                                            <th className="px-4 py-3">레이어 순서</th>
+                                            <th className="px-4 py-3 text-right">관리</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-100">
+                                        {roles.map((role) => {
+                                            const draft = roleDrafts[role.id] ?? {
+                                                name: role.name,
+                                                permissionScope: role.permissionScope as AppRole,
+                                                rankOrder: role.rankOrder,
+                                            };
+
+                                            return (
+                                                <tr key={role.id} className="align-top hover:bg-slate-50/80">
+                                                    <td className="px-4 py-4">
+                                                        <input
+                                                            type="text"
+                                                            value={draft.name}
+                                                            onChange={(event) => handleRoleDraftChange(role.id, 'name', event.target.value)}
+                                                            className="w-full min-w-[180px] rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                                                        />
+                                                    </td>
+                                                    <td className="px-4 py-4">
+                                                        <select
+                                                            value={draft.permissionScope}
+                                                            onChange={(event) => handleRoleDraftChange(role.id, 'permissionScope', event.target.value as AppRole)}
+                                                            className="w-full min-w-[160px] rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                                                        >
+                                                            {roleScopeOptions.map((scope) => (
+                                                                <option key={scope} value={scope}>
+                                                                    {roleLabels[scope]}
+                                                                </option>
+                                                            ))}
+                                                        </select>
+                                                        <p className="mt-2 text-xs leading-5 text-slate-500">
+                                                            {roleScopeDescriptions[draft.permissionScope] ?? '설명 없음'}
+                                                        </p>
+                                                    </td>
+                                                    <td className="px-4 py-4">
+                                                        <input
+                                                            type="number"
+                                                            value={draft.rankOrder}
+                                                            onChange={(event) => handleRoleDraftChange(role.id, 'rankOrder', Number(event.target.value) || 0)}
+                                                            className="w-28 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                                                        />
+                                                    </td>
+                                                    <td className="px-4 py-4">
+                                                        <div className="flex justify-end gap-2">
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => void handleSaveRole(role.id)}
+                                                                className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-3 text-sm font-semibold text-indigo-700 transition-colors hover:bg-indigo-100"
+                                                            >
+                                                                <Save size={15} />
+                                                                저장
+                                                            </button>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => void handleDeleteRole(role)}
+                                                                className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 text-sm font-semibold text-rose-700 transition-colors hover:bg-rose-100"
+                                                            >
+                                                                <Trash2 size={15} />
+                                                                삭제
+                                                            </button>
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            );
+                                        })}
+                                    </tbody>
+                                </table>
+                            </div>
                         )}
                     </div>
                 </section>
@@ -604,8 +681,8 @@ export const SettingsTab: React.FC = () => {
                 title={versionSourceCategory ? `“${versionSourceCategory.categoryName}” 새 버전 만들기` : '새 점수 규칙 추가'}
                 description={
                     versionSourceCategory
-                        ? '기존 이름은 그대로 유지하고 점수·차감·설명만 조정합니다. 과거 기록은 이전 버전 기준으로 보존됩니다.'
-                        : '활동 이름, 점수 기준, 예외 차감, 설명을 한 번에 정리해서 등록합니다.'
+                        ? '기존 이름은 그대로 유지하고 점수와 설명만 조정합니다. 과거 기록은 이전 버전 기준으로 보존됩니다.'
+                        : '활동 이름, 점수 기준, 설명을 한 번에 정리해서 등록합니다.'
                 }
             >
                 <form onSubmit={handleAddCategory} className="space-y-5">
@@ -648,23 +725,13 @@ export const SettingsTab: React.FC = () => {
                                 className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
                             />
                         </label>
-                        <label className="space-y-1.5">
-                            <span className="text-sm font-medium text-slate-700">예외 차감값</span>
-                            <input
-                                id="catPenalty"
-                                type="number"
-                                value={newCatPenaltyPoint}
-                                onChange={(event) => setNewCatPenaltyPoint(Number(event.target.value) || 0)}
-                                className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                            />
-                        </label>
                     </div>
 
                     <label className="block space-y-1.5">
                         <span className="text-sm font-medium text-slate-700">규칙 설명</span>
                         <textarea
                             id="catCondition"
-                            placeholder="예: 발표 자료 링크를 제출한 경우 기본 점수 지급, 지각 시 예외 차감값 참고"
+                            placeholder="예: 발표 자료 링크를 제출하면 점수를 지급하고, 발표 완료 후에만 인정"
                             value={newCatConditionSummary}
                             onChange={(event) => setNewCatConditionSummary(event.target.value)}
                             rows={4}

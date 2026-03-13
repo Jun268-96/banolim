@@ -4,7 +4,8 @@ grant select on public.member_score_summary to anon, authenticated;
 grant select on public.point_rule_catalog to anon, authenticated;
 grant select on public.activity_log_feed to anon, authenticated;
 
-grant select, insert, update on public.roles to anon, authenticated;
+grant select on public.roles to anon, authenticated;
+grant insert, update, delete on public.roles to authenticated;
 grant select, insert, update on public.teams to anon, authenticated;
 grant select, insert, delete on public.member_team_links to authenticated;
 grant select, insert, update on public.seasons to anon, authenticated;
@@ -64,6 +65,8 @@ drop policy if exists roles_insert_all on public.roles;
 create policy roles_insert_all on public.roles for insert to authenticated with check (public.can_manage_admin_tables());
 drop policy if exists roles_update_all on public.roles;
 create policy roles_update_all on public.roles for update to authenticated using (public.can_manage_admin_tables()) with check (public.can_manage_admin_tables());
+drop policy if exists roles_delete_all on public.roles;
+create policy roles_delete_all on public.roles for delete to authenticated using (public.can_manage_admin_tables());
 
 drop policy if exists teams_select_all on public.teams;
 create policy teams_select_all on public.teams for select to anon, authenticated using (true);
