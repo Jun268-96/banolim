@@ -84,11 +84,11 @@ export const Layout: React.FC<LayoutProps> = ({ activeTab, setActiveTab, childre
                             >
                                 <Menu size={20} />
                             </button>
-                            <div className="flex min-w-0 flex-1 overflow-hidden rounded-3xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+                            <div className="flex min-w-0 flex-1 items-center overflow-hidden px-1 py-1">
                                 <img
                                     src={bandiSchoolLogoUrl}
                                     alt="반디스쿨 로고"
-                                    className="h-16 w-full object-contain object-left sm:h-20 lg:h-24"
+                                    className="h-20 w-auto max-w-full object-contain object-left sm:h-24 lg:h-28 xl:h-32"
                                 />
                             </div>
                         </div>
