@@ -1203,17 +1203,20 @@ export const reverseActivityEntryRecord = async (recordId: string, note?: string
     return (data as string) ?? null;
 };
 
-export const getMembers = async (options?: { includeLoginEmail?: boolean }): Promise<Member[]> => {
+export const getMembers = async (options?: { includeLoginEmail?: boolean; includeHidden?: boolean }): Promise<Member[]> => {
     const includeLoginEmail = options?.includeLoginEmail ?? false;
+    const includeHidden = options?.includeHidden ?? false;
 
     if (!isSupabaseConfigured) {
         return sortMembers(
-            localMembers.map((member) => ({
-                ...member,
-                teamIds: member.teamIds ?? getLocalMemberTeamIds(member.id),
-                teamNames: member.teamNames ?? getLocalMemberTeamNames(member.id),
-                loginEmail: includeLoginEmail ? member.loginEmail ?? null : null,
-            })),
+            localMembers
+                .filter((member) => includeHidden || member.isVisible !== false)
+                .map((member) => ({
+                    ...member,
+                    teamIds: member.teamIds ?? getLocalMemberTeamIds(member.id),
+                    teamNames: member.teamNames ?? getLocalMemberTeamNames(member.id),
+                    loginEmail: includeLoginEmail ? member.loginEmail ?? null : null,
+                })),
         );
     }
 
@@ -1223,11 +1226,14 @@ export const getMembers = async (options?: { includeLoginEmail?: boolean }): Pro
             ? client
                 .from('members')
                 .select('id, name, login_email, role_id, team_id, status, joined_at, is_approved, is_visible, auth_user_id, auth_provisioned_at, password_reset_required')
-                .eq('is_visible', true)
             : client
                 .from('members')
-                .select('id, name, role_id, team_id, status, joined_at, is_approved, is_visible, auth_user_id, auth_provisioned_at, password_reset_required')
-                .eq('is_visible', true);
+                .select('id, name, role_id, team_id, status, joined_at, is_approved, is_visible, auth_user_id, auth_provisioned_at, password_reset_required');
+
+        if (!includeHidden) {
+            memberQuery.eq('is_visible', true);
+        }
+
         const loadMemberData = async () => Promise.all([
             client.from('member_score_summary').select('id, name, is_approved, score'),
             memberQuery,
@@ -1317,10 +1323,12 @@ export const getMembers = async (options?: { includeLoginEmail?: boolean }): Pro
             'getMembers',
             () =>
                 sortMembers(
-                    localMembers.map((member) => ({
-                        ...member,
-                        loginEmail: includeLoginEmail ? member.loginEmail ?? null : null,
-                    })),
+                    localMembers
+                        .filter((member) => includeHidden || member.isVisible !== false)
+                        .map((member) => ({
+                            ...member,
+                            loginEmail: includeLoginEmail ? member.loginEmail ?? null : null,
+                        })),
                 ),
             error,
         );

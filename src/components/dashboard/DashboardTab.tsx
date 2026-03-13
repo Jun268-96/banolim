@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowUpDown, CircleHelp, Clock3, FileText, History, KeyRound, Mail, Network, Search, ShieldAlert, TableProperties, Trash2, Upload, UserPlus, Users, XCircle } from 'lucide-react';
+import { ArrowUpDown, ChevronDown, ChevronUp, CircleHelp, Clock3, FileText, History, KeyRound, Mail, Network, RotateCcw, Search, ShieldAlert, TableProperties, Trash2, Upload, UserPlus, Users, XCircle } from 'lucide-react';
 import type { AuditLogEntry, Member, MemberStatus, RoleSummary, TeamSummary, TeamType } from '../../types';
 import {
     addTeam,
@@ -326,6 +326,7 @@ const getHistoryChangeBadges = (entry: AuditLogEntry) => {
 export const DashboardTab: React.FC = () => {
     const { permissions } = useAuth();
     const [members, setMembers] = useState<Member[]>([]);
+    const [hiddenMembers, setHiddenMembers] = useState<Member[]>([]);
     const [roles, setRoles] = useState<RoleSummary[]>([]);
     const [teams, setTeams] = useState<TeamSummary[]>([]);
     const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
@@ -364,16 +365,18 @@ export const DashboardTab: React.FC = () => {
     const [isAddTeamDialogOpen, setIsAddTeamDialogOpen] = useState(false);
     const [isTeamAssignmentDialogOpen, setIsTeamAssignmentDialogOpen] = useState(false);
     const [isRoleSettingsDialogOpen, setIsRoleSettingsDialogOpen] = useState(false);
+    const [isHiddenMembersOpen, setIsHiddenMembersOpen] = useState(false);
 
     const refreshData = async () => {
         setIsLoading(true);
         const [membersData, rolesData, teamsData, auditLogData] = await Promise.all([
-            getMembers({ includeLoginEmail: permissions.canManageMembers }),
+            getMembers({ includeLoginEmail: permissions.canManageMembers, includeHidden: permissions.canManageMembers }),
             getRoles(),
             getTeams(),
             permissions.canManageMembers ? getAuditLogs({ entityType: 'member', limit: 80 }) : Promise.resolve([]),
         ]);
-        setMembers(membersData);
+        setMembers(membersData.filter((member) => member.isVisible !== false));
+        setHiddenMembers(membersData.filter((member) => member.isVisible === false));
         setRoles(rolesData);
         setTeams(teamsData);
         setAuditLogs(auditLogData);
@@ -385,7 +388,7 @@ export const DashboardTab: React.FC = () => {
 
         const initialize = async () => {
             const [membersData, rolesData, teamsData, auditLogData] = await Promise.all([
-                getMembers({ includeLoginEmail: permissions.canManageMembers }),
+                getMembers({ includeLoginEmail: permissions.canManageMembers, includeHidden: permissions.canManageMembers }),
                 getRoles(),
                 getTeams(),
                 permissions.canManageMembers ? getAuditLogs({ entityType: 'member', limit: 80 }) : Promise.resolve([]),
@@ -395,7 +398,8 @@ export const DashboardTab: React.FC = () => {
                 return;
             }
 
-            setMembers(membersData);
+            setMembers(membersData.filter((member) => member.isVisible !== false));
+            setHiddenMembers(membersData.filter((member) => member.isVisible === false));
             setRoles(rolesData);
             setTeams(teamsData);
             setAuditLogs(auditLogData);
@@ -721,6 +725,19 @@ export const DashboardTab: React.FC = () => {
         if (confirm('이 멤버를 목록에서 숨길까요?')) {
             await deleteMember(id);
             await refreshData();
+        }
+    };
+
+    const handleRestoreMember = async (memberId: string) => {
+        setSavingMemberId(memberId);
+        try {
+            await updateMember(memberId, {
+                status: 'active',
+                isVisible: true,
+            });
+            await refreshData();
+        } finally {
+            setSavingMemberId(null);
         }
     };
 
@@ -1677,6 +1694,86 @@ export const DashboardTab: React.FC = () => {
                             )}
                         </div>
                     </div>
+                </section>
+            )}
+
+            {permissions.canManageMembers && (
+                <section className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+                    <button
+                        type="button"
+                        onClick={() => setIsHiddenMembersOpen((prev) => !prev)}
+                        className="flex w-full items-center justify-between gap-4 px-6 py-5 text-left transition-colors hover:bg-slate-50"
+                    >
+                        <div>
+                            <div className="flex items-center gap-2 font-semibold text-slate-900">
+                                <XCircle size={18} className="text-slate-500" />
+                                숨김 멤버 보기/복구
+                            </div>
+                            <div className="mt-1 text-sm text-slate-500">
+                                목록에서 숨긴 멤버를 확인하고 다시 복구할 수 있습니다.
+                            </div>
+                        </div>
+                        <div className="flex items-center gap-3">
+                            <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600">
+                                {hiddenMembers.length}명
+                            </span>
+                            {isHiddenMembersOpen ? (
+                                <ChevronUp size={18} className="text-slate-400" />
+                            ) : (
+                                <ChevronDown size={18} className="text-slate-400" />
+                            )}
+                        </div>
+                    </button>
+
+                    {isHiddenMembersOpen && (
+                        <div className="border-t border-slate-100 px-5 py-5 sm:px-6">
+                            {hiddenMembers.length === 0 ? (
+                                <div className="rounded-[24px] border border-dashed border-slate-300 bg-slate-50 px-6 py-10 text-center text-sm text-slate-500">
+                                    현재 숨김 처리된 멤버가 없습니다.
+                                </div>
+                            ) : (
+                                <div className="space-y-3">
+                                    {hiddenMembers.map((member) => (
+                                        <div
+                                            key={member.id}
+                                            className="flex flex-col gap-4 rounded-[24px] border border-slate-200 bg-slate-50 px-5 py-4 lg:flex-row lg:items-center lg:justify-between"
+                                        >
+                                            <div className="min-w-0">
+                                                <div className="flex flex-wrap items-center gap-2">
+                                                    <div className="font-semibold text-slate-900">{member.name}</div>
+                                                    <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600">
+                                                        {member.roleName ?? '직책 미지정'}
+                                                    </span>
+                                                    <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600">
+                                                        {memberStatusLabels[member.status ?? 'inactive']}
+                                                    </span>
+                                                </div>
+                                                <div className="mt-2 text-sm text-slate-500">
+                                                    {member.loginEmail ?? '로그인 이메일 없음'}
+                                                    <span className="mx-2 text-slate-300">·</span>
+                                                    팀 {getMemberTeamLabels(member).join(', ') || '미지정'}
+                                                    <span className="mx-2 text-slate-300">·</span>
+                                                    가입일 {formatDate(member.joinedAt)}
+                                                </div>
+                                            </div>
+
+                                            <button
+                                                type="button"
+                                                disabled={savingMemberId === member.id}
+                                                onClick={() => {
+                                                    void handleRestoreMember(member.id);
+                                                }}
+                                                className="inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm font-semibold text-emerald-700 transition-colors hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
+                                            >
+                                                <RotateCcw size={16} />
+                                                {savingMemberId === member.id ? '복구 중' : '복구'}
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    )}
                 </section>
             )}
 
