@@ -883,314 +883,18 @@ export const DashboardTab: React.FC = () => {
 
     return (
         <div className="space-y-6 animate-in fade-in duration-500">
-            <header className="flex flex-col gap-4">
-                <div>
-                    <h2 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
-                        <Users className="text-indigo-600" />
-                        멤버 관리
-                    </h2>
-                    <p className="text-slate-500 mt-1">전체 멤버 표를 기준으로 검색, 정렬, 계정 발급, 팀 배정을 관리합니다.</p>
-                </div>
-
-                <div className="flex flex-col gap-3 rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm">
-                    <div className="grid gap-3 xl:grid-cols-[minmax(0,1.2fr)_220px_120px]">
-                        <label className="relative block">
-                            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                            <input
-                                type="text"
-                                list="member-name-suggestions"
-                                placeholder="이름으로 멤버 검색"
-                                value={searchQuery}
-                                onChange={(event) => setSearchQuery(event.target.value)}
-                                className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-9 pr-3 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                            />
-                            <datalist id="member-name-suggestions">
-                                {memberNameSuggestions.map((name) => (
-                                    <option key={name} value={name} />
-                                ))}
-                            </datalist>
-                        </label>
-
-                        <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-600">
-                            <ArrowUpDown size={16} className="text-slate-400" />
-                            <select
-                                value={sortMode}
-                                onChange={(event) => setSortMode(event.target.value as MemberSortMode)}
-                                className="w-full bg-transparent outline-none"
-                            >
-                                <option value="role-order">직책 순 정렬</option>
-                                <option value="name-asc">이름 오름차순</option>
-                                <option value="name-desc">이름 내림차순</option>
-                                <option value="joined-desc">최근 가입 순</option>
-                            </select>
-                        </label>
-
-                        <button
-                            type="button"
-                            onClick={() => {
-                                setSearchQuery('');
-                                setSelectedRoleFilter('all');
-                                setSelectedTeamFilter('all');
-                                setSelectedStatusFilter('all');
-                                setSelectedAccountFilter('all');
-                                setOpenFilterPanel(null);
-                            }}
-                            className="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50"
-                        >
-                            초기화
-                        </button>
+            <header className="space-y-4">
+                <div className="flex flex-col gap-4 2xl:flex-row 2xl:items-start 2xl:justify-between">
+                    <div>
+                        <h2 className="flex items-center gap-2 text-2xl font-bold text-slate-900">
+                            <Users className="text-indigo-600" />
+                            멤버 관리
+                        </h2>
+                        <p className="mt-1 text-slate-500">전체 멤버 표를 기준으로 계정 발급, 팀 배정, 조직 구조를 관리합니다.</p>
                     </div>
 
-                    <div className="flex flex-wrap gap-2">
-                        <button
-                            type="button"
-                            onClick={() => {
-                                setSelectedRoleFilter('all');
-                                setSelectedTeamFilter('all');
-                                setSelectedStatusFilter('all');
-                                setSelectedAccountFilter('all');
-                                setOpenFilterPanel(null);
-                            }}
-                            className={`rounded-full px-3 py-1.5 text-sm font-semibold transition-colors ${
-                                selectedRoleFilter === 'all' && selectedTeamFilter === 'all' && selectedStatusFilter === 'all' && selectedAccountFilter === 'all'
-                                    ? 'bg-indigo-600 text-white'
-                                    : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-                            }`}
-                        >
-                            전체 {filteredMembers.length}
-                        </button>
-                        {([
-                            {
-                                id: 'team' as const,
-                                label: `팀별${selectedTeamFilter !== 'all' ? `: ${teams.find((team) => team.id === selectedTeamFilter)?.name ?? '전체'}` : ''}`,
-                            },
-                            {
-                                id: 'role' as const,
-                                label: `직책별${selectedRoleFilter !== 'all' ? `: ${roles.find((role) => role.id === selectedRoleFilter)?.name ?? '전체'}` : ''}`,
-                            },
-                            {
-                                id: 'status' as const,
-                                label: `상태별${selectedStatusFilter !== 'all' ? `: ${memberStatusLabels[selectedStatusFilter]}` : ''}`,
-                            },
-                            {
-                                id: 'account' as const,
-                                label: `계정상태${selectedAccountFilter !== 'all' ? `: ${memberAccountFilterLabels[selectedAccountFilter]}` : ''}`,
-                            },
-                        ]).map((option) => (
-                            <button
-                                key={option.id}
-                                type="button"
-                                onClick={() => setOpenFilterPanel((current) => (current === option.id ? null : option.id))}
-                                className={`rounded-full px-3 py-1.5 text-sm font-semibold transition-colors ${
-                                    openFilterPanel === option.id
-                                        ? 'bg-slate-900 text-white'
-                                        : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-                                }`}
-                            >
-                                {option.label} ▾
-                            </button>
-                        ))}
-                    </div>
-
-                    {openFilterPanel === 'team' && (
-                        <div className="rounded-[24px] border border-slate-200 bg-slate-50 p-3">
-                            <div className="flex flex-wrap gap-2">
-                                <button
-                                    type="button"
-                                    onClick={() => setSelectedTeamFilter('all')}
-                                    className={`rounded-full px-3 py-1.5 text-sm font-semibold transition-colors ${
-                                        selectedTeamFilter === 'all'
-                                            ? 'bg-indigo-600 text-white'
-                                            : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-                                    }`}
-                                >
-                                    전체({members.filter((member) => matchesMemberFilters(member, {
-                                        query: searchQueryNormalized,
-                                        roleFilter: selectedRoleFilter,
-                                        teamFilter: 'all',
-                                        statusFilter: selectedStatusFilter,
-                                        accountFilter: selectedAccountFilter,
-                                    })).length})
-                                </button>
-                                {teamFilterOptions.map((team) => (
-                                    <button
-                                        key={team.id}
-                                        type="button"
-                                        onClick={() => setSelectedTeamFilter(team.id)}
-                                        className={`rounded-full px-3 py-1.5 text-sm font-semibold transition-colors ${
-                                            selectedTeamFilter === team.id
-                                                ? 'bg-indigo-600 text-white'
-                                                : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-                                        }`}
-                                    >
-                                        {team.label}({team.count})
-                                    </button>
-                                ))}
-                            </div>
-                        </div>
-                    )}
-
-                    {openFilterPanel === 'role' && (
-                        <div className="rounded-[24px] border border-slate-200 bg-slate-50 p-3">
-                            <div className="flex flex-wrap gap-2">
-                                <button
-                                    type="button"
-                                    onClick={() => setSelectedRoleFilter('all')}
-                                    className={`rounded-full px-3 py-1.5 text-sm font-semibold transition-colors ${
-                                        selectedRoleFilter === 'all'
-                                            ? 'bg-indigo-600 text-white'
-                                            : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-                                    }`}
-                                >
-                                    전체({members.filter((member) => matchesMemberFilters(member, {
-                                        query: searchQueryNormalized,
-                                        roleFilter: 'all',
-                                        teamFilter: selectedTeamFilter,
-                                        statusFilter: selectedStatusFilter,
-                                        accountFilter: selectedAccountFilter,
-                                    })).length})
-                                </button>
-                                {roleFilterOptions.map((role) => (
-                                    <button
-                                        key={role.id}
-                                        type="button"
-                                        onClick={() => setSelectedRoleFilter(role.id)}
-                                        className={`rounded-full px-3 py-1.5 text-sm font-semibold transition-colors ${
-                                            selectedRoleFilter === role.id
-                                                ? 'bg-indigo-600 text-white'
-                                                : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-                                        }`}
-                                    >
-                                        {role.label}({role.count})
-                                    </button>
-                                ))}
-                            </div>
-                        </div>
-                    )}
-
-                    {openFilterPanel === 'status' && (
-                        <div className="rounded-[24px] border border-slate-200 bg-slate-50 p-3">
-                            <div className="flex flex-wrap gap-2">
-                                <button
-                                    type="button"
-                                    onClick={() => setSelectedStatusFilter('all')}
-                                    className={`rounded-full px-3 py-1.5 text-sm font-semibold transition-colors ${
-                                        selectedStatusFilter === 'all'
-                                            ? 'bg-indigo-600 text-white'
-                                            : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-                                    }`}
-                                >
-                                    전체({members.filter((member) => matchesMemberFilters(member, {
-                                        query: searchQueryNormalized,
-                                        roleFilter: selectedRoleFilter,
-                                        teamFilter: selectedTeamFilter,
-                                        statusFilter: 'all',
-                                        accountFilter: selectedAccountFilter,
-                                    })).length})
-                                </button>
-                                {statusFilterOptions.map((status) => (
-                                    <button
-                                        key={status.id}
-                                        type="button"
-                                        onClick={() => setSelectedStatusFilter(status.id)}
-                                        className={`rounded-full px-3 py-1.5 text-sm font-semibold transition-colors ${
-                                            selectedStatusFilter === status.id
-                                                ? 'bg-indigo-600 text-white'
-                                                : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-                                        }`}
-                                    >
-                                        {status.label}({status.count})
-                                    </button>
-                                ))}
-                            </div>
-                        </div>
-                    )}
-
-                    {openFilterPanel === 'account' && (
-                        <div className="rounded-[24px] border border-slate-200 bg-slate-50 p-3">
-                            <div className="flex flex-wrap gap-2">
-                                <button
-                                    type="button"
-                                    onClick={() => setSelectedAccountFilter('all')}
-                                    className={`rounded-full px-3 py-1.5 text-sm font-semibold transition-colors ${
-                                        selectedAccountFilter === 'all'
-                                            ? 'bg-indigo-600 text-white'
-                                            : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-                                    }`}
-                                >
-                                    전체({members.filter((member) => matchesMemberFilters(member, {
-                                        query: searchQueryNormalized,
-                                        roleFilter: selectedRoleFilter,
-                                        teamFilter: selectedTeamFilter,
-                                        statusFilter: selectedStatusFilter,
-                                        accountFilter: 'all',
-                                    })).length})
-                                </button>
-                                {accountFilterOptions.map((status) => (
-                                    <button
-                                        key={status.id}
-                                        type="button"
-                                        onClick={() => setSelectedAccountFilter(status.id)}
-                                        className={`rounded-full px-3 py-1.5 text-sm font-semibold transition-colors ${
-                                            selectedAccountFilter === status.id
-                                                ? 'bg-indigo-600 text-white'
-                                                : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-                                        }`}
-                                    >
-                                        {status.label}({status.count})
-                                    </button>
-                                ))}
-                            </div>
-                        </div>
-                    )}
-
-                    {permissions.canManageMembers && (
-                        <div className="flex flex-wrap gap-2">
-                            <button
-                                type="button"
-                                onClick={() => setIsAddMemberDialogOpen(true)}
-                                className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-700"
-                            >
-                                <UserPlus size={16} />
-                                새 멤버
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => setIsGuideDialogOpen(true)}
-                                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50"
-                            >
-                                <CircleHelp size={16} className="text-indigo-600" />
-                                관리자 온보딩 가이드
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => setIsBulkImportDialogOpen(true)}
-                                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50"
-                            >
-                                <Upload size={16} className="text-indigo-600" />
-                                CSV 대량 등록
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => setIsQueueDialogOpen(true)}
-                                className="inline-flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm font-semibold text-amber-800 transition-colors hover:bg-amber-100"
-                            >
-                                <ShieldAlert size={16} />
-                                접근 준비 큐
-                                <span className="rounded-full bg-white px-2 py-0.5 text-xs text-amber-700">{approvalQueue.length}</span>
-                            </button>
-                        </div>
-                    )}
-                </div>
-            </header>
-
-            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-                <div className="border-b border-slate-100 px-6 py-3 text-sm text-slate-500">
-                    로그인 이메일과 계정 발급이 완료된 회원만 실제 서비스에 로그인할 수 있습니다. 표 보기는 기본 관리용, 팀 지정은 다중 소속 관리용, 조직도는 구조 파악용입니다.
-                </div>
-                <div className="flex flex-col gap-4 border-b border-slate-100 px-5 py-4 sm:px-6 2xl:flex-row 2xl:items-center 2xl:justify-between">
                     <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
-                        <div className="grid grid-cols-1 gap-2 rounded-[24px] border border-slate-200 bg-slate-50 p-2 sm:grid-cols-3">
+                        <div className="grid grid-cols-1 gap-2 rounded-[24px] border border-slate-200 bg-white p-2 shadow-sm sm:grid-cols-3">
                             {([
                                 { id: 'table' as const, label: '표 보기', icon: TableProperties },
                                 { id: 'teams' as const, label: '팀 지정', icon: Users },
@@ -1205,7 +909,7 @@ export const DashboardTab: React.FC = () => {
                                         className={`inline-flex items-center justify-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition-colors ${
                                             displayMode === mode.id
                                                 ? 'bg-slate-900 text-white shadow-sm'
-                                                : 'text-slate-600 hover:bg-white'
+                                                : 'text-slate-600 hover:bg-slate-50'
                                         }`}
                                     >
                                         <Icon size={16} />
@@ -1218,7 +922,7 @@ export const DashboardTab: React.FC = () => {
                             <button
                                 type="button"
                                 onClick={() => setIsRoleSettingsDialogOpen(true)}
-                                className="inline-flex items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50"
+                                className="inline-flex items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition-colors hover:bg-slate-50"
                             >
                                 <ShieldAlert size={16} className="text-indigo-600" />
                                 역할 설정
@@ -1227,8 +931,306 @@ export const DashboardTab: React.FC = () => {
                     </div>
                 </div>
 
+                {permissions.canManageMembers && (
+                    <div className="flex flex-wrap gap-2 rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm">
+                        <button
+                            type="button"
+                            onClick={() => setIsAddMemberDialogOpen(true)}
+                            className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-700"
+                        >
+                            <UserPlus size={16} />
+                            새 멤버
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setIsGuideDialogOpen(true)}
+                            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50"
+                        >
+                            <CircleHelp size={16} className="text-indigo-600" />
+                            관리자 온보딩 가이드
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setIsBulkImportDialogOpen(true)}
+                            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50"
+                        >
+                            <Upload size={16} className="text-indigo-600" />
+                            CSV 대량 등록
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setIsQueueDialogOpen(true)}
+                            className="inline-flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm font-semibold text-amber-800 transition-colors hover:bg-amber-100"
+                        >
+                            <ShieldAlert size={16} />
+                            접근 준비 큐
+                            <span className="rounded-full bg-white px-2 py-0.5 text-xs text-amber-700">{approvalQueue.length}</span>
+                        </button>
+                    </div>
+                )}
+            </header>
+
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                <div className="border-b border-slate-100 px-6 py-3 text-sm text-slate-500">
+                    로그인 이메일과 계정 발급이 완료된 회원만 실제 서비스에 로그인할 수 있습니다. 표 보기는 기본 관리용, 팀 지정은 다중 소속 관리용, 조직도는 구조 파악용입니다.
+                </div>
                 {displayMode === 'table' && (
                     <div className="max-w-full">
+                        <div className="border-b border-slate-100 px-5 py-4 sm:px-6">
+                            <div className="space-y-3 rounded-[24px] border border-slate-200 bg-slate-50 p-4">
+                                <div className="grid gap-3 xl:grid-cols-[minmax(0,1.2fr)_220px_120px]">
+                                    <label className="relative block">
+                                        <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                                        <input
+                                            type="text"
+                                            list="member-name-suggestions"
+                                            placeholder="이름으로 멤버 검색"
+                                            value={searchQuery}
+                                            onChange={(event) => setSearchQuery(event.target.value)}
+                                            className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-9 pr-3 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                                        />
+                                        <datalist id="member-name-suggestions">
+                                            {memberNameSuggestions.map((name) => (
+                                                <option key={name} value={name} />
+                                            ))}
+                                        </datalist>
+                                    </label>
+
+                                    <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-600">
+                                        <ArrowUpDown size={16} className="text-slate-400" />
+                                        <select
+                                            value={sortMode}
+                                            onChange={(event) => setSortMode(event.target.value as MemberSortMode)}
+                                            className="w-full bg-transparent outline-none"
+                                        >
+                                            <option value="role-order">직책 순 정렬</option>
+                                            <option value="name-asc">이름 오름차순</option>
+                                            <option value="name-desc">이름 내림차순</option>
+                                            <option value="joined-desc">최근 가입 순</option>
+                                        </select>
+                                    </label>
+
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setSearchQuery('');
+                                            setSelectedRoleFilter('all');
+                                            setSelectedTeamFilter('all');
+                                            setSelectedStatusFilter('all');
+                                            setSelectedAccountFilter('all');
+                                            setOpenFilterPanel(null);
+                                        }}
+                                        className="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50"
+                                    >
+                                        초기화
+                                    </button>
+                                </div>
+
+                                <div className="flex flex-wrap gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setSelectedRoleFilter('all');
+                                            setSelectedTeamFilter('all');
+                                            setSelectedStatusFilter('all');
+                                            setSelectedAccountFilter('all');
+                                            setOpenFilterPanel(null);
+                                        }}
+                                        className={`rounded-full px-3 py-1.5 text-sm font-semibold transition-colors ${
+                                            selectedRoleFilter === 'all' && selectedTeamFilter === 'all' && selectedStatusFilter === 'all' && selectedAccountFilter === 'all'
+                                                ? 'bg-indigo-600 text-white'
+                                                : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                                        }`}
+                                    >
+                                        전체 {filteredMembers.length}
+                                    </button>
+                                    {([
+                                        {
+                                            id: 'team' as const,
+                                            label: `팀별${selectedTeamFilter !== 'all' ? `: ${teams.find((team) => team.id === selectedTeamFilter)?.name ?? '전체'}` : ''}`,
+                                        },
+                                        {
+                                            id: 'role' as const,
+                                            label: `직책별${selectedRoleFilter !== 'all' ? `: ${roles.find((role) => role.id === selectedRoleFilter)?.name ?? '전체'}` : ''}`,
+                                        },
+                                        {
+                                            id: 'status' as const,
+                                            label: `상태별${selectedStatusFilter !== 'all' ? `: ${memberStatusLabels[selectedStatusFilter]}` : ''}`,
+                                        },
+                                        {
+                                            id: 'account' as const,
+                                            label: `계정상태${selectedAccountFilter !== 'all' ? `: ${memberAccountFilterLabels[selectedAccountFilter]}` : ''}`,
+                                        },
+                                    ]).map((option) => (
+                                        <button
+                                            key={option.id}
+                                            type="button"
+                                            onClick={() => setOpenFilterPanel((current) => (current === option.id ? null : option.id))}
+                                            className={`rounded-full px-3 py-1.5 text-sm font-semibold transition-colors ${
+                                                openFilterPanel === option.id
+                                                    ? 'bg-slate-900 text-white'
+                                                    : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                                            }`}
+                                        >
+                                            {option.label} ▾
+                                        </button>
+                                    ))}
+                                </div>
+
+                                {openFilterPanel === 'team' && (
+                                    <div className="rounded-[20px] border border-slate-200 bg-white p-3">
+                                        <div className="flex flex-wrap gap-2">
+                                            <button
+                                                type="button"
+                                                onClick={() => setSelectedTeamFilter('all')}
+                                                className={`rounded-full px-3 py-1.5 text-sm font-semibold transition-colors ${
+                                                    selectedTeamFilter === 'all'
+                                                        ? 'bg-indigo-600 text-white'
+                                                        : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                                                }`}
+                                            >
+                                                전체({members.filter((member) => matchesMemberFilters(member, {
+                                                    query: searchQueryNormalized,
+                                                    roleFilter: selectedRoleFilter,
+                                                    teamFilter: 'all',
+                                                    statusFilter: selectedStatusFilter,
+                                                    accountFilter: selectedAccountFilter,
+                                                })).length})
+                                            </button>
+                                            {teamFilterOptions.map((team) => (
+                                                <button
+                                                    key={team.id}
+                                                    type="button"
+                                                    onClick={() => setSelectedTeamFilter(team.id)}
+                                                    className={`rounded-full px-3 py-1.5 text-sm font-semibold transition-colors ${
+                                                        selectedTeamFilter === team.id
+                                                            ? 'bg-indigo-600 text-white'
+                                                            : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                                                    }`}
+                                                >
+                                                    {team.label}({team.count})
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {openFilterPanel === 'role' && (
+                                    <div className="rounded-[20px] border border-slate-200 bg-white p-3">
+                                        <div className="flex flex-wrap gap-2">
+                                            <button
+                                                type="button"
+                                                onClick={() => setSelectedRoleFilter('all')}
+                                                className={`rounded-full px-3 py-1.5 text-sm font-semibold transition-colors ${
+                                                    selectedRoleFilter === 'all'
+                                                        ? 'bg-indigo-600 text-white'
+                                                        : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                                                }`}
+                                            >
+                                                전체({members.filter((member) => matchesMemberFilters(member, {
+                                                    query: searchQueryNormalized,
+                                                    roleFilter: 'all',
+                                                    teamFilter: selectedTeamFilter,
+                                                    statusFilter: selectedStatusFilter,
+                                                    accountFilter: selectedAccountFilter,
+                                                })).length})
+                                            </button>
+                                            {roleFilterOptions.map((role) => (
+                                                <button
+                                                    key={role.id}
+                                                    type="button"
+                                                    onClick={() => setSelectedRoleFilter(role.id)}
+                                                    className={`rounded-full px-3 py-1.5 text-sm font-semibold transition-colors ${
+                                                        selectedRoleFilter === role.id
+                                                            ? 'bg-indigo-600 text-white'
+                                                            : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                                                    }`}
+                                                >
+                                                    {role.label}({role.count})
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {openFilterPanel === 'status' && (
+                                    <div className="rounded-[20px] border border-slate-200 bg-white p-3">
+                                        <div className="flex flex-wrap gap-2">
+                                            <button
+                                                type="button"
+                                                onClick={() => setSelectedStatusFilter('all')}
+                                                className={`rounded-full px-3 py-1.5 text-sm font-semibold transition-colors ${
+                                                    selectedStatusFilter === 'all'
+                                                        ? 'bg-indigo-600 text-white'
+                                                        : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                                                }`}
+                                            >
+                                                전체({members.filter((member) => matchesMemberFilters(member, {
+                                                    query: searchQueryNormalized,
+                                                    roleFilter: selectedRoleFilter,
+                                                    teamFilter: selectedTeamFilter,
+                                                    statusFilter: 'all',
+                                                    accountFilter: selectedAccountFilter,
+                                                })).length})
+                                            </button>
+                                            {statusFilterOptions.map((status) => (
+                                                <button
+                                                    key={status.id}
+                                                    type="button"
+                                                    onClick={() => setSelectedStatusFilter(status.id)}
+                                                    className={`rounded-full px-3 py-1.5 text-sm font-semibold transition-colors ${
+                                                        selectedStatusFilter === status.id
+                                                            ? 'bg-indigo-600 text-white'
+                                                            : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                                                    }`}
+                                                >
+                                                    {status.label}({status.count})
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {openFilterPanel === 'account' && (
+                                    <div className="rounded-[20px] border border-slate-200 bg-white p-3">
+                                        <div className="flex flex-wrap gap-2">
+                                            <button
+                                                type="button"
+                                                onClick={() => setSelectedAccountFilter('all')}
+                                                className={`rounded-full px-3 py-1.5 text-sm font-semibold transition-colors ${
+                                                    selectedAccountFilter === 'all'
+                                                        ? 'bg-indigo-600 text-white'
+                                                        : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                                                }`}
+                                            >
+                                                전체({members.filter((member) => matchesMemberFilters(member, {
+                                                    query: searchQueryNormalized,
+                                                    roleFilter: selectedRoleFilter,
+                                                    teamFilter: selectedTeamFilter,
+                                                    statusFilter: selectedStatusFilter,
+                                                    accountFilter: 'all',
+                                                })).length})
+                                            </button>
+                                            {accountFilterOptions.map((status) => (
+                                                <button
+                                                    key={status.id}
+                                                    type="button"
+                                                    onClick={() => setSelectedAccountFilter(status.id)}
+                                                    className={`rounded-full px-3 py-1.5 text-sm font-semibold transition-colors ${
+                                                        selectedAccountFilter === status.id
+                                                            ? 'bg-indigo-600 text-white'
+                                                            : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                                                    }`}
+                                                >
+                                                    {status.label}({status.count})
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+
                         <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-3 text-xs font-medium text-slate-500 sm:px-6">
                             <span>표 영역 안에서 좌우로 이동할 수 있습니다.</span>
                             {permissions.canManageMembers && (
