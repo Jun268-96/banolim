@@ -74,8 +74,8 @@ export const Layout: React.FC<LayoutProps> = ({ activeTab, setActiveTab, childre
                             </button>
                         </div>
                     ) : null}
-                    <div className="mb-5 flex flex-wrap items-start justify-between gap-3 lg:items-center">
-                        <div className="flex min-w-0 items-center gap-3">
+                    <div className="mb-5 flex flex-wrap items-start justify-between gap-3 lg:items-start">
+                        <div className="flex min-w-0 flex-1 items-center gap-3">
                             <button
                                 type="button"
                                 onClick={() => setIsSidebarOpen(true)}
@@ -84,12 +84,12 @@ export const Layout: React.FC<LayoutProps> = ({ activeTab, setActiveTab, childre
                             >
                                 <Menu size={20} />
                             </button>
-                            <div className="flex min-w-0 items-center gap-3 rounded-2xl border border-slate-200 bg-white px-3 py-2 shadow-sm">
-                                <img src={bandiSchoolLogoUrl} alt="반디스쿨 로고" className="h-11 w-auto shrink-0 object-contain sm:h-12" />
-                                <div className="min-w-0">
-                                    <div className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-400">Bandi School</div>
-                                    <div className="truncate text-sm font-bold text-slate-900 sm:text-base">반올림 운영 공간</div>
-                                </div>
+                            <div className="flex min-w-0 flex-1 overflow-hidden rounded-3xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+                                <img
+                                    src={bandiSchoolLogoUrl}
+                                    alt="반디스쿨 로고"
+                                    className="h-16 w-full object-contain object-left sm:h-20 lg:h-24"
+                                />
                             </div>
                         </div>
 

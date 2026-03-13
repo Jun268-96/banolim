@@ -278,14 +278,14 @@ const OrganizationNode: React.FC<OrganizationNodeProps> = ({
     <button
         type="button"
         onClick={onSelect}
-        className={`relative flex min-h-[88px] w-full flex-col items-center justify-center rounded-xl border px-4 py-3 text-center transition-all ${
+        className={`relative flex min-h-[72px] w-full flex-col items-center justify-center rounded-xl border px-3 py-2.5 text-center transition-all ${
             selected
                 ? 'border-blue-700 bg-blue-700 text-white shadow-lg shadow-blue-200'
                 : 'border-blue-500 bg-blue-500 text-white hover:border-blue-600 hover:bg-blue-600 hover:shadow-md hover:shadow-blue-100'
         }`}
     >
-        <div className="text-base font-bold">{member.name}</div>
-        <div className={`mt-1 text-xs font-medium ${selected ? 'text-blue-100' : 'text-blue-50'}`}>
+        <div className="text-sm font-bold sm:text-[15px]">{member.name}</div>
+        <div className={`mt-0.5 text-[11px] font-medium ${selected ? 'text-blue-100' : 'text-blue-50'}`}>
             {member.roleName ?? '직책 미지정'}
         </div>
     </button>
@@ -1496,70 +1496,70 @@ export const DashboardTab: React.FC = () => {
                     <div className="px-4 py-6 sm:px-6">
                         {filteredMembers.length > 0 ? (
                             <div className="rounded-[28px] border border-slate-200 bg-white px-6 py-8 shadow-sm sm:px-8">
-                                <div className="grid gap-8 xl:grid-cols-[220px_minmax(0,1fr)]">
+                                <div className="space-y-8">
+                                    <div className="flex flex-col items-center gap-4">
+                                        {organizationGroups.chairs.map((member) => (
+                                            <div key={member.id} className="w-full max-w-[200px]">
+                                                <OrganizationNode
+                                                    member={member}
+                                                    selected={historyMemberId === member.id}
+                                                    onSelect={() => setHistoryMemberId(member.id)}
+                                                />
+                                            </div>
+                                        ))}
+                                        {organizationGroups.chairs.length > 0 && <div className="h-7 w-px bg-blue-300" />}
+                                        {organizationGroups.viceChairs.map((member) => (
+                                            <div key={member.id} className="w-full max-w-[200px]">
+                                                <OrganizationNode
+                                                    member={member}
+                                                    selected={historyMemberId === member.id}
+                                                    onSelect={() => setHistoryMemberId(member.id)}
+                                                />
+                                            </div>
+                                        ))}
+                                    </div>
+
                                     <div className="space-y-4">
-                                        <div className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-400">개발 관리자</div>
-                                        <div className="space-y-3">
-                                            {organizationGroups.developerAdmins.length > 0 ? organizationGroups.developerAdmins.map((member) => (
+                                        <div className="mx-auto h-px w-full max-w-6xl bg-blue-200" />
+                                        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5">
+                                            {organizationGroups.leaders.map((member) => (
                                                 <OrganizationNode
                                                     key={member.id}
                                                     member={member}
                                                     selected={historyMemberId === member.id}
                                                     onSelect={() => setHistoryMemberId(member.id)}
                                                 />
-                                            )) : (
-                                                <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-sm text-slate-500">
-                                                    별도 개발 관리자 없음
-                                                </div>
-                                            )}
+                                            ))}
                                         </div>
                                     </div>
 
-                                    <div className="space-y-8">
-                                        <div className="flex flex-col items-center gap-4">
-                                            {organizationGroups.chairs.map((member) => (
-                                                <div key={member.id} className="w-full max-w-[220px]">
-                                                    <OrganizationNode
-                                                        member={member}
-                                                        selected={historyMemberId === member.id}
-                                                        onSelect={() => setHistoryMemberId(member.id)}
-                                                    />
-                                                </div>
-                                            ))}
-                                            {organizationGroups.chairs.length > 0 && <div className="h-8 w-px bg-blue-300" />}
-                                            {organizationGroups.viceChairs.map((member) => (
-                                                <div key={member.id} className="w-full max-w-[220px]">
-                                                    <OrganizationNode
-                                                        member={member}
-                                                        selected={historyMemberId === member.id}
-                                                        onSelect={() => setHistoryMemberId(member.id)}
-                                                    />
-                                                </div>
+                                    <div className="space-y-4">
+                                        <div className="flex items-center gap-3">
+                                            <div className="h-px flex-1 bg-slate-200" />
+                                            <div className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-400">일반 회원</div>
+                                            <div className="h-px flex-1 bg-slate-200" />
+                                        </div>
+                                        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
+                                            {organizationGroups.generalMembers.map((member) => (
+                                                <OrganizationNode
+                                                    key={member.id}
+                                                    member={member}
+                                                    selected={historyMemberId === member.id}
+                                                    onSelect={() => setHistoryMemberId(member.id)}
+                                                />
                                             ))}
                                         </div>
+                                    </div>
 
-                                        <div className="space-y-4">
-                                            <div className="mx-auto h-px w-full max-w-5xl bg-blue-200" />
-                                            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-                                                {organizationGroups.leaders.map((member) => (
-                                                    <OrganizationNode
-                                                        key={member.id}
-                                                        member={member}
-                                                        selected={historyMemberId === member.id}
-                                                        onSelect={() => setHistoryMemberId(member.id)}
-                                                    />
-                                                ))}
-                                            </div>
-                                        </div>
-
+                                    {organizationGroups.developerAdmins.length > 0 && (
                                         <div className="space-y-4">
                                             <div className="flex items-center gap-3">
                                                 <div className="h-px flex-1 bg-slate-200" />
-                                                <div className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-400">일반 회원</div>
+                                                <div className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-400">개발 관리자</div>
                                                 <div className="h-px flex-1 bg-slate-200" />
                                             </div>
-                                            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-                                                {organizationGroups.generalMembers.map((member) => (
+                                            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                                                {organizationGroups.developerAdmins.map((member) => (
                                                     <OrganizationNode
                                                         key={member.id}
                                                         member={member}
@@ -1569,7 +1569,7 @@ export const DashboardTab: React.FC = () => {
                                                 ))}
                                             </div>
                                         </div>
-                                    </div>
+                                    )}
                                 </div>
                             </div>
                         ) : (
