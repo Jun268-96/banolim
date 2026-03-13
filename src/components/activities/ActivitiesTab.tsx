@@ -35,9 +35,10 @@ import {
     updateCorrectionRequestStatus,
 } from '../../lib/db';
 import { AttendanceSessionManager } from './AttendanceSessionManager';
+import { PointRulesManager } from './PointRulesManager';
 import { AppDialog } from '../shared/AppDialog';
 
-type EntryMode = 'attendance' | 'record' | 'feed';
+type EntryMode = 'attendance' | 'record' | 'feed' | 'rules';
 type RecordSourceMode = 'attendance' | 'manual';
 
 type RecordDraftRow = {
@@ -458,11 +459,12 @@ export const ActivitiesTab: React.FC = () => {
                     <p className="text-slate-500 mt-1">출석 세션과 기록 세션, 활동 피드를 한 화면에서 오갑니다.</p>
                 </div>
 
-                <div className="grid grid-cols-3 gap-2 rounded-[24px] border border-slate-200 bg-white p-2 shadow-sm">
+                <div className="grid grid-cols-2 gap-2 rounded-[24px] border border-slate-200 bg-white p-2 shadow-sm sm:grid-cols-4">
                     {[
                         { id: 'attendance', label: '출석 세션' },
                         { id: 'record', label: '기록 세션' },
                         { id: 'feed', label: '활동 피드' },
+                        { id: 'rules', label: '점수 설정' },
                     ].map((tab) => (
                         <button
                             key={tab.id}
@@ -552,7 +554,7 @@ export const ActivitiesTab: React.FC = () => {
                         )}
                     </div>
                 </section>
-            ) : (
+            ) : entryMode === 'feed' ? (
                 <section className="space-y-4">
                     <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
                         <div className="px-6 py-4 border-b border-slate-100 flex items-center gap-2 text-slate-900 font-semibold">
@@ -829,6 +831,8 @@ export const ActivitiesTab: React.FC = () => {
                         </div>
                     </div>
                 </section>
+            ) : (
+                <PointRulesManager />
             )}
 
             <AppDialog

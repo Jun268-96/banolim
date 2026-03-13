@@ -15,6 +15,7 @@ import {
 } from '../../lib/db';
 import { useAuth } from '../auth/auth-context';
 import { AppDialog } from '../shared/AppDialog';
+import { RoleSettingsDialog } from './RoleSettingsDialog';
 
 const memberStatusOptions: MemberStatus[] = ['active', 'dormant', 'inactive'];
 const memberStatusLabels: Record<MemberStatus, string> = {
@@ -335,6 +336,7 @@ export const DashboardTab: React.FC = () => {
     const [isAddMemberDialogOpen, setIsAddMemberDialogOpen] = useState(false);
     const [isAddTeamDialogOpen, setIsAddTeamDialogOpen] = useState(false);
     const [isTeamAssignmentDialogOpen, setIsTeamAssignmentDialogOpen] = useState(false);
+    const [isRoleSettingsDialogOpen, setIsRoleSettingsDialogOpen] = useState(false);
 
     const refreshData = async () => {
         setIsLoading(true);
@@ -894,29 +896,41 @@ export const DashboardTab: React.FC = () => {
                         ))}
                     </div>
 
-                    <div className="grid grid-cols-1 gap-2 rounded-[24px] border border-slate-200 bg-slate-50 p-2 sm:grid-cols-3">
-                        {([
-                            { id: 'table' as const, label: '표 보기', icon: TableProperties },
-                            { id: 'teams' as const, label: '팀 지정', icon: Users },
-                            { id: 'organization' as const, label: '조직도 보기', icon: Network },
-                        ]).map((mode) => {
-                            const Icon = mode.icon;
-                            return (
-                                <button
-                                    key={mode.id}
-                                    type="button"
-                                    onClick={() => setDisplayMode(mode.id)}
-                                    className={`inline-flex items-center justify-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition-colors ${
-                                        displayMode === mode.id
-                                            ? 'bg-slate-900 text-white shadow-sm'
-                                            : 'text-slate-600 hover:bg-white'
-                                    }`}
-                                >
-                                    <Icon size={16} />
-                                    {mode.label}
-                                </button>
-                            );
-                        })}
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
+                        <div className="grid grid-cols-1 gap-2 rounded-[24px] border border-slate-200 bg-slate-50 p-2 sm:grid-cols-3">
+                            {([
+                                { id: 'table' as const, label: '표 보기', icon: TableProperties },
+                                { id: 'teams' as const, label: '팀 지정', icon: Users },
+                                { id: 'organization' as const, label: '조직도 보기', icon: Network },
+                            ]).map((mode) => {
+                                const Icon = mode.icon;
+                                return (
+                                    <button
+                                        key={mode.id}
+                                        type="button"
+                                        onClick={() => setDisplayMode(mode.id)}
+                                        className={`inline-flex items-center justify-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition-colors ${
+                                            displayMode === mode.id
+                                                ? 'bg-slate-900 text-white shadow-sm'
+                                                : 'text-slate-600 hover:bg-white'
+                                        }`}
+                                    >
+                                        <Icon size={16} />
+                                        {mode.label}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                        {permissions.canManageMembers && (
+                            <button
+                                type="button"
+                                onClick={() => setIsRoleSettingsDialogOpen(true)}
+                                className="inline-flex items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50"
+                            >
+                                <ShieldAlert size={16} className="text-indigo-600" />
+                                역할 설정
+                            </button>
+                        )}
                     </div>
                 </div>
 
@@ -1610,6 +1624,12 @@ export const DashboardTab: React.FC = () => {
                     </div>
                 )}
             </AppDialog>
+
+            <RoleSettingsDialog
+                isOpen={isRoleSettingsDialogOpen}
+                onClose={() => setIsRoleSettingsDialogOpen(false)}
+                onUpdated={refreshData}
+            />
 
             <AppDialog
                 isOpen={isAddTeamDialogOpen}
