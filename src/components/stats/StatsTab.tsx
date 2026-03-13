@@ -1,18 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
     Archive,
-    ArrowDownRight,
-    ArrowUpRight,
-    Award,
     BarChart3,
     CalendarRange,
     Clock3,
     LoaderCircle,
-    Minus,
     PlayCircle,
     Sparkles,
-    TrendingUp,
-    Users,
 } from 'lucide-react';
 import { Chart as ChartJS, ArcElement, Tooltip, Legend, CategoryScale, LinearScale, BarElement, Title } from 'chart.js';
 import { Doughnut, Bar } from 'react-chartjs-2';
@@ -43,6 +37,8 @@ type MemberStatRow = {
     totalPoints: number;
     activityCount: number;
 };
+
+type StatsViewTab = 'recap' | 'compare' | 'archives';
 
 const toSeasonRange = (season: SeasonSummary | null) => {
     if (!season) {
@@ -142,35 +138,6 @@ const formatDelta = (current: number, previous: number, suffix = '') => {
     return `${prefix}${diff}${suffix}`;
 };
 
-const DeltaIndicator: React.FC<{ current: number; previous: number; suffix?: string }> = ({ current, previous, suffix = '' }) => {
-    const diff = current - previous;
-
-    if (diff === 0) {
-        return (
-            <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-500">
-                <Minus size={14} />
-                변화 없음
-            </span>
-        );
-    }
-
-    const isPositive = diff > 0;
-    const Icon = isPositive ? ArrowUpRight : ArrowDownRight;
-
-    return (
-        <span
-            className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold ${
-                isPositive
-                    ? 'border border-emerald-200 bg-emerald-50 text-emerald-700'
-                    : 'border border-rose-200 bg-rose-50 text-rose-700'
-            }`}
-        >
-            <Icon size={14} />
-            {formatDelta(current, previous, suffix)}
-        </span>
-    );
-};
-
 export const StatsTab: React.FC = () => {
     const [members, setMembers] = useState<Member[]>([]);
     const [logs, setLogs] = useState<ActivityLog[]>([]);
@@ -184,6 +151,7 @@ export const StatsTab: React.FC = () => {
     const [recapError, setRecapError] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [showRecap, setShowRecap] = useState(false);
+    const [activeView, setActiveView] = useState<StatsViewTab>('recap');
 
     useEffect(() => {
         const loadData = async () => {
@@ -432,6 +400,46 @@ export const StatsTab: React.FC = () => {
         ],
     };
 
+    const recentSnapshots = recapSnapshots.slice(0, 3);
+
+    const renderSnapshotCards = (snapshots: RecapSnapshot[], emptyMessage: string) => {
+        if (snapshots.length === 0) {
+            return (
+                <div className="rounded-[24px] border border-dashed border-slate-300 bg-slate-50 px-5 py-6 text-sm leading-7 text-slate-500">
+                    {emptyMessage}
+                </div>
+            );
+        }
+
+        return (
+            <div className="space-y-3">
+                {snapshots.map((snapshot) => (
+                    <button
+                        key={snapshot.id}
+                        type="button"
+                        onClick={() => setSelectedSnapshot(snapshot)}
+                        className="flex w-full flex-col gap-3 rounded-[24px] border border-slate-200 bg-gradient-to-r from-white via-white to-slate-50 px-5 py-5 text-left shadow-sm transition-transform hover:-translate-y-0.5"
+                    >
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                            <div>
+                                <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-500">
+                                    {snapshot.periodType === 'month' ? '월간 저장본' : '시즌 저장본'}
+                                </div>
+                                <div className="mt-3 text-lg font-bold text-slate-900">{snapshot.title}</div>
+                                <div className="mt-1 text-sm text-slate-500">{snapshot.subtitle}</div>
+                            </div>
+                            <div className="inline-flex items-center gap-2 text-xs font-semibold text-slate-400">
+                                <Clock3 size={14} />
+                                {new Intl.DateTimeFormat('ko-KR', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(snapshot.createdAt))}
+                            </div>
+                        </div>
+                        <p className="text-sm leading-7 text-slate-600">{snapshot.summary}</p>
+                    </button>
+                ))}
+            </div>
+        );
+    };
+
     return (
         <>
             <div className="space-y-6 animate-in fade-in duration-500">
@@ -473,332 +481,221 @@ export const StatsTab: React.FC = () => {
                     </div>
                 </header>
 
-                <section className="grid grid-cols-1 gap-6 2xl:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)]">
-                    <div className="rounded-[28px] border border-slate-200 bg-gradient-to-br from-slate-950 via-indigo-950 to-slate-900 p-6 text-white shadow-sm">
-                        <div className="flex flex-col gap-5">
-                            <div className="inline-flex w-fit items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.16em] text-white/85">
-                                <Archive size={14} />
-                                저장형 리캡
-                            </div>
-                            <div>
-                                <h3 className="text-2xl font-black tracking-tight">월말/시즌말 리캡을 저장본으로 남깁니다</h3>
-                                <p className="mt-3 max-w-2xl text-sm leading-7 text-white/75">
-                                    생성 시점의 요약, 대표 장면, 배지 흐름을 그대로 보관합니다. 이후 데이터가 더 쌓여도 저장본 해석은 바뀌지 않습니다.
-                                </p>
-                            </div>
-                            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                                <button
-                                    type="button"
-                                    onClick={() => void handleGenerateRecapSnapshots('month')}
-                                    disabled={isGeneratingRecap}
-                                    className="inline-flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/10 px-4 py-4 text-sm font-bold text-white transition-colors hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-60"
-                                >
-                                    {isGeneratingRecap ? <LoaderCircle size={18} className="animate-spin" /> : <Sparkles size={18} />}
-                                    월간 리캡 생성
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => void handleGenerateRecapSnapshots('season')}
-                                    disabled={isGeneratingRecap}
-                                    className="inline-flex items-center justify-center gap-2 rounded-2xl border border-sky-300/30 bg-sky-400/15 px-4 py-4 text-sm font-bold text-sky-100 transition-colors hover:bg-sky-400/20 disabled:cursor-not-allowed disabled:opacity-60"
-                                >
-                                    {isGeneratingRecap ? <LoaderCircle size={18} className="animate-spin" /> : <PlayCircle size={18} />}
-                                    시즌 리캡 생성
-                                </button>
-                            </div>
-                            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                                <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4">
-                                    <div className="text-xs uppercase tracking-[0.16em] text-white/45">선택 시즌</div>
-                                    <div className="mt-2 font-semibold text-white">{selectedSeason?.name ?? '시즌 미선택'}</div>
-                                </div>
-                                <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4">
-                                    <div className="text-xs uppercase tracking-[0.16em] text-white/45">생성 대상 회원</div>
-                                    <div className="mt-2 font-semibold text-white">{eligibleSnapshotMembers.length}명</div>
-                                </div>
-                                <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4">
-                                    <div className="text-xs uppercase tracking-[0.16em] text-white/45">최근 저장본</div>
-                                    <div className="mt-2 font-semibold text-white">{recapSnapshots[0] ? new Date(recapSnapshots[0].createdAt).toLocaleDateString('ko-KR') : '없음'}</div>
-                                </div>
-                            </div>
-                            {recapError && (
-                                <div className="rounded-2xl border border-rose-300/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">
-                                    {recapError}
-                                </div>
-                            )}
-                        </div>
+                <section className="rounded-[28px] border border-slate-200 bg-white p-2 shadow-sm">
+                    <div className="flex flex-wrap gap-2">
+                        {([
+                            { key: 'recap', label: '리캡' },
+                            { key: 'compare', label: '비교 통계' },
+                            { key: 'archives', label: '저장본' },
+                        ] satisfies Array<{ key: StatsViewTab; label: string }>).map((tab) => (
+                            <button
+                                key={tab.key}
+                                type="button"
+                                onClick={() => setActiveView(tab.key)}
+                                className={`rounded-2xl px-4 py-3 text-sm font-semibold transition-colors ${
+                                    activeView === tab.key
+                                        ? 'bg-indigo-600 text-white shadow-sm'
+                                        : 'text-slate-600 hover:bg-slate-100'
+                                }`}
+                            >
+                                {tab.label}
+                            </button>
+                        ))}
                     </div>
+                </section>
 
-                    <div className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
+                {activeView === 'recap' && (
+                    <div className="space-y-6">
+                        <section className="rounded-[28px] border border-slate-200 bg-gradient-to-br from-slate-950 via-indigo-950 to-slate-900 p-6 text-white shadow-sm">
+                            <div className="flex flex-col gap-5">
+                                <div className="inline-flex w-fit items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.16em] text-white/85">
+                                    <Archive size={14} />
+                                    저장형 리캡
+                                </div>
+                                <div>
+                                    <h3 className="text-2xl font-black tracking-tight">월말/시즌말 리캡을 저장본으로 남깁니다</h3>
+                                    <p className="mt-3 max-w-2xl text-sm leading-7 text-white/75">
+                                        생성 시점의 요약과 대표 장면을 저장합니다. 이후 데이터가 더 쌓여도 저장본 해석은 바뀌지 않습니다.
+                                    </p>
+                                </div>
+                                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                                    <button
+                                        type="button"
+                                        onClick={() => void handleGenerateRecapSnapshots('month')}
+                                        disabled={isGeneratingRecap}
+                                        className="inline-flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/10 px-4 py-4 text-sm font-bold text-white transition-colors hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-60"
+                                    >
+                                        {isGeneratingRecap ? <LoaderCircle size={18} className="animate-spin" /> : <Sparkles size={18} />}
+                                        월간 리캡 생성
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => void handleGenerateRecapSnapshots('season')}
+                                        disabled={isGeneratingRecap}
+                                        className="inline-flex items-center justify-center gap-2 rounded-2xl border border-sky-300/30 bg-sky-400/15 px-4 py-4 text-sm font-bold text-sky-100 transition-colors hover:bg-sky-400/20 disabled:cursor-not-allowed disabled:opacity-60"
+                                    >
+                                        {isGeneratingRecap ? <LoaderCircle size={18} className="animate-spin" /> : <PlayCircle size={18} />}
+                                        시즌 리캡 생성
+                                    </button>
+                                </div>
+                                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                                    <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4">
+                                        <div className="text-xs uppercase tracking-[0.16em] text-white/45">선택 시즌</div>
+                                        <div className="mt-2 font-semibold text-white">{selectedSeason?.name ?? '시즌 미선택'}</div>
+                                    </div>
+                                    <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4">
+                                        <div className="text-xs uppercase tracking-[0.16em] text-white/45">생성 대상 회원</div>
+                                        <div className="mt-2 font-semibold text-white">{eligibleSnapshotMembers.length}명</div>
+                                    </div>
+                                    <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4">
+                                        <div className="text-xs uppercase tracking-[0.16em] text-white/45">최근 저장본</div>
+                                        <div className="mt-2 font-semibold text-white">
+                                            {recapSnapshots[0] ? new Date(recapSnapshots[0].createdAt).toLocaleDateString('ko-KR') : '없음'}
+                                        </div>
+                                    </div>
+                                </div>
+                                {recapError && (
+                                    <div className="rounded-2xl border border-rose-300/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">
+                                        {recapError}
+                                    </div>
+                                )}
+                            </div>
+                        </section>
+
+                        <section className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
+                            <div className="flex items-center justify-between gap-4">
+                                <div>
+                                    <h3 className="text-lg font-bold text-slate-900">최근 저장본</h3>
+                                    <p className="mt-1 text-sm text-slate-500">방금 생성한 리캡을 다시 열어보고 공유 카드로 내보낼 수 있습니다.</p>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => setActiveView('archives')}
+                                    className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-500 transition-colors hover:bg-slate-100"
+                                >
+                                    전체 저장본 보기
+                                </button>
+                            </div>
+                            <div className="mt-5">
+                                {renderSnapshotCards(
+                                    recentSnapshots,
+                                    '아직 저장된 운영 리캡이 없습니다. 월간 또는 시즌 리캡을 한 번 생성하면 최근 저장본이 여기에 나타납니다.',
+                                )}
+                            </div>
+                        </section>
+                    </div>
+                )}
+
+                {activeView === 'compare' && (
+                    <div className="space-y-6">
+                        <section className="grid grid-cols-1 gap-6 2xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1.1fr)]">
+                            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+                                <div className="mb-6 flex items-center justify-between gap-4">
+                                    <div>
+                                        <h3 className="text-lg font-bold text-slate-900">팀별 시즌 비교</h3>
+                                        <p className="mt-1 text-sm text-slate-500">선택 시즌과 직전 시즌의 팀 점수를 비교합니다.</p>
+                                    </div>
+                                </div>
+                                <div className="h-64 sm:h-72 lg:h-80">
+                                    <Bar
+                                        data={teamBarData}
+                                        options={{
+                                            maintainAspectRatio: false,
+                                            scales: { y: { beginAtZero: true, ticks: { precision: 0 } } },
+                                        }}
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+                                <div className="mb-6 flex items-center justify-between gap-4">
+                                    <div>
+                                        <h3 className="text-lg font-bold text-slate-900">규칙 사용량 비교</h3>
+                                        <p className="mt-1 text-sm text-slate-500">어떤 규칙이 이번 시즌 분위기를 만들었는지 읽습니다.</p>
+                                    </div>
+                                </div>
+                                <div className="h-64 sm:h-72 lg:h-80">
+                                    <Bar
+                                        data={ruleBarData}
+                                        options={{
+                                            maintainAspectRatio: false,
+                                            scales: { y: { beginAtZero: true, ticks: { precision: 0 } } },
+                                        }}
+                                    />
+                                </div>
+                            </div>
+                        </section>
+
+                        <section className="grid grid-cols-1 gap-6 2xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+                            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+                                <h3 className="mb-6 text-lg font-bold text-slate-900">전체 레벨 분포</h3>
+                                <div className="flex h-60 justify-center sm:h-72">
+                                    <Doughnut data={doughnutData} options={{ maintainAspectRatio: false }} />
+                                </div>
+                            </div>
+
+                            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+                                <h3 className="text-lg font-bold text-slate-900">비교 메모</h3>
+                                <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                                        <div className="text-sm font-medium text-slate-500">상위 기록자</div>
+                                        <div className="mt-2 text-lg font-bold text-slate-900">{stats.topContributor?.name ?? '-'}</div>
+                                        <div className="mt-1 text-sm text-slate-500">
+                                            {stats.topContributor
+                                                ? `${stats.topContributor.totalPoints > 0 ? '+' : ''}${stats.topContributor.totalPoints}점 · ${stats.topContributor.activityCount}건`
+                                                : '아직 기록이 없습니다.'}
+                                        </div>
+                                    </div>
+                                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                                        <div className="text-sm font-medium text-slate-500">최상위 팀</div>
+                                        <div className="mt-2 text-lg font-bold text-slate-900">{stats.topTeam?.team ?? '-'}</div>
+                                        <div className="mt-1 text-sm text-slate-500">
+                                            {stats.topTeam
+                                                ? `${stats.topTeam.totalPoints > 0 ? '+' : ''}${stats.topTeam.totalPoints}점 · 참여 ${stats.topTeam.participantCount}명`
+                                                : '아직 팀 집계가 없습니다.'}
+                                        </div>
+                                    </div>
+                                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                                        <div className="text-sm font-medium text-slate-500">대표 규칙</div>
+                                        <div className="mt-2 text-lg font-bold text-slate-900">{stats.topRule?.name ?? '-'}</div>
+                                        <div className="mt-1 text-sm text-slate-500">
+                                            {stats.topRule
+                                                ? `${stats.topRule.count}건 · ${stats.topRule.delta > 0 ? '+' : ''}${stats.topRule.delta}점`
+                                                : '아직 대표 규칙이 없습니다.'}
+                                        </div>
+                                    </div>
+                                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                                        <div className="text-sm font-medium text-slate-500">활동 밀도</div>
+                                        <div className="mt-2 text-lg font-bold text-slate-900">{stats.selectedActiveDays}일 운영</div>
+                                        <div className="mt-1 text-sm text-slate-500">
+                                            전시즌 대비 {formatDelta(stats.selectedActiveDays, stats.previousActiveDays, '일')}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </section>
+                    </div>
+                )}
+
+                {activeView === 'archives' && (
+                    <section className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
                         <div className="flex items-center justify-between gap-4">
                             <div>
                                 <h3 className="text-lg font-bold text-slate-900">저장된 운영 리캡</h3>
-                                <p className="mt-1 text-sm text-slate-500">생성된 저장본은 여기서 다시 열어보고 공유 카드로도 내보낼 수 있습니다.</p>
+                                <p className="mt-1 text-sm text-slate-500">생성된 저장본을 다시 열어보고 공유 카드로 내보낼 수 있습니다.</p>
                             </div>
                             <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-500">
                                 최근 {recapSnapshots.length}개
                             </div>
                         </div>
-
-                        <div className="mt-5 space-y-3">
-                            {recapSnapshots.length === 0 ? (
-                                <div className="rounded-[24px] border border-dashed border-slate-300 bg-slate-50 px-5 py-6 text-sm leading-7 text-slate-500">
-                                    아직 저장된 운영 리캡이 없습니다. 월간 또는 시즌 리캡을 한 번 생성하면 이후에는 같은 기간 저장본을 다시 열어볼 수 있습니다.
-                                </div>
-                            ) : (
-                                recapSnapshots.map((snapshot) => (
-                                    <button
-                                        key={snapshot.id}
-                                        type="button"
-                                        onClick={() => setSelectedSnapshot(snapshot)}
-                                        className="flex w-full flex-col gap-3 rounded-[24px] border border-slate-200 bg-gradient-to-r from-white via-white to-slate-50 px-5 py-5 text-left shadow-sm transition-transform hover:-translate-y-0.5"
-                                    >
-                                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                                            <div>
-                                                <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-500">
-                                                    {snapshot.periodType === 'month' ? '월간 저장본' : '시즌 저장본'}
-                                                </div>
-                                                <div className="mt-3 text-lg font-bold text-slate-900">{snapshot.title}</div>
-                                                <div className="mt-1 text-sm text-slate-500">{snapshot.subtitle}</div>
-                                            </div>
-                                            <div className="inline-flex items-center gap-2 text-xs font-semibold text-slate-400">
-                                                <Clock3 size={14} />
-                                                {new Intl.DateTimeFormat('ko-KR', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(snapshot.createdAt))}
-                                            </div>
-                                        </div>
-                                        <p className="text-sm leading-7 text-slate-600">{snapshot.summary}</p>
-                                        <div className="flex flex-wrap gap-2">
-                                            {snapshot.payload.stats.slice(0, 3).map((stat) => (
-                                                <span
-                                                    key={`${snapshot.id}_${stat.label}`}
-                                                    className="rounded-full border border-slate-200 bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600"
-                                                >
-                                                    {stat.label} · {stat.value}
-                                                </span>
-                                            ))}
-                                        </div>
-                                    </button>
-                                ))
+                        <div className="mt-5">
+                            {renderSnapshotCards(
+                                recapSnapshots,
+                                '아직 저장된 운영 리캡이 없습니다. 월간 또는 시즌 리캡을 한 번 생성하면 이후에는 같은 기간 저장본을 다시 열어볼 수 있습니다.',
                             )}
                         </div>
-                    </div>
-                </section>
-
-                <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 2xl:grid-cols-4">
-                    <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-                        <div className="flex items-center justify-between">
-                            <div className="rounded-xl bg-blue-50 p-3 text-blue-600">
-                                <TrendingUp size={22} />
-                            </div>
-                            <DeltaIndicator current={stats.selectedPoints} previous={stats.previousPoints} suffix="점" />
-                        </div>
-                        <div className="mt-5 text-sm font-medium text-slate-500">시즌 누적 점수</div>
-                        <div className="mt-2 text-3xl font-black text-slate-900">
-                            {stats.selectedPoints > 0 ? '+' : ''}
-                            {stats.selectedPoints}점
-                        </div>
-                        <div className="mt-2 text-sm text-slate-500">
-                            비교 기준: {previousSeason?.name ?? '이전 시즌 없음'}
-                        </div>
-                    </div>
-
-                    <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-                        <div className="flex items-center justify-between">
-                            <div className="rounded-xl bg-violet-50 p-3 text-violet-600">
-                                <Award size={22} />
-                            </div>
-                            <DeltaIndicator current={stats.selectedLogs.length} previous={stats.previousLogs.length} suffix="건" />
-                        </div>
-                        <div className="mt-5 text-sm font-medium text-slate-500">활동 기록 수</div>
-                        <div className="mt-2 text-3xl font-black text-slate-900">{stats.selectedLogs.length}건</div>
-                        <div className="mt-2 text-sm text-slate-500">기록량 증가가 곧 시즌 밀도를 보여줍니다.</div>
-                    </div>
-
-                    <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-                        <div className="flex items-center justify-between">
-                            <div className="rounded-xl bg-emerald-50 p-3 text-emerald-600">
-                                <Users size={22} />
-                            </div>
-                            <DeltaIndicator current={stats.selectedUniqueMembers} previous={stats.previousUniqueMembers} suffix="명" />
-                        </div>
-                        <div className="mt-5 text-sm font-medium text-slate-500">참여 회원</div>
-                        <div className="mt-2 text-3xl font-black text-slate-900">{stats.selectedUniqueMembers}명</div>
-                        <div className="mt-2 text-sm text-slate-500">전체 멤버 {stats.totalMembers}명 중 실제 참여 인원입니다.</div>
-                    </div>
-
-                    <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-                        <div className="flex items-center justify-between">
-                            <div className="rounded-xl bg-amber-50 p-3 text-amber-600">
-                                <Sparkles size={22} />
-                            </div>
-                            <DeltaIndicator current={stats.selectedBadges.length} previous={stats.previousBadges.length} suffix="개" />
-                        </div>
-                        <div className="mt-5 text-sm font-medium text-slate-500">신규 배지</div>
-                        <div className="mt-2 text-3xl font-black text-slate-900">{stats.selectedBadges.length}개</div>
-                        <div className="mt-2 text-sm text-slate-500">보상 체계가 실제로 열린 순간을 추적합니다.</div>
-                    </div>
-                </section>
-
-                <section className="grid grid-cols-1 gap-6 2xl:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)]">
-                    <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-                        <h3 className="mb-6 text-lg font-bold text-slate-900">전체 레벨 분포</h3>
-                        <div className="flex h-60 justify-center sm:h-72">
-                            <Doughnut data={doughnutData} options={{ maintainAspectRatio: false }} />
-                        </div>
-                    </div>
-
-                    <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-                        <div className="mb-6 flex items-center justify-between gap-4">
-                            <div>
-                                <h3 className="text-lg font-bold text-slate-900">팀별 시즌 비교</h3>
-                                <p className="mt-1 text-sm text-slate-500">선택 시즌과 직전 시즌의 팀 점수를 나란히 비교합니다.</p>
-                            </div>
-                        </div>
-                        <div className="h-64 sm:h-72 lg:h-80">
-                            <Bar
-                                data={teamBarData}
-                                options={{
-                                    maintainAspectRatio: false,
-                                    scales: { y: { beginAtZero: true, ticks: { precision: 0 } } },
-                                }}
-                            />
-                        </div>
-                    </div>
-                </section>
-
-                <section className="grid grid-cols-1 gap-6 2xl:grid-cols-[minmax(0,1.3fr)_minmax(320px,1fr)]">
-                    <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-                        <div className="mb-6 flex items-center justify-between gap-4">
-                            <div>
-                                <h3 className="text-lg font-bold text-slate-900">규칙 사용량 비교</h3>
-                                <p className="mt-1 text-sm text-slate-500">어떤 활동 규칙이 시즌 분위기를 만들었는지 전시즌과 비교합니다.</p>
-                            </div>
-                        </div>
-                        <div className="h-64 sm:h-72 lg:h-80">
-                            <Bar
-                                data={ruleBarData}
-                                options={{
-                                    maintainAspectRatio: false,
-                                    scales: { y: { beginAtZero: true, ticks: { precision: 0 } } },
-                                }}
-                            />
-                        </div>
-                    </div>
-
-                    <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-                        <h3 className="text-lg font-bold text-slate-900">운영 하이라이트</h3>
-                        <div className="mt-5 space-y-4">
-                            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
-                                <div className="text-sm font-medium text-slate-500">상위 기록자</div>
-                                <div className="mt-2 text-xl font-bold text-slate-900">{stats.topContributor?.name ?? '-'}</div>
-                                <div className="mt-1 text-sm text-slate-500">
-                                    {stats.topContributor
-                                        ? `${stats.topContributor.totalPoints > 0 ? '+' : ''}${stats.topContributor.totalPoints}점 · ${stats.topContributor.activityCount}건`
-                                        : '아직 기록이 없습니다.'}
-                                </div>
-                            </div>
-
-                            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
-                                <div className="text-sm font-medium text-slate-500">이번 시즌 최상위 팀</div>
-                                <div className="mt-2 text-xl font-bold text-slate-900">{stats.topTeam?.team ?? '-'}</div>
-                                <div className="mt-1 text-sm text-slate-500">
-                                    {stats.topTeam
-                                        ? `${stats.topTeam.totalPoints > 0 ? '+' : ''}${stats.topTeam.totalPoints}점 · 참여 ${stats.topTeam.participantCount}명`
-                                        : '아직 팀 집계가 없습니다.'}
-                                </div>
-                            </div>
-
-                            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
-                                <div className="text-sm font-medium text-slate-500">대표 규칙</div>
-                                <div className="mt-2 text-xl font-bold text-slate-900">{stats.topRule?.name ?? '-'}</div>
-                                <div className="mt-1 text-sm text-slate-500">
-                                    {stats.topRule
-                                        ? `${stats.topRule.count}건 · ${stats.topRule.delta > 0 ? '+' : ''}${stats.topRule.delta}점`
-                                        : '아직 대표 규칙이 없습니다.'}
-                                </div>
-                            </div>
-
-                            <div className="rounded-2xl border border-indigo-200 bg-gradient-to-br from-indigo-50 to-sky-50 px-4 py-4">
-                                <div className="text-sm font-medium text-indigo-600">활동 밀도</div>
-                                <div className="mt-2 text-xl font-bold text-slate-900">{stats.selectedActiveDays}일 운영</div>
-                                <div className="mt-1 text-sm text-slate-600">
-                                    전시즌 대비 {formatDelta(stats.selectedActiveDays, stats.previousActiveDays, '일')}
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </section>
-
-                <section className="grid grid-cols-1 gap-6 2xl:grid-cols-[minmax(0,1.2fr)_minmax(320px,1fr)]">
-                    <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-                        <div className="mb-5 flex items-center justify-between">
-                            <h3 className="text-lg font-bold text-slate-900">팀별 비교 보드</h3>
-                            <span className="text-sm text-slate-500">{selectedSeason?.name ?? '전체 시즌'} 기준</span>
-                        </div>
-                        <div className="space-y-3">
-                            {stats.teamComparison.map((team) => {
-                                const maxPoints = Math.max(...stats.teamComparison.map((entry) => Math.max(entry.currentPoints, entry.previousPoints)), 1);
-                                const width = `${Math.max((team.currentPoints / maxPoints) * 100, team.currentPoints > 0 ? 8 : 0)}%`;
-                                const delta = team.currentPoints - team.previousPoints;
-
-                                return (
-                                    <div key={team.team} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
-                                        <div className="flex items-center justify-between gap-4">
-                                            <div>
-                                                <div className="font-semibold text-slate-900">{team.team}</div>
-                                                <div className="mt-1 text-sm text-slate-500">
-                                                    활동 {team.currentActivities}건 · 참여 {team.participantCount}명
-                                                </div>
-                                            </div>
-                                            <div className="text-right">
-                                                <div className="text-lg font-bold text-slate-900">
-                                                    {team.currentPoints > 0 ? '+' : ''}
-                                                    {team.currentPoints}점
-                                                </div>
-                                                <div className={`mt-1 text-sm font-semibold ${delta >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-                                                    {delta > 0 ? '+' : ''}
-                                                    {delta}점
-                                                </div>
-                                            </div>
-                                        </div>
-                                        <div className="mt-4 h-2 rounded-full bg-slate-200">
-                                            <div className="h-full rounded-full bg-gradient-to-r from-sky-500 to-indigo-600" style={{ width }} />
-                                        </div>
-                                    </div>
-                                );
-                            })}
-                        </div>
-                    </div>
-
-                    <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-                        <h3 className="text-lg font-bold text-slate-900">비교 메모</h3>
-                        <div className="mt-5 space-y-4">
-                            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
-                                <div className="text-sm font-medium text-slate-500">시즌 해석</div>
-                                <p className="mt-2 text-sm leading-7 text-slate-600">
-                                    {stats.topTeam
-                                        ? `${stats.topTeam.team}이 이번 구간의 흐름을 주도했고, ${stats.topContributor?.name ?? '핵심 멤버'}가 점수 기준 상위권을 이끌고 있습니다.`
-                                        : '충분한 기록이 쌓이면 시즌 해석 문장이 자동으로 더 풍부해집니다.'}
-                                </p>
-                            </div>
-
-                            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
-                                <div className="text-sm font-medium text-slate-500">전시즌 대비</div>
-                                <p className="mt-2 text-sm leading-7 text-slate-600">
-                                    {previousSeason
-                                        ? `총점은 ${formatDelta(stats.selectedPoints, stats.previousPoints, '점')}이고, 활동량은 ${formatDelta(stats.selectedLogs.length, stats.previousLogs.length, '건')}입니다.`
-                                        : '현재는 비교 가능한 이전 시즌이 없어서 단일 시즌 관점으로만 해석합니다.'}
-                                </p>
-                            </div>
-
-                            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
-                                <div className="text-sm font-medium text-slate-500">보상 흐름</div>
-                                <p className="mt-2 text-sm leading-7 text-slate-600">
-                                    신규 배지는 {stats.selectedBadges.length}개 열렸고, 규칙 사용량 상위는 {stats.topRule?.name ?? '미집계'}입니다. 활동 설계와 보상이 같은 방향으로 움직이는지 여기서 바로 읽을 수 있습니다.
-                                </p>
-                            </div>
-                        </div>
-                    </div>
-                </section>
+                    </section>
+                )}
             </div>
 
             {showRecap && (
