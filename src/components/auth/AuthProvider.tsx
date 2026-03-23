@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import type { AuthChangeEvent, Session, User } from '@supabase/supabase-js';
 import type { AppRole, UserProfile } from '../../types';
-import { completeMyPasswordSetup, isRegisteredLoginEmail } from '../../lib/db';
+import { completeMyPasswordSetup, isRegisteredLoginEmail } from '../../lib/api/auth/account';
 import { buildPermissions } from '../../lib/permissions';
 import { isAuthBypassed, isSupabaseConfigured, supabase } from '../../lib/supabase';
 import type { Database } from '../../types/database';

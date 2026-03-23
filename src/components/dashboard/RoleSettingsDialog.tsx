@@ -6,7 +6,7 @@ import {
     deleteRole,
     getRoles,
     updateRole,
-} from '../../lib/db';
+} from '../../lib/api/admin/roles';
 import { roleLabels, roleScopeDescriptions } from '../../lib/permissions';
 import { AppDialog } from '../shared/AppDialog';
 

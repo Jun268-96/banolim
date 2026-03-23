@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Award, CalendarDays, ChevronLeft, ChevronRight, Crown, Flame, Layers3, Share2, Sparkles, Star, TrendingUp, Trophy, Users, X, Zap } from 'lucide-react';
 import type { ActivityLog, Member, MemberBadge, SeasonSummary } from '../../types';
+import { filterEffectiveActivityLogs, isTimestampWithinRange, toLocalDayKey } from '../../lib/domain/activityLogs';
 import { ShareRecapCard } from '../recap/ShareRecapCard';
 
 type RecapPeriod = 'month' | 'season';
@@ -68,7 +69,7 @@ export const RecapViewer: React.FC<RecapViewerProps> = ({
     const [showShareCard, setShowShareCard] = useState(false);
 
     const effectiveLogs = useMemo(
-        () => logs.filter((log) => !log.isReversal && log.recordStatus !== 'reversed'),
+        () => filterEffectiveActivityLogs(logs),
         [logs],
     );
 
@@ -76,19 +77,13 @@ export const RecapViewer: React.FC<RecapViewerProps> = ({
 
     const scopeLogs = useMemo(
         () =>
-            effectiveLogs.filter((log) => {
-                const occurredAt = new Date(log.timestamp);
-                return occurredAt >= scope.start && occurredAt <= scope.end;
-            }),
+            effectiveLogs.filter((log) => isTimestampWithinRange(log.timestamp, scope.start, scope.end)),
         [effectiveLogs, scope.end, scope.start],
     );
 
     const scopeBadges = useMemo(
         () =>
-            memberBadges.filter((badge) => {
-                const awardedAt = new Date(badge.awardedAt);
-                return awardedAt >= scope.start && awardedAt <= scope.end;
-            }),
+            memberBadges.filter((badge) => isTimestampWithinRange(badge.awardedAt, scope.start, scope.end)),
         [memberBadges, scope.end, scope.start],
     );
 
@@ -212,7 +207,7 @@ export const RecapViewer: React.FC<RecapViewerProps> = ({
 
         const bestDayEntry = Object.entries(
             scopeLogs.reduce<Record<string, { delta: number; count: number }>>((acc, log) => {
-                const dayKey = new Date(log.timestamp).toISOString().slice(0, 10);
+                const dayKey = toLocalDayKey(log.timestamp);
                 const current = acc[dayKey] ?? { delta: 0, count: 0 };
                 acc[dayKey] = {
                     delta: current.delta + log.pointDelta,

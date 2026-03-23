@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import type { SiteBanner } from '../../types';
-import { getSiteBanners, subscribeToSiteBannerChanges } from '../../lib/db';
+import { getSiteBanners, subscribeToSiteBannerChanges } from '../../lib/api/layout/site';
 
 const fallbackBannerUrl = new URL('../../../반올림스쿨 배너.png', import.meta.url).href;
 

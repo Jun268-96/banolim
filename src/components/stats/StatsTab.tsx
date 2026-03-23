@@ -1,181 +1,49 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-    Archive,
     BarChart3,
     CalendarRange,
-    Clock3,
-    LoaderCircle,
     PlayCircle,
-    Sparkles,
 } from 'lucide-react';
 import { Chart as ChartJS, ArcElement, Tooltip, Legend, CategoryScale, LinearScale, BarElement, Title } from 'chart.js';
-import { Doughnut, Bar } from 'react-chartjs-2';
-import type { ActivityLog, Member, MemberBadge, RecapSnapshot, RecapSnapshotPeriod, SeasonSummary } from '../../types';
-import { createRecapSnapshots, getCurrentSeason, getLogs, getMemberBadges, getMembers, getRecapSnapshots, getSeasons } from '../../lib/db';
+import type { RecapSnapshot, RecapSnapshotPeriod } from '../../types';
+import { createRecapSnapshots } from '../../lib/api/stats/overview';
+import { filterEffectiveActivityLogs, filterLogsWithinRange } from '../../lib/domain/activityLogs';
 import { buildMemberRecapSnapshotDraft, buildOverallRecapSnapshotDraft, buildRecapScope } from '../../lib/recapSnapshots';
+import { buildCategoryStats, buildMemberStats, buildTeamStats, isWithinRange, toSeasonRange } from '../../lib/domain/stats';
+import { useStatsResources } from './hooks/useStatsResources';
 import { RecapViewer } from './RecapViewer';
+import { StatsArchivesSection } from './sections/StatsArchivesSection';
+import { StatsCompareSection } from './sections/StatsCompareSection';
+import { StatsRecapSection } from './sections/StatsRecapSection';
 import { RecapSnapshotViewer } from '../recap/RecapSnapshotViewer';
 
 ChartJS.register(ArcElement, Tooltip, Legend, CategoryScale, LinearScale, BarElement, Title);
 
-type TeamStatRow = {
-    team: string;
-    totalPoints: number;
-    activityCount: number;
-    participantCount: number;
-};
-
-type CategoryStatRow = {
-    name: string;
-    count: number;
-    delta: number;
-};
-
-type MemberStatRow = {
-    memberId: string;
-    name: string;
-    totalPoints: number;
-    activityCount: number;
-};
-
 type StatsViewTab = 'recap' | 'compare' | 'archives';
 
-const toSeasonRange = (season: SeasonSummary | null) => {
-    if (!season) {
-        return {
-            start: new Date(0),
-            end: new Date(),
-        };
-    }
-
-    return {
-        start: new Date(`${season.startDate}T00:00:00`),
-        end: season.endDate ? new Date(`${season.endDate}T23:59:59`) : new Date(),
-    };
-};
-
-const isWithinRange = (value: string, start: Date, end: Date) => {
-    const target = new Date(value);
-    return target >= start && target <= end;
-};
-
-const buildTeamStats = (logs: ActivityLog[], members: Member[]): TeamStatRow[] => {
-    const memberMap = new Map(members.map((member) => [member.id, member]));
-    const rows = new Map<string, { totalPoints: number; activityCount: number; participantIds: Set<string> }>();
-
-    logs.forEach((log) => {
-        const teamName = memberMap.get(log.memberId)?.teamName ?? '미지정';
-        const current = rows.get(teamName) ?? {
-            totalPoints: 0,
-            activityCount: 0,
-            participantIds: new Set<string>(),
-        };
-
-        current.totalPoints += log.pointDelta;
-        current.activityCount += 1;
-        current.participantIds.add(log.memberId);
-        rows.set(teamName, current);
-    });
-
-    return [...rows.entries()]
-        .map(([team, value]) => ({
-            team,
-            totalPoints: value.totalPoints,
-            activityCount: value.activityCount,
-            participantCount: value.participantIds.size,
-        }))
-        .sort((a, b) => b.totalPoints - a.totalPoints || b.activityCount - a.activityCount);
-};
-
-const buildCategoryStats = (logs: ActivityLog[]): CategoryStatRow[] => {
-    const rows = new Map<string, { count: number; delta: number }>();
-
-    logs.forEach((log) => {
-        const name = log.categoryName ?? log.reason ?? '알 수 없는 규칙';
-        const current = rows.get(name) ?? { count: 0, delta: 0 };
-        current.count += 1;
-        current.delta += log.pointDelta;
-        rows.set(name, current);
-    });
-
-    return [...rows.entries()]
-        .map(([name, value]) => ({
-            name,
-            count: value.count,
-            delta: value.delta,
-        }))
-        .sort((a, b) => b.count - a.count || b.delta - a.delta);
-};
-
-const buildMemberStats = (logs: ActivityLog[], members: Member[]): MemberStatRow[] => {
-    const memberNameMap = new Map(members.map((member) => [member.id, member.name]));
-    const rows = new Map<string, { totalPoints: number; activityCount: number }>();
-
-    logs.forEach((log) => {
-        const current = rows.get(log.memberId) ?? { totalPoints: 0, activityCount: 0 };
-        current.totalPoints += log.pointDelta;
-        current.activityCount += 1;
-        rows.set(log.memberId, current);
-    });
-
-    return [...rows.entries()]
-        .map(([memberId, value]) => ({
-            memberId,
-            name: memberNameMap.get(memberId) ?? '알 수 없는 회원',
-            totalPoints: value.totalPoints,
-            activityCount: value.activityCount,
-        }))
-        .sort((a, b) => b.totalPoints - a.totalPoints || b.activityCount - a.activityCount);
-};
-
-const formatDelta = (current: number, previous: number, suffix = '') => {
-    const diff = current - previous;
-    if (diff === 0) {
-        return `변화 없음${suffix}`;
-    }
-
-    const prefix = diff > 0 ? '+' : '';
-    return `${prefix}${diff}${suffix}`;
-};
-
 export const StatsTab: React.FC = () => {
-    const [members, setMembers] = useState<Member[]>([]);
-    const [logs, setLogs] = useState<ActivityLog[]>([]);
-    const [memberBadges, setMemberBadges] = useState<MemberBadge[]>([]);
-    const [seasons, setSeasons] = useState<SeasonSummary[]>([]);
-    const [currentSeason, setCurrentSeason] = useState<SeasonSummary | null>(null);
     const [selectedSeasonId, setSelectedSeasonId] = useState<string | null>(null);
-    const [recapSnapshots, setRecapSnapshots] = useState<RecapSnapshot[]>([]);
     const [selectedSnapshot, setSelectedSnapshot] = useState<RecapSnapshot | null>(null);
     const [isGeneratingRecap, setIsGeneratingRecap] = useState(false);
     const [recapError, setRecapError] = useState<string | null>(null);
-    const [isLoading, setIsLoading] = useState(true);
     const [showRecap, setShowRecap] = useState(false);
     const [activeView, setActiveView] = useState<StatsViewTab>('recap');
+    const {
+        members,
+        logs,
+        memberBadges,
+        seasons,
+        currentSeason,
+        recapSnapshots,
+        isLoading,
+        refreshSnapshots,
+    } = useStatsResources();
 
     useEffect(() => {
-        const loadData = async () => {
-            const [membersData, logsData, seasonData, memberBadgeData, seasonsData, recapSnapshotData] = await Promise.all([
-                getMembers(),
-                getLogs(),
-                getCurrentSeason(),
-                getMemberBadges(),
-                getSeasons(),
-                getRecapSnapshots({ scope: 'overall', limit: 6 }),
-            ]);
-
-            setMembers(membersData);
-            setLogs(logsData);
-            setCurrentSeason(seasonData);
-            setMemberBadges(memberBadgeData);
-            setSeasons(seasonsData);
-            setRecapSnapshots(recapSnapshotData);
-            setSelectedSeasonId(seasonData?.id ?? seasonsData[0]?.id ?? null);
-            setIsLoading(false);
-        };
-
-        loadData();
-    }, []);
+        if (!selectedSeasonId || !seasons.some((season) => season.id === selectedSeasonId)) {
+            setSelectedSeasonId(currentSeason?.id ?? seasons[0]?.id ?? null);
+        }
+    }, [currentSeason, seasons, selectedSeasonId]);
 
     const selectedSeason = useMemo(
         () => seasons.find((season) => season.id === selectedSeasonId) ?? currentSeason ?? seasons[0] ?? null,
@@ -194,27 +62,22 @@ export const StatsTab: React.FC = () => {
     const eligibleSnapshotMembers = useMemo(() => {
         const scope = buildRecapScope('season', selectedSeason ?? currentSeason);
         const activeVisibleMembers = members.filter((member) => member.status === 'active' && (member.isVisible ?? true));
-        const effectiveLogs = logs.filter((log) => !log.isReversal && log.recordStatus !== 'reversed');
+        const effectiveLogs = filterEffectiveActivityLogs(logs);
         const loggedMemberIds = new Set(
-            effectiveLogs
-                .filter((log) => {
-                    const timestamp = new Date(log.timestamp);
-                    return timestamp >= scope.start && timestamp <= scope.end;
-                })
-                .map((log) => log.memberId),
+            filterLogsWithinRange(effectiveLogs, scope.start, scope.end).map((log) => log.memberId),
         );
 
         return activeVisibleMembers.filter((member) => loggedMemberIds.has(member.id));
     }, [currentSeason, logs, members, selectedSeason]);
 
     const stats = useMemo(() => {
-        const effectiveLogs = logs.filter((log) => !log.isReversal && log.recordStatus !== 'reversed');
+        const effectiveLogs = filterEffectiveActivityLogs(logs);
         const selectedRange = toSeasonRange(selectedSeason);
         const previousRange = toSeasonRange(previousSeason);
 
-        const selectedLogs = effectiveLogs.filter((log) => isWithinRange(log.timestamp, selectedRange.start, selectedRange.end));
+        const selectedLogs = filterLogsWithinRange(effectiveLogs, selectedRange.start, selectedRange.end);
         const previousLogs = previousSeason
-            ? effectiveLogs.filter((log) => isWithinRange(log.timestamp, previousRange.start, previousRange.end))
+            ? filterLogsWithinRange(effectiveLogs, previousRange.start, previousRange.end)
             : [];
 
         const selectedBadges = memberBadges.filter((badge) => {
@@ -332,8 +195,7 @@ export const StatsTab: React.FC = () => {
                 });
 
             await createRecapSnapshots([overallDraft, ...memberDrafts]);
-            const nextSnapshots = await getRecapSnapshots({ scope: 'overall', limit: 6 });
-            setRecapSnapshots(nextSnapshots);
+            await refreshSnapshots();
         } catch (error) {
             setRecapError(error instanceof Error ? error.message : '리캡 저장본을 생성하지 못했습니다.');
         } finally {
@@ -401,44 +263,9 @@ export const StatsTab: React.FC = () => {
     };
 
     const recentSnapshots = recapSnapshots.slice(0, 3);
-
-    const renderSnapshotCards = (snapshots: RecapSnapshot[], emptyMessage: string) => {
-        if (snapshots.length === 0) {
-            return (
-                <div className="rounded-[24px] border border-dashed border-slate-300 bg-slate-50 px-5 py-6 text-sm leading-7 text-slate-500">
-                    {emptyMessage}
-                </div>
-            );
-        }
-
-        return (
-            <div className="space-y-3">
-                {snapshots.map((snapshot) => (
-                    <button
-                        key={snapshot.id}
-                        type="button"
-                        onClick={() => setSelectedSnapshot(snapshot)}
-                        className="flex w-full flex-col gap-3 rounded-[24px] border border-slate-200 bg-gradient-to-r from-white via-white to-slate-50 px-5 py-5 text-left shadow-sm transition-transform hover:-translate-y-0.5"
-                    >
-                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                            <div>
-                                <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-500">
-                                    {snapshot.periodType === 'month' ? '월간 저장본' : '시즌 저장본'}
-                                </div>
-                                <div className="mt-3 text-lg font-bold text-slate-900">{snapshot.title}</div>
-                                <div className="mt-1 text-sm text-slate-500">{snapshot.subtitle}</div>
-                            </div>
-                            <div className="inline-flex items-center gap-2 text-xs font-semibold text-slate-400">
-                                <Clock3 size={14} />
-                                {new Intl.DateTimeFormat('ko-KR', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(snapshot.createdAt))}
-                            </div>
-                        </div>
-                        <p className="text-sm leading-7 text-slate-600">{snapshot.summary}</p>
-                    </button>
-                ))}
-            </div>
-        );
-    };
+    const latestSnapshotDateLabel = recapSnapshots[0]
+        ? new Date(recapSnapshots[0].createdAt).toLocaleDateString('ko-KR')
+        : '없음';
 
     return (
         <>
@@ -505,196 +332,57 @@ export const StatsTab: React.FC = () => {
                 </section>
 
                 {activeView === 'recap' && (
-                    <div className="space-y-6">
-                        <section className="rounded-[28px] border border-slate-200 bg-gradient-to-br from-slate-950 via-indigo-950 to-slate-900 p-6 text-white shadow-sm">
-                            <div className="flex flex-col gap-5">
-                                <div className="inline-flex w-fit items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.16em] text-white/85">
-                                    <Archive size={14} />
-                                    저장형 리캡
-                                </div>
-                                <div>
-                                    <h3 className="text-2xl font-black tracking-tight">월말/시즌말 리캡을 저장본으로 남깁니다</h3>
-                                    <p className="mt-3 max-w-2xl text-sm leading-7 text-white/75">
-                                        생성 시점의 요약과 대표 장면을 저장합니다. 이후 데이터가 더 쌓여도 저장본 해석은 바뀌지 않습니다.
-                                    </p>
-                                </div>
-                                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                                    <button
-                                        type="button"
-                                        onClick={() => void handleGenerateRecapSnapshots('month')}
-                                        disabled={isGeneratingRecap}
-                                        className="inline-flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/10 px-4 py-4 text-sm font-bold text-white transition-colors hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-60"
-                                    >
-                                        {isGeneratingRecap ? <LoaderCircle size={18} className="animate-spin" /> : <Sparkles size={18} />}
-                                        월간 리캡 생성
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={() => void handleGenerateRecapSnapshots('season')}
-                                        disabled={isGeneratingRecap}
-                                        className="inline-flex items-center justify-center gap-2 rounded-2xl border border-sky-300/30 bg-sky-400/15 px-4 py-4 text-sm font-bold text-sky-100 transition-colors hover:bg-sky-400/20 disabled:cursor-not-allowed disabled:opacity-60"
-                                    >
-                                        {isGeneratingRecap ? <LoaderCircle size={18} className="animate-spin" /> : <PlayCircle size={18} />}
-                                        시즌 리캡 생성
-                                    </button>
-                                </div>
-                                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                                    <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4">
-                                        <div className="text-xs uppercase tracking-[0.16em] text-white/45">선택 시즌</div>
-                                        <div className="mt-2 font-semibold text-white">{selectedSeason?.name ?? '시즌 미선택'}</div>
-                                    </div>
-                                    <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4">
-                                        <div className="text-xs uppercase tracking-[0.16em] text-white/45">생성 대상 회원</div>
-                                        <div className="mt-2 font-semibold text-white">{eligibleSnapshotMembers.length}명</div>
-                                    </div>
-                                    <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4">
-                                        <div className="text-xs uppercase tracking-[0.16em] text-white/45">최근 저장본</div>
-                                        <div className="mt-2 font-semibold text-white">
-                                            {recapSnapshots[0] ? new Date(recapSnapshots[0].createdAt).toLocaleDateString('ko-KR') : '없음'}
-                                        </div>
-                                    </div>
-                                </div>
-                                {recapError && (
-                                    <div className="rounded-2xl border border-rose-300/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">
-                                        {recapError}
-                                    </div>
-                                )}
-                            </div>
-                        </section>
-
-                        <section className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
-                            <div className="flex items-center justify-between gap-4">
-                                <div>
-                                    <h3 className="text-lg font-bold text-slate-900">최근 저장본</h3>
-                                    <p className="mt-1 text-sm text-slate-500">방금 생성한 리캡을 다시 열어보고 공유 카드로 내보낼 수 있습니다.</p>
-                                </div>
-                                <button
-                                    type="button"
-                                    onClick={() => setActiveView('archives')}
-                                    className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-500 transition-colors hover:bg-slate-100"
-                                >
-                                    전체 저장본 보기
-                                </button>
-                            </div>
-                            <div className="mt-5">
-                                {renderSnapshotCards(
-                                    recentSnapshots,
-                                    '아직 저장된 운영 리캡이 없습니다. 월간 또는 시즌 리캡을 한 번 생성하면 최근 저장본이 여기에 나타납니다.',
-                                )}
-                            </div>
-                        </section>
-                    </div>
+                    <StatsRecapSection
+                        selectedSeasonName={selectedSeason?.name ?? null}
+                        eligibleSnapshotMemberCount={eligibleSnapshotMembers.length}
+                        latestSnapshotDateLabel={latestSnapshotDateLabel}
+                        isGeneratingRecap={isGeneratingRecap}
+                        recapError={recapError}
+                        onGenerateRecap={handleGenerateRecapSnapshots}
+                        recentSnapshots={recentSnapshots}
+                        onOpenArchives={() => setActiveView('archives')}
+                        onSelectSnapshot={setSelectedSnapshot}
+                    />
                 )}
 
                 {activeView === 'compare' && (
-                    <div className="space-y-6">
-                        <section className="grid grid-cols-1 gap-6 2xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1.1fr)]">
-                            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-                                <div className="mb-6 flex items-center justify-between gap-4">
-                                    <div>
-                                        <h3 className="text-lg font-bold text-slate-900">팀별 시즌 비교</h3>
-                                        <p className="mt-1 text-sm text-slate-500">선택 시즌과 직전 시즌의 팀 점수를 비교합니다.</p>
-                                    </div>
-                                </div>
-                                <div className="h-64 sm:h-72 lg:h-80">
-                                    <Bar
-                                        data={teamBarData}
-                                        options={{
-                                            maintainAspectRatio: false,
-                                            scales: { y: { beginAtZero: true, ticks: { precision: 0 } } },
-                                        }}
-                                    />
-                                </div>
-                            </div>
-
-                            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-                                <div className="mb-6 flex items-center justify-between gap-4">
-                                    <div>
-                                        <h3 className="text-lg font-bold text-slate-900">규칙 사용량 비교</h3>
-                                        <p className="mt-1 text-sm text-slate-500">어떤 규칙이 이번 시즌 분위기를 만들었는지 읽습니다.</p>
-                                    </div>
-                                </div>
-                                <div className="h-64 sm:h-72 lg:h-80">
-                                    <Bar
-                                        data={ruleBarData}
-                                        options={{
-                                            maintainAspectRatio: false,
-                                            scales: { y: { beginAtZero: true, ticks: { precision: 0 } } },
-                                        }}
-                                    />
-                                </div>
-                            </div>
-                        </section>
-
-                        <section className="grid grid-cols-1 gap-6 2xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-                            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-                                <h3 className="mb-6 text-lg font-bold text-slate-900">전체 레벨 분포</h3>
-                                <div className="flex h-60 justify-center sm:h-72">
-                                    <Doughnut data={doughnutData} options={{ maintainAspectRatio: false }} />
-                                </div>
-                            </div>
-
-                            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-                                <h3 className="text-lg font-bold text-slate-900">비교 메모</h3>
-                                <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
-                                        <div className="text-sm font-medium text-slate-500">상위 기록자</div>
-                                        <div className="mt-2 text-lg font-bold text-slate-900">{stats.topContributor?.name ?? '-'}</div>
-                                        <div className="mt-1 text-sm text-slate-500">
-                                            {stats.topContributor
-                                                ? `${stats.topContributor.totalPoints > 0 ? '+' : ''}${stats.topContributor.totalPoints}점 · ${stats.topContributor.activityCount}건`
-                                                : '아직 기록이 없습니다.'}
-                                        </div>
-                                    </div>
-                                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
-                                        <div className="text-sm font-medium text-slate-500">최상위 팀</div>
-                                        <div className="mt-2 text-lg font-bold text-slate-900">{stats.topTeam?.team ?? '-'}</div>
-                                        <div className="mt-1 text-sm text-slate-500">
-                                            {stats.topTeam
-                                                ? `${stats.topTeam.totalPoints > 0 ? '+' : ''}${stats.topTeam.totalPoints}점 · 참여 ${stats.topTeam.participantCount}명`
-                                                : '아직 팀 집계가 없습니다.'}
-                                        </div>
-                                    </div>
-                                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
-                                        <div className="text-sm font-medium text-slate-500">대표 규칙</div>
-                                        <div className="mt-2 text-lg font-bold text-slate-900">{stats.topRule?.name ?? '-'}</div>
-                                        <div className="mt-1 text-sm text-slate-500">
-                                            {stats.topRule
-                                                ? `${stats.topRule.count}건 · ${stats.topRule.delta > 0 ? '+' : ''}${stats.topRule.delta}점`
-                                                : '아직 대표 규칙이 없습니다.'}
-                                        </div>
-                                    </div>
-                                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
-                                        <div className="text-sm font-medium text-slate-500">활동 밀도</div>
-                                        <div className="mt-2 text-lg font-bold text-slate-900">{stats.selectedActiveDays}일 운영</div>
-                                        <div className="mt-1 text-sm text-slate-500">
-                                            전시즌 대비 {formatDelta(stats.selectedActiveDays, stats.previousActiveDays, '일')}
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </section>
-                    </div>
+                    <StatsCompareSection
+                        doughnutData={doughnutData}
+                        teamBarData={teamBarData}
+                        ruleBarData={ruleBarData}
+                        stats={{
+                            topContributor: stats.topContributor
+                                ? {
+                                    name: stats.topContributor.name,
+                                    totalPoints: stats.topContributor.totalPoints,
+                                    activityCount: stats.topContributor.activityCount,
+                                }
+                                : null,
+                            topTeam: stats.topTeam
+                                ? {
+                                    team: stats.topTeam.team,
+                                    totalPoints: stats.topTeam.totalPoints,
+                                    participantCount: stats.topTeam.participantCount,
+                                }
+                                : null,
+                            topRule: stats.topRule
+                                ? {
+                                    name: stats.topRule.name,
+                                    count: stats.topRule.count,
+                                    delta: stats.topRule.delta,
+                                }
+                                : null,
+                            selectedActiveDays: stats.selectedActiveDays,
+                            previousActiveDays: stats.previousActiveDays,
+                        }}
+                    />
                 )}
 
                 {activeView === 'archives' && (
-                    <section className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
-                        <div className="flex items-center justify-between gap-4">
-                            <div>
-                                <h3 className="text-lg font-bold text-slate-900">저장된 운영 리캡</h3>
-                                <p className="mt-1 text-sm text-slate-500">생성된 저장본을 다시 열어보고 공유 카드로 내보낼 수 있습니다.</p>
-                            </div>
-                            <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-500">
-                                최근 {recapSnapshots.length}개
-                            </div>
-                        </div>
-                        <div className="mt-5">
-                            {renderSnapshotCards(
-                                recapSnapshots,
-                                '아직 저장된 운영 리캡이 없습니다. 월간 또는 시즌 리캡을 한 번 생성하면 이후에는 같은 기간 저장본을 다시 열어볼 수 있습니다.',
-                            )}
-                        </div>
-                    </section>
+                    <StatsArchivesSection
+                        recapSnapshots={recapSnapshots}
+                        onSelectSnapshot={setSelectedSnapshot}
+                    />
                 )}
             </div>
 

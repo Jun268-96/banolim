@@ -6,6 +6,7 @@ import type {
     BadgeTone,
     MemberBadge,
 } from '../types';
+import { filterEffectiveActivityLogs, toLocalDayKey } from './domain/activityLogs';
 
 const bandiMascotUrl = new URL('../../반디.png', import.meta.url).href;
 const didiMascotUrl = new URL('../../디디.png', import.meta.url).href;
@@ -100,7 +101,7 @@ export const getBadgeArtworkUrl = (badge: BadgeArtworkTarget) => {
 };
 
 export const computeBadgeMetrics = (logs: ActivityLog[]): BadgeMetrics => {
-    const effectiveLogs = logs.filter((log) => !log.isReversal && log.recordStatus !== 'reversed');
+    const effectiveLogs = filterEffectiveActivityLogs(logs);
 
     return {
         activityCount: effectiveLogs.length,
@@ -108,7 +109,7 @@ export const computeBadgeMetrics = (logs: ActivityLog[]): BadgeMetrics => {
         spotlightCount: effectiveLogs.filter((log) => log.pointDelta >= 20 || /(발표|세션|리딩|presentation|session|reading)/i.test(log.categoryName ?? log.reason ?? '')).length,
         uniqueActivityTypeCount: new Set(effectiveLogs.map((log) => log.categoryName ?? log.categoryId)).size,
         evidenceCount: effectiveLogs.filter((log) => Boolean(log.evidenceUrl)).length,
-        activeDayCount: new Set(effectiveLogs.map((log) => log.timestamp.slice(0, 10))).size,
+        activeDayCount: new Set(effectiveLogs.map((log) => toLocalDayKey(log.timestamp))).size,
         totalPoints: effectiveLogs.reduce((sum, log) => sum + log.pointDelta, 0),
     };
 };

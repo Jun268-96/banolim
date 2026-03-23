@@ -7,7 +7,7 @@ import {
     clearLatestDataFallbackState,
     getLatestDataFallbackState,
     subscribeToDataFallbackState,
-} from '../../lib/db';
+} from '../../lib/api/layout/site';
 
 interface LayoutProps {
     activeTab: TabType;

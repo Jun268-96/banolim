@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Activity, Bell, CalendarClock, Sparkles, UserRound, Zap } from 'lucide-react';
 import type { ActivityLog, AnnouncementItem, ScheduleEventItem, SeasonSummary } from '../../types';
-import { getAnnouncements, getCurrentSeason, getLogs, getScheduleEvents } from '../../lib/db';
+import { getAnnouncements, getCurrentSeason, getLogs, getScheduleEvents } from '../../lib/api/home/public';
+import { filterEffectiveActivityLogs } from '../../lib/domain/activityLogs';
 import { useAuth } from '../auth/auth-context';
 import type { TabType } from '../layout/Sidebar';
 import { AppDialog } from '../shared/AppDialog';
@@ -43,7 +44,7 @@ export const HomeTab: React.FC<HomeTabProps> = ({ onNavigate }) => {
     }, []);
 
     const recentLogs = useMemo(
-        () => logs.filter((log) => !log.isReversal && log.recordStatus !== 'reversed').slice(0, 6),
+        () => filterEffectiveActivityLogs(logs).slice(0, 6),
         [logs],
     );
 

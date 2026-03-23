@@ -1,51 +1,43 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowUpDown, Check, ChevronDown, ChevronUp, CircleHelp, Clock3, FileText, History, KeyRound, Mail, Network, Pencil, RotateCcw, Search, ShieldAlert, TableProperties, Trash2, Upload, UserPlus, Users, XCircle } from 'lucide-react';
-import type { AuditLogEntry, Member, MemberStatus, RoleSummary, TeamSummary, TeamType } from '../../types';
+import type { AuditLogEntry, Member, MemberStatus, TeamSummary, TeamType } from '../../types';
+import {
+    addMember,
+    deleteMember,
+    hardDeleteHiddenMember,
+    provisionMemberPasswordAuth,
+    updateMember,
+} from '../../lib/api/admin/members';
 import {
     addTeam,
-    addMember,
     deleteTeam,
-    deleteMember,
-    getAuditLogs,
-    getMembers,
-    provisionMemberPasswordAuth,
-    getRoles,
-    getTeams,
-    hardDeleteHiddenMember,
     replaceTeamMembers,
     updateTeam,
-    updateMember,
-} from '../../lib/db';
+} from '../../lib/api/admin/teams';
 import { useAuth } from '../auth/auth-context';
-import { AppDialog } from '../shared/AppDialog';
+import { AddMemberDialog } from './dialogs/AddMemberDialog';
+import { AddTeamDialog } from './dialogs/AddTeamDialog';
+import { AccessQueueDialog } from './dialogs/AccessQueueDialog';
+import { BulkImportDialog } from './dialogs/BulkImportDialog';
+import { EditTeamDialog } from './dialogs/EditTeamDialog';
+import { HiddenMemberDeleteDialog } from './dialogs/HiddenMemberDeleteDialog';
+import { OnboardingGuideDialog } from './dialogs/OnboardingGuideDialog';
+import { ProvisionedAccountDialog } from './dialogs/ProvisionedAccountDialog';
+import { TeamAssignmentDialog } from './dialogs/TeamAssignmentDialog';
+import { TeamDeleteDialog } from './dialogs/TeamDeleteDialog';
+import { useDashboardResources } from './hooks/useDashboardResources';
 import { RoleSettingsDialog } from './RoleSettingsDialog';
+import { DashboardHeaderSection } from './sections/DashboardHeaderSection';
+import { HiddenMembersSection } from './sections/HiddenMembersSection';
+import { HistorySection } from './sections/HistorySection';
+import { MembersTableSection } from './sections/MembersTableSection';
+import { OrganizationSection } from './sections/OrganizationSection';
+import { TeamsSection } from './sections/TeamsSection';
 
 const memberStatusOptions: MemberStatus[] = ['active', 'dormant', 'inactive'];
 const memberStatusLabels: Record<MemberStatus, string> = {
     active: '활동 중',
     dormant: '휴면',
     inactive: '비활성',
-};
-
-const getLevelInfo = (score: number) => {
-    const level = Math.max(0, Math.floor(score / 100));
-
-    if (level >= 2) return { level, color: 'bg-amber-100 text-amber-700 border-amber-200' };
-    if (level >= 1) return { level, color: 'bg-emerald-100 text-emerald-700 border-emerald-200' };
-    return { level, color: 'bg-slate-100 text-slate-700 border-slate-200' };
-};
-
-const getStatusInfo = (member: Member) => {
-    switch (member.status) {
-        case 'active':
-            return { label: '활동 중', className: 'bg-emerald-50 text-emerald-700 border-emerald-200' };
-        case 'dormant':
-            return { label: '휴면', className: 'bg-sky-50 text-sky-700 border-sky-200' };
-        case 'inactive':
-            return { label: '비활성', className: 'bg-slate-100 text-slate-600 border-slate-200' };
-        default:
-            return { label: '알 수 없음', className: 'bg-slate-100 text-slate-600 border-slate-200' };
-    }
 };
 
 const formatDate = (value?: string | null) => {
@@ -241,22 +233,6 @@ const memberAccountFilterLabels: Record<Exclude<MemberAccountFilter, 'all'>, str
     ready: '계정 준비 완료',
 };
 
-const getAccountProvisionLabel = (member: Member) => {
-    if (!member.loginEmail) {
-        return { label: '이메일 필요', className: 'bg-slate-100 text-slate-600 border-slate-200' };
-    }
-
-    if (!member.authUserId) {
-        return { label: '계정 미발급', className: 'bg-amber-50 text-amber-700 border-amber-200' };
-    }
-
-    if (member.passwordResetRequired) {
-        return { label: '첫 로그인 대기', className: 'bg-sky-50 text-sky-700 border-sky-200' };
-    }
-
-    return { label: '계정 활성', className: 'bg-emerald-50 text-emerald-700 border-emerald-200' };
-};
-
 const formatDateTime = (value?: string | null) => {
     if (!value) return '-';
     return new Intl.DateTimeFormat('ko-KR', {
@@ -266,33 +242,6 @@ const formatDateTime = (value?: string | null) => {
         minute: '2-digit',
     }).format(new Date(value));
 };
-
-interface OrganizationNodeProps {
-    member: Member;
-    selected: boolean;
-    onSelect: () => void;
-}
-
-const OrganizationNode: React.FC<OrganizationNodeProps> = ({
-    member,
-    selected,
-    onSelect,
-}) => (
-    <button
-        type="button"
-        onClick={onSelect}
-        className={`relative flex min-h-[72px] w-full flex-col items-center justify-center rounded-xl border px-3 py-2.5 text-center transition-all ${
-            selected
-                ? 'border-blue-700 bg-blue-700 text-white shadow-lg shadow-blue-200'
-                : 'border-blue-500 bg-blue-500 text-white hover:border-blue-600 hover:bg-blue-600 hover:shadow-md hover:shadow-blue-100'
-        }`}
-    >
-        <div className="text-sm font-bold sm:text-[15px]">{member.name}</div>
-        <div className={`mt-0.5 text-[11px] font-medium ${selected ? 'text-blue-100' : 'text-blue-50'}`}>
-            {member.roleName ?? '직책 미지정'}
-        </div>
-    </button>
-);
 
 const getMemberTeamLabels = (member: Member) => {
     const labels = member.teamNames ?? [];
@@ -328,11 +277,6 @@ const getHistoryChangeBadges = (entry: AuditLogEntry) => {
 
 export const DashboardTab: React.FC = () => {
     const { permissions } = useAuth();
-    const [members, setMembers] = useState<Member[]>([]);
-    const [hiddenMembers, setHiddenMembers] = useState<Member[]>([]);
-    const [roles, setRoles] = useState<RoleSummary[]>([]);
-    const [teams, setTeams] = useState<TeamSummary[]>([]);
-    const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
     const [newMemberName, setNewMemberName] = useState('');
     const [newMemberLoginEmail, setNewMemberLoginEmail] = useState('');
     const [newTeamName, setNewTeamName] = useState('');
@@ -351,7 +295,6 @@ export const DashboardTab: React.FC = () => {
     const [historyMemberId, setHistoryMemberId] = useState<string | null>(null);
     const [bulkCsvText, setBulkCsvText] = useState('');
     const [bulkImportStatus, setBulkImportStatus] = useState<string | null>(null);
-    const [isLoading, setIsLoading] = useState(true);
     const [savingMemberId, setSavingMemberId] = useState<string | null>(null);
     const [hardDeletingMemberId, setHardDeletingMemberId] = useState<string | null>(null);
     const [isSavingTeamAssignment, setIsSavingTeamAssignment] = useState(false);
@@ -380,52 +323,15 @@ export const DashboardTab: React.FC = () => {
     const [editingTeamType, setEditingTeamType] = useState<TeamType>('core');
     const [teamIdPendingDelete, setTeamIdPendingDelete] = useState<string | null>(null);
     const [hiddenMemberIdPendingDelete, setHiddenMemberIdPendingDelete] = useState<string | null>(null);
-
-    const refreshData = async () => {
-        setIsLoading(true);
-        const [membersData, rolesData, teamsData, auditLogData] = await Promise.all([
-            getMembers({ includeLoginEmail: permissions.canManageMembers, includeHidden: permissions.canManageMembers }),
-            getRoles(),
-            getTeams(),
-            permissions.canManageMembers ? getAuditLogs({ entityType: 'member', limit: 80 }) : Promise.resolve([]),
-        ]);
-        setMembers(membersData.filter((member) => member.isVisible !== false));
-        setHiddenMembers(membersData.filter((member) => member.isVisible === false));
-        setRoles(rolesData);
-        setTeams(teamsData);
-        setAuditLogs(auditLogData);
-        setIsLoading(false);
-    };
-
-    useEffect(() => {
-        let isMounted = true;
-
-        const initialize = async () => {
-            const [membersData, rolesData, teamsData, auditLogData] = await Promise.all([
-                getMembers({ includeLoginEmail: permissions.canManageMembers, includeHidden: permissions.canManageMembers }),
-                getRoles(),
-                getTeams(),
-                permissions.canManageMembers ? getAuditLogs({ entityType: 'member', limit: 80 }) : Promise.resolve([]),
-            ]);
-
-            if (!isMounted) {
-                return;
-            }
-
-            setMembers(membersData.filter((member) => member.isVisible !== false));
-            setHiddenMembers(membersData.filter((member) => member.isVisible === false));
-            setRoles(rolesData);
-            setTeams(teamsData);
-            setAuditLogs(auditLogData);
-            setIsLoading(false);
-        };
-
-        void initialize();
-
-        return () => {
-            isMounted = false;
-        };
-    }, [permissions.canManageMembers]);
+    const {
+        members,
+        hiddenMembers,
+        roles,
+        teams,
+        auditLogs,
+        isLoading,
+        refreshData,
+    } = useDashboardResources(permissions.canManageMembers);
 
     const approvalQueue = useMemo(
         () =>
@@ -686,53 +592,6 @@ export const DashboardTab: React.FC = () => {
         () => [...new Set(members.map((member) => member.name))].sort((a, b) => a.localeCompare(b)),
         [members],
     );
-
-    const organizationGroups = useMemo(() => {
-        const sortByRoleThenName = (left: Member, right: Member) => {
-            const roleCompare = (left.roleName ?? '').localeCompare(right.roleName ?? '');
-            return roleCompare || left.name.localeCompare(right.name);
-        };
-
-        const developerAdmins: Member[] = [];
-        const chairs: Member[] = [];
-        const viceChairs: Member[] = [];
-        const leaders: Member[] = [];
-        const generalMembers: Member[] = [];
-
-        filteredMembers.forEach((member) => {
-            const roleName = member.roleName ?? '';
-
-            if (roleName.includes('개발 관리자')) {
-                developerAdmins.push(member);
-                return;
-            }
-
-            if (roleName === '회장') {
-                chairs.push(member);
-                return;
-            }
-
-            if (roleName === '부회장') {
-                viceChairs.push(member);
-                return;
-            }
-
-            if (/(팀장|스터디장)/.test(roleName)) {
-                leaders.push(member);
-                return;
-            }
-
-            generalMembers.push(member);
-        });
-
-        return {
-            developerAdmins: developerAdmins.sort(sortByRoleThenName),
-            chairs: chairs.sort(sortByRoleThenName),
-            viceChairs: viceChairs.sort(sortByRoleThenName),
-            leaders: leaders.sort(sortByRoleThenName),
-            generalMembers: generalMembers.sort(sortByRoleThenName),
-        };
-    }, [filteredMembers]);
 
     useEffect(() => {
         if (!filteredMembers.length) {
@@ -1053,1184 +912,175 @@ export const DashboardTab: React.FC = () => {
 
     return (
         <div className="space-y-6 animate-in fade-in duration-500">
-            <header className="space-y-4">
-                <div className="flex flex-col gap-4 2xl:flex-row 2xl:items-start 2xl:justify-between">
-                    <div>
-                        <h2 className="flex items-center gap-2 text-2xl font-bold text-slate-900">
-                            <Users className="text-indigo-600" />
-                            멤버 관리
-                        </h2>
-                        <p className="mt-1 text-slate-500">전체 멤버 표를 기준으로 계정 발급, 팀 배정, 조직 구조를 관리합니다.</p>
-                    </div>
-
-                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
-                        <div className="grid grid-cols-1 gap-2 rounded-[24px] border border-slate-200 bg-white p-2 shadow-sm sm:grid-cols-3">
-                            {([
-                                { id: 'table' as const, label: '표 보기', icon: TableProperties },
-                                { id: 'teams' as const, label: '팀 지정', icon: Users },
-                                { id: 'organization' as const, label: '조직도 보기', icon: Network },
-                            ]).map((mode) => {
-                                const Icon = mode.icon;
-                                return (
-                                    <button
-                                        key={mode.id}
-                                        type="button"
-                                        onClick={() => setDisplayMode(mode.id)}
-                                        className={`inline-flex items-center justify-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition-colors ${
-                                            displayMode === mode.id
-                                                ? 'bg-slate-900 text-white shadow-sm'
-                                                : 'text-slate-600 hover:bg-slate-50'
-                                        }`}
-                                    >
-                                        <Icon size={16} />
-                                        {mode.label}
-                                    </button>
-                                );
-                            })}
-                        </div>
-                        {permissions.canManageMembers && (
-                            <button
-                                type="button"
-                                onClick={() => setIsRoleSettingsDialogOpen(true)}
-                                className="inline-flex items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition-colors hover:bg-slate-50"
-                            >
-                                <ShieldAlert size={16} className="text-indigo-600" />
-                                역할 설정
-                            </button>
-                        )}
-                    </div>
-                </div>
-
-                {permissions.canManageMembers && (
-                    <div className="flex flex-wrap gap-2 rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm">
-                        <button
-                            type="button"
-                            onClick={() => setIsAddMemberDialogOpen(true)}
-                            className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-700"
-                        >
-                            <UserPlus size={16} />
-                            새 멤버
-                        </button>
-                        <button
-                            type="button"
-                            onClick={() => setIsGuideDialogOpen(true)}
-                            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50"
-                        >
-                            <CircleHelp size={16} className="text-indigo-600" />
-                            관리자 온보딩 가이드
-                        </button>
-                        <button
-                            type="button"
-                            onClick={() => setIsBulkImportDialogOpen(true)}
-                            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50"
-                        >
-                            <Upload size={16} className="text-indigo-600" />
-                            CSV 대량 등록
-                        </button>
-                        <button
-                            type="button"
-                            onClick={() => setIsQueueDialogOpen(true)}
-                            className="inline-flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm font-semibold text-amber-800 transition-colors hover:bg-amber-100"
-                        >
-                            <ShieldAlert size={16} />
-                            접근 준비 큐
-                            <span className="rounded-full bg-white px-2 py-0.5 text-xs text-amber-700">{approvalQueue.length}</span>
-                        </button>
-                    </div>
-                )}
-            </header>
+            <DashboardHeaderSection
+                displayMode={displayMode}
+                canManageMembers={permissions.canManageMembers}
+                approvalQueueCount={approvalQueue.length}
+                onChangeDisplayMode={setDisplayMode}
+                onOpenRoleSettings={() => setIsRoleSettingsDialogOpen(true)}
+                onOpenAddMember={() => setIsAddMemberDialogOpen(true)}
+                onOpenGuide={() => setIsGuideDialogOpen(true)}
+                onOpenBulkImport={() => setIsBulkImportDialogOpen(true)}
+                onOpenAccessQueue={() => setIsQueueDialogOpen(true)}
+            />
 
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
                 <div className="border-b border-slate-100 px-6 py-3 text-sm text-slate-500">
                     로그인 이메일과 계정 발급이 완료된 회원만 실제 서비스에 로그인할 수 있습니다. 표 보기는 기본 관리용, 팀 지정은 다중 소속 관리용, 조직도는 구조 파악용입니다.
                 </div>
                 {displayMode === 'table' && (
-                    <div className="max-w-full">
-                        <div className="border-b border-slate-100 px-5 py-4 sm:px-6">
-                            <div className="space-y-3 rounded-[24px] border border-slate-200 bg-slate-50 p-4">
-                                <div className="grid gap-3 xl:grid-cols-[minmax(0,1.2fr)_220px_120px]">
-                                    <label className="relative block">
-                                        <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                                        <input
-                                            type="text"
-                                            list="member-name-suggestions"
-                                            placeholder="이름으로 멤버 검색"
-                                            value={searchQuery}
-                                            onChange={(event) => setSearchQuery(event.target.value)}
-                                            className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-9 pr-3 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                                        />
-                                        <datalist id="member-name-suggestions">
-                                            {memberNameSuggestions.map((name) => (
-                                                <option key={name} value={name} />
-                                            ))}
-                                        </datalist>
-                                    </label>
-
-                                    <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-600">
-                                        <ArrowUpDown size={16} className="text-slate-400" />
-                                        <select
-                                            value={sortMode}
-                                            onChange={(event) => setSortMode(event.target.value as MemberSortMode)}
-                                            className="w-full bg-transparent outline-none"
-                                        >
-                                            <option value="role-order">직책 순 정렬</option>
-                                            <option value="name-asc">이름 오름차순</option>
-                                            <option value="name-desc">이름 내림차순</option>
-                                            <option value="joined-desc">최근 가입 순</option>
-                                        </select>
-                                    </label>
-
-                                    <button
-                                        type="button"
-                                        onClick={() => {
-                                            setSearchQuery('');
-                                            setSelectedRoleFilter('all');
-                                            setSelectedTeamFilter('all');
-                                            setSelectedStatusFilter('all');
-                                            setSelectedAccountFilter('all');
-                                            setOpenFilterPanel(null);
-                                        }}
-                                        className="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50"
-                                    >
-                                        초기화
-                                    </button>
-                                </div>
-
-                                <div className="flex flex-wrap gap-2">
-                                    <button
-                                        type="button"
-                                        onClick={() => {
-                                            setSelectedRoleFilter('all');
-                                            setSelectedTeamFilter('all');
-                                            setSelectedStatusFilter('all');
-                                            setSelectedAccountFilter('all');
-                                            setOpenFilterPanel(null);
-                                        }}
-                                        className={`rounded-full px-3 py-1.5 text-sm font-semibold transition-colors ${
-                                            selectedRoleFilter === 'all' && selectedTeamFilter === 'all' && selectedStatusFilter === 'all' && selectedAccountFilter === 'all'
-                                                ? 'bg-indigo-600 text-white'
-                                                : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-                                        }`}
-                                    >
-                                        전체 {filteredMembers.length}
-                                    </button>
-                                    {([
-                                        {
-                                            id: 'team' as const,
-                                            label: `팀별${selectedTeamFilter !== 'all' ? `: ${teams.find((team) => team.id === selectedTeamFilter)?.name ?? '전체'}` : ''}`,
-                                        },
-                                        {
-                                            id: 'role' as const,
-                                            label: `직책별${selectedRoleFilter !== 'all' ? `: ${roles.find((role) => role.id === selectedRoleFilter)?.name ?? '전체'}` : ''}`,
-                                        },
-                                        {
-                                            id: 'status' as const,
-                                            label: `상태별${selectedStatusFilter !== 'all' ? `: ${memberStatusLabels[selectedStatusFilter]}` : ''}`,
-                                        },
-                                        {
-                                            id: 'account' as const,
-                                            label: `계정상태${selectedAccountFilter !== 'all' ? `: ${memberAccountFilterLabels[selectedAccountFilter]}` : ''}`,
-                                        },
-                                    ]).map((option) => (
-                                        <button
-                                            key={option.id}
-                                            type="button"
-                                            onClick={() => setOpenFilterPanel((current) => (current === option.id ? null : option.id))}
-                                            className={`rounded-full px-3 py-1.5 text-sm font-semibold transition-colors ${
-                                                openFilterPanel === option.id
-                                                    ? 'bg-slate-900 text-white'
-                                                    : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-                                            }`}
-                                        >
-                                            {option.label} ▾
-                                        </button>
-                                    ))}
-                                </div>
-
-                                {openFilterPanel === 'team' && (
-                                    <div className="rounded-[20px] border border-slate-200 bg-white p-3">
-                                        <div className="flex flex-wrap gap-2">
-                                            <button
-                                                type="button"
-                                                onClick={() => setSelectedTeamFilter('all')}
-                                                className={`rounded-full px-3 py-1.5 text-sm font-semibold transition-colors ${
-                                                    selectedTeamFilter === 'all'
-                                                        ? 'bg-indigo-600 text-white'
-                                                        : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-                                                }`}
-                                            >
-                                                전체({members.filter((member) => matchesMemberFilters(member, {
-                                                    query: searchQueryNormalized,
-                                                    roleFilter: selectedRoleFilter,
-                                                    teamFilter: 'all',
-                                                    statusFilter: selectedStatusFilter,
-                                                    accountFilter: selectedAccountFilter,
-                                                })).length})
-                                            </button>
-                                            {teamFilterOptions.map((team) => (
-                                                <button
-                                                    key={team.id}
-                                                    type="button"
-                                                    onClick={() => setSelectedTeamFilter(team.id)}
-                                                    className={`rounded-full px-3 py-1.5 text-sm font-semibold transition-colors ${
-                                                        selectedTeamFilter === team.id
-                                                            ? 'bg-indigo-600 text-white'
-                                                            : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-                                                    }`}
-                                                >
-                                                    {team.label}({team.count})
-                                                </button>
-                                            ))}
-                                        </div>
-                                    </div>
-                                )}
-
-                                {openFilterPanel === 'role' && (
-                                    <div className="rounded-[20px] border border-slate-200 bg-white p-3">
-                                        <div className="flex flex-wrap gap-2">
-                                            <button
-                                                type="button"
-                                                onClick={() => setSelectedRoleFilter('all')}
-                                                className={`rounded-full px-3 py-1.5 text-sm font-semibold transition-colors ${
-                                                    selectedRoleFilter === 'all'
-                                                        ? 'bg-indigo-600 text-white'
-                                                        : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-                                                }`}
-                                            >
-                                                전체({members.filter((member) => matchesMemberFilters(member, {
-                                                    query: searchQueryNormalized,
-                                                    roleFilter: 'all',
-                                                    teamFilter: selectedTeamFilter,
-                                                    statusFilter: selectedStatusFilter,
-                                                    accountFilter: selectedAccountFilter,
-                                                })).length})
-                                            </button>
-                                            {roleFilterOptions.map((role) => (
-                                                <button
-                                                    key={role.id}
-                                                    type="button"
-                                                    onClick={() => setSelectedRoleFilter(role.id)}
-                                                    className={`rounded-full px-3 py-1.5 text-sm font-semibold transition-colors ${
-                                                        selectedRoleFilter === role.id
-                                                            ? 'bg-indigo-600 text-white'
-                                                            : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-                                                    }`}
-                                                >
-                                                    {role.label}({role.count})
-                                                </button>
-                                            ))}
-                                        </div>
-                                    </div>
-                                )}
-
-                                {openFilterPanel === 'status' && (
-                                    <div className="rounded-[20px] border border-slate-200 bg-white p-3">
-                                        <div className="flex flex-wrap gap-2">
-                                            <button
-                                                type="button"
-                                                onClick={() => setSelectedStatusFilter('all')}
-                                                className={`rounded-full px-3 py-1.5 text-sm font-semibold transition-colors ${
-                                                    selectedStatusFilter === 'all'
-                                                        ? 'bg-indigo-600 text-white'
-                                                        : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-                                                }`}
-                                            >
-                                                전체({members.filter((member) => matchesMemberFilters(member, {
-                                                    query: searchQueryNormalized,
-                                                    roleFilter: selectedRoleFilter,
-                                                    teamFilter: selectedTeamFilter,
-                                                    statusFilter: 'all',
-                                                    accountFilter: selectedAccountFilter,
-                                                })).length})
-                                            </button>
-                                            {statusFilterOptions.map((status) => (
-                                                <button
-                                                    key={status.id}
-                                                    type="button"
-                                                    onClick={() => setSelectedStatusFilter(status.id)}
-                                                    className={`rounded-full px-3 py-1.5 text-sm font-semibold transition-colors ${
-                                                        selectedStatusFilter === status.id
-                                                            ? 'bg-indigo-600 text-white'
-                                                            : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-                                                    }`}
-                                                >
-                                                    {status.label}({status.count})
-                                                </button>
-                                            ))}
-                                        </div>
-                                    </div>
-                                )}
-
-                                {openFilterPanel === 'account' && (
-                                    <div className="rounded-[20px] border border-slate-200 bg-white p-3">
-                                        <div className="flex flex-wrap gap-2">
-                                            <button
-                                                type="button"
-                                                onClick={() => setSelectedAccountFilter('all')}
-                                                className={`rounded-full px-3 py-1.5 text-sm font-semibold transition-colors ${
-                                                    selectedAccountFilter === 'all'
-                                                        ? 'bg-indigo-600 text-white'
-                                                        : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-                                                }`}
-                                            >
-                                                전체({members.filter((member) => matchesMemberFilters(member, {
-                                                    query: searchQueryNormalized,
-                                                    roleFilter: selectedRoleFilter,
-                                                    teamFilter: selectedTeamFilter,
-                                                    statusFilter: selectedStatusFilter,
-                                                    accountFilter: 'all',
-                                                })).length})
-                                            </button>
-                                            {accountFilterOptions.map((status) => (
-                                                <button
-                                                    key={status.id}
-                                                    type="button"
-                                                    onClick={() => setSelectedAccountFilter(status.id)}
-                                                    className={`rounded-full px-3 py-1.5 text-sm font-semibold transition-colors ${
-                                                        selectedAccountFilter === status.id
-                                                            ? 'bg-indigo-600 text-white'
-                                                            : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-                                                    }`}
-                                                >
-                                                    {status.label}({status.count})
-                                                </button>
-                                            ))}
-                                        </div>
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-
-                        <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-3 text-xs font-medium text-slate-500 sm:px-6">
-                            <span>표 영역 안에서 좌우로 이동할 수 있습니다.</span>
-                            {permissions.canManageMembers && (
-                                <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] font-semibold text-slate-600">
-                                    관리 열 고정
-                                </span>
-                            )}
-                        </div>
-                    <div className="max-w-full overflow-x-auto overscroll-x-contain pb-3 [scrollbar-gutter:stable]">
-                        <table className={`${permissions.canManageMembers ? 'min-w-[980px]' : 'min-w-[760px]'} min-w-full w-max text-left border-collapse`}>
-                            <thead>
-                                <tr className="bg-slate-50 border-b border-slate-200 text-sm font-semibold text-slate-600">
-                                    <th className="py-4 px-6 min-w-[76px] whitespace-nowrap">레벨</th>
-                                    <th className="py-4 px-6 min-w-[84px] whitespace-nowrap">이름</th>
-                                    {permissions.canManageMembers && (
-                                        <th className="py-4 px-6 min-w-[240px] whitespace-nowrap">로그인 이메일</th>
-                                    )}
-                                    <th className="py-4 px-6 min-w-[148px] whitespace-nowrap">직책</th>
-                                    <th className="py-4 px-6 min-w-[140px] whitespace-nowrap">상태</th>
-                                    <th className="py-4 px-6 min-w-[132px] whitespace-nowrap">가입일</th>
-                                    <th className={`py-4 px-6 min-w-[112px] whitespace-nowrap text-center ${permissions.canManageMembers ? 'sticky right-0 z-20 border-l border-slate-200 bg-slate-50 shadow-[-12px_0_24px_-20px_rgba(15,23,42,0.35)]' : ''}`}>
-                                        {permissions.canManageMembers ? '관리' : '조회'}
-                                    </th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-100">
-                                {filteredMembers.map((member) => {
-                                    const levelInfo = getLevelInfo(member.score);
-                                    const statusInfo = getStatusInfo(member);
-                                    const isSavingRow = savingMemberId === member.id;
-
-                                    return (
-                                        <tr
-                                            key={member.id}
-                                            className={`transition-colors group ${historyMemberId === member.id ? 'bg-indigo-50/70' : 'hover:bg-slate-50/50'}`}
-                                            onClick={() => setHistoryMemberId(member.id)}
-                                        >
-                                            <td className="py-4 px-6 align-middle whitespace-nowrap">
-                                                <span className={`inline-flex min-w-[56px] items-center justify-center rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] ${levelInfo.color}`}>
-                                                    lv.{levelInfo.level}
-                                                </span>
-                                            </td>
-                                            <td className="py-4 px-6 align-middle whitespace-nowrap">
-                                                <span className="font-medium text-slate-900">{member.name}</span>
-                                            </td>
-                                            {permissions.canManageMembers && (
-                                                <td className="py-4 px-6 align-middle whitespace-nowrap">
-                                                    {(() => {
-                                                        const accountProvision = getAccountProvisionLabel(member);
-
-                                                        return (
-                                                            <>
-                                                    <input
-                                                        key={`${member.id}-${member.loginEmail ?? ''}`}
-                                                        type="email"
-                                                        defaultValue={member.loginEmail ?? ''}
-                                                        placeholder="example@school.kr"
-                                                        disabled={isSavingRow}
-                                                        onClick={(event) => event.stopPropagation()}
-                                                        onBlur={(event) => {
-                                                            const nextValue = normalizeLoginEmail(event.target.value);
-                                                            if ((member.loginEmail ?? null) === nextValue) {
-                                                                event.target.value = member.loginEmail ?? '';
-                                                                return;
-                                                            }
-                                                            event.target.value = nextValue ?? '';
-                                                            void handleMemberUpdate(member.id, { loginEmail: nextValue });
-                                                        }}
-                                                        onKeyDown={(event) => {
-                                                            if (event.key === 'Enter') {
-                                                                event.preventDefault();
-                                                                event.currentTarget.blur();
-                                                            }
-                                                        }}
-                                                        className="min-w-[220px] rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                                                    />
-                                                            <div className="mt-2 flex items-center gap-2">
-                                                                <span className={`inline-flex rounded-full border px-2.5 py-1 text-[11px] font-semibold ${accountProvision.className}`}>
-                                                                    {accountProvision.label}
-                                                                </span>
-                                                                {member.authProvisionedAt && (
-                                                                    <span className="text-[11px] text-slate-500">
-                                                                        발급 {formatDateTime(member.authProvisionedAt)}
-                                                                    </span>
-                                                                )}
-                                                            </div>
-                                                            </>
-                                                        );
-                                                    })()}
-                                                </td>
-                                            )}
-                                            <td className="py-4 px-6 align-middle whitespace-nowrap">
-                                                {permissions.canManageMembers ? (
-                                                    <div onClick={(event) => event.stopPropagation()}>
-                                                        <select
-                                                            value={member.roleId ?? ''}
-                                                            disabled={isSavingRow}
-                                                            onChange={(event) => {
-                                                                const value = event.target.value || null;
-                                                                void handleMemberUpdate(member.id, { roleId: value });
-                                                            }}
-                                                            className="min-w-[160px] rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                                                        >
-                                                            <option value="">미지정</option>
-                                                            {roles.map((role) => (
-                                                                <option key={role.id} value={role.id}>
-                                                                    {role.name}
-                                                                </option>
-                                                            ))}
-                                                        </select>
-                                                    </div>
-                                                ) : (
-                                                    <div className="text-slate-700 whitespace-nowrap">{member.roleName || '미지정'}</div>
-                                                )}
-                                            </td>
-                                            <td className="py-4 px-6 align-middle whitespace-nowrap">
-                                                {permissions.canManageMembers ? (
-                                                    <select
-                                                        value={member.status ?? 'active'}
-                                                        disabled={isSavingRow}
-                                                        onClick={(event) => event.stopPropagation()}
-                                                        onChange={(event) => {
-                                                            const value = event.target.value as MemberStatus;
-                                                            void handleMemberUpdate(member.id, { status: value });
-                                                        }}
-                                                        className="min-w-[128px] rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                                                    >
-                                                        {memberStatusOptions.map((status) => (
-                                                            <option key={status} value={status}>
-                                                                {memberStatusLabels[status]}
-                                                            </option>
-                                                        ))}
-                                                    </select>
-                                                ) : (
-                                                    <span className={`inline-flex whitespace-nowrap px-2.5 py-1 rounded-full text-xs font-semibold border ${statusInfo.className}`}>
-                                                        {statusInfo.label}
-                                                    </span>
-                                                )}
-                                            </td>
-                                            <td className="py-4 px-6 align-middle whitespace-nowrap text-sm text-slate-600">{formatDate(member.joinedAt)}</td>
-                                            <td className={`py-4 px-6 align-middle whitespace-nowrap text-center ${permissions.canManageMembers ? 'sticky right-0 z-10 border-l border-slate-100 bg-white shadow-[-12px_0_24px_-20px_rgba(15,23,42,0.2)] group-hover:bg-slate-50/95' : ''}`}>
-                                                {permissions.canManageMembers ? (
-                                                    <div
-                                                        className="flex items-center justify-center gap-1"
-                                                        onClick={(event) => event.stopPropagation()}
-                                                    >
-                                                        <button
-                                                            type="button"
-                                                            disabled={!member.loginEmail || provisioningMemberId === member.id}
-                                                            onClick={() => {
-                                                                void handleProvisionMemberAccount(member);
-                                                            }}
-                                                            className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:border-slate-100 disabled:text-slate-300"
-                                                            title={member.authUserId ? '임시 비밀번호 재발급' : '계정 발급'}
-                                                        >
-                                                            <KeyRound size={14} />
-                                                            {provisioningMemberId === member.id
-                                                                ? '발급 중'
-                                                                : member.authUserId
-                                                                    ? '재발급'
-                                                                    : '계정 발급'}
-                                                        </button>
-                                                        <button
-                                                            onClick={() => {
-                                                                void handleDeleteMember(member.id);
-                                                            }}
-                                                            className="p-2 text-slate-400 hover:bg-rose-50 hover:text-rose-600 rounded-lg transition-colors opacity-0 group-hover:opacity-100"
-                                                            title="멤버 숨기기"
-                                                        >
-                                                            <Trash2 size={16} />
-                                                        </button>
-                                                    </div>
-                                                ) : (
-                                                    <span className="text-xs text-slate-400">-</span>
-                                                )}
-                                            </td>
-                                        </tr>
-                                    );
-                                })}
-
-                                {filteredMembers.length === 0 && (
-                                    <tr>
-                                        <td colSpan={permissions.canManageMembers ? 7 : 6} className="py-12 text-center text-slate-500">
-                                            검색 조건에 맞는 멤버가 없습니다.
-                                        </td>
-                                    </tr>
-                                )}
-                            </tbody>
-                        </table>
-                    </div>
-                    </div>
+                    <MembersTableSection
+                        canManageMembers={permissions.canManageMembers}
+                        members={members}
+                        filteredMembers={filteredMembers}
+                        roles={roles}
+                        teams={teams}
+                        memberNameSuggestions={memberNameSuggestions}
+                        searchQuery={searchQuery}
+                        searchQueryNormalized={searchQueryNormalized}
+                        sortMode={sortMode}
+                        selectedRoleFilter={selectedRoleFilter}
+                        selectedTeamFilter={selectedTeamFilter}
+                        selectedStatusFilter={selectedStatusFilter}
+                        selectedAccountFilter={selectedAccountFilter}
+                        openFilterPanel={openFilterPanel}
+                        historyMemberId={historyMemberId}
+                        savingMemberId={savingMemberId}
+                        provisioningMemberId={provisioningMemberId}
+                        roleFilterOptions={roleFilterOptions}
+                        teamFilterOptions={teamFilterOptions}
+                        statusFilterOptions={statusFilterOptions}
+                        accountFilterOptions={accountFilterOptions}
+                        memberStatusOptions={memberStatusOptions}
+                        memberStatusLabels={memberStatusLabels}
+                        memberAccountFilterLabels={memberAccountFilterLabels}
+                        matchesMemberFilters={matchesMemberFilters}
+                        normalizeLoginEmail={normalizeLoginEmail}
+                        formatDate={formatDate}
+                        formatDateTime={formatDateTime}
+                        onChangeSearchQuery={setSearchQuery}
+                        onChangeSortMode={setSortMode}
+                        onChangeRoleFilter={setSelectedRoleFilter}
+                        onChangeTeamFilter={setSelectedTeamFilter}
+                        onChangeStatusFilter={setSelectedStatusFilter}
+                        onChangeAccountFilter={setSelectedAccountFilter}
+                        onChangeOpenFilterPanel={setOpenFilterPanel}
+                        onResetFilters={() => {
+                            setSearchQuery('');
+                            setSelectedRoleFilter('all');
+                            setSelectedTeamFilter('all');
+                            setSelectedStatusFilter('all');
+                            setSelectedAccountFilter('all');
+                            setOpenFilterPanel(null);
+                        }}
+                        onSelectHistoryMember={setHistoryMemberId}
+                        onUpdateMember={(memberId, updates) => {
+                            void handleMemberUpdate(memberId, updates);
+                        }}
+                        onProvisionMemberAccount={(member) => {
+                            void handleProvisionMemberAccount(member);
+                        }}
+                        onDeleteMember={(memberId) => {
+                            void handleDeleteMember(memberId);
+                        }}
+                    />
                 )}
 
                 {displayMode === 'teams' && (
-                    <div className="space-y-5 p-5 sm:p-6">
-                        <div className="flex flex-col gap-4 rounded-[28px] border border-slate-200 bg-slate-950 p-5 text-white lg:flex-row lg:items-end lg:justify-between">
-                            <div>
-                                <div className="text-sm font-semibold text-slate-300">팀 지정</div>
-                                <div className="mt-2 text-sm leading-6 text-slate-300">
-                                    각 팀 카드를 눌러 팀원을 추가하거나 제외할 수 있습니다. 한 멤버는 여러 팀에 동시에 소속될 수 있고, 첫 번째 팀이 대표 소속으로 표시됩니다.
-                                </div>
-                            </div>
-                            <button
-                                type="button"
-                                onClick={() => setIsAddTeamDialogOpen(true)}
-                                className="inline-flex items-center justify-center gap-2 rounded-2xl bg-indigo-500 px-4 py-3 text-sm font-semibold text-white transition-colors hover:bg-indigo-400"
-                            >
-                                <UserPlus size={16} />
-                                팀 추가
-                            </button>
-                        </div>
-
-                        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                            {teams.map((team) => {
-                                const visibleAssignedMembers = members.filter((member) => (member.teamIds ?? []).includes(team.id) || member.teamId === team.id);
-                                const hiddenAssignedCount = hiddenMembers.filter((member) => (member.teamIds ?? []).includes(team.id) || member.teamId === team.id).length;
-                                const assignedCount = visibleAssignedMembers.length + hiddenAssignedCount;
-
-                                return (
-                                    <div
-                                        key={team.id}
-                                        className="rounded-[24px] border border-slate-200 bg-white px-5 py-5 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-indigo-300 hover:shadow-md"
-                                    >
-                                        <div className="flex items-start justify-between gap-3">
-                                            <button
-                                                type="button"
-                                                onClick={() => openTeamAssignmentDialog(team)}
-                                                className="min-w-0 flex-1 text-left"
-                                            >
-                                                <div className="font-semibold text-slate-900">{team.name}</div>
-                                                <div className="mt-1 text-sm text-slate-500">{teamTypeLabels[team.type]}</div>
-                                            </button>
-                                            <div className="flex items-center gap-2">
-                                                <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600">
-                                                    {assignedCount}명
-                                                </span>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => handleOpenTeamEdit(team)}
-                                                    className="inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-500 transition-colors hover:bg-slate-50 hover:text-slate-900"
-                                                    title="팀 수정"
-                                                >
-                                                    <Pencil size={16} />
-                                                </button>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => setTeamIdPendingDelete(team.id)}
-                                                    className="inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-500 transition-colors hover:bg-rose-50 hover:text-rose-600"
-                                                    title="팀 삭제"
-                                                >
-                                                    <Trash2 size={16} />
-                                                </button>
-                                            </div>
-                                        </div>
-                                        <button
-                                            type="button"
-                                            onClick={() => openTeamAssignmentDialog(team)}
-                                            className="mt-4 block w-full text-left"
-                                        >
-                                            <div className="flex flex-wrap gap-2">
-                                                {visibleAssignedMembers
-                                                .slice(0, 5)
-                                                .map((member) => (
-                                                    <span
-                                                        key={`${team.id}-${member.id}`}
-                                                        className="rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-700"
-                                                    >
-                                                        {member.name}
-                                                    </span>
-                                                ))}
-                                                {assignedCount > 5 && (
-                                                    <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-500">
-                                                        +{assignedCount - 5}명
-                                                    </span>
-                                                )}
-                                                {hiddenAssignedCount > 0 && (
-                                                    <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700">
-                                                        숨김 {hiddenAssignedCount}명
-                                                    </span>
-                                                )}
-                                            </div>
-                                        </button>
-                                    </div>
-                                );
-                            })}
-                        </div>
-                    </div>
+                    <TeamsSection
+                        teams={teams}
+                        members={members}
+                        hiddenMembers={hiddenMembers}
+                        teamTypeLabels={teamTypeLabels}
+                        onAddTeam={() => setIsAddTeamDialogOpen(true)}
+                        onOpenTeamAssignment={openTeamAssignmentDialog}
+                        onEditTeam={handleOpenTeamEdit}
+                        onDeleteTeam={setTeamIdPendingDelete}
+                    />
                 )}
 
                 {displayMode === 'organization' && (
-                    <div className="px-4 py-6 sm:px-6">
-                        {filteredMembers.length > 0 ? (
-                            <div className="rounded-[28px] border border-slate-200 bg-white px-6 py-8 shadow-sm sm:px-8">
-                                <div className="space-y-8">
-                                    <div className="flex flex-col items-center gap-4">
-                                        {organizationGroups.chairs.map((member) => (
-                                            <div key={member.id} className="w-full max-w-[200px]">
-                                                <OrganizationNode
-                                                    member={member}
-                                                    selected={historyMemberId === member.id}
-                                                    onSelect={() => setHistoryMemberId(member.id)}
-                                                />
-                                            </div>
-                                        ))}
-                                        {organizationGroups.chairs.length > 0 && <div className="h-7 w-px bg-blue-300" />}
-                                        {organizationGroups.viceChairs.map((member) => (
-                                            <div key={member.id} className="w-full max-w-[200px]">
-                                                <OrganizationNode
-                                                    member={member}
-                                                    selected={historyMemberId === member.id}
-                                                    onSelect={() => setHistoryMemberId(member.id)}
-                                                />
-                                            </div>
-                                        ))}
-                                    </div>
-
-                                    <div className="space-y-4">
-                                        <div className="mx-auto h-px w-full max-w-6xl bg-blue-200" />
-                                        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5">
-                                            {organizationGroups.leaders.map((member) => (
-                                                <OrganizationNode
-                                                    key={member.id}
-                                                    member={member}
-                                                    selected={historyMemberId === member.id}
-                                                    onSelect={() => setHistoryMemberId(member.id)}
-                                                />
-                                            ))}
-                                        </div>
-                                    </div>
-
-                                    <div className="space-y-4">
-                                        <div className="flex items-center gap-3">
-                                            <div className="h-px flex-1 bg-slate-200" />
-                                            <div className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-400">일반 회원</div>
-                                            <div className="h-px flex-1 bg-slate-200" />
-                                        </div>
-                                        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
-                                            {organizationGroups.generalMembers.map((member) => (
-                                                <OrganizationNode
-                                                    key={member.id}
-                                                    member={member}
-                                                    selected={historyMemberId === member.id}
-                                                    onSelect={() => setHistoryMemberId(member.id)}
-                                                />
-                                            ))}
-                                        </div>
-                                    </div>
-
-                                    {organizationGroups.developerAdmins.length > 0 && (
-                                        <div className="space-y-4">
-                                            <div className="flex items-center gap-3">
-                                                <div className="h-px flex-1 bg-slate-200" />
-                                                <div className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-400">개발 관리자</div>
-                                                <div className="h-px flex-1 bg-slate-200" />
-                                            </div>
-                                            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                                                {organizationGroups.developerAdmins.map((member) => (
-                                                    <OrganizationNode
-                                                        key={member.id}
-                                                        member={member}
-                                                        selected={historyMemberId === member.id}
-                                                        onSelect={() => setHistoryMemberId(member.id)}
-                                                    />
-                                                ))}
-                                            </div>
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
-                        ) : (
-                            <div className="rounded-[28px] border border-dashed border-slate-300 bg-slate-50 px-6 py-12 text-center text-slate-500">
-                                검색 조건에 맞는 멤버가 없습니다.
-                            </div>
-                        )}
-                    </div>
+                    <OrganizationSection
+                        members={filteredMembers}
+                        selectedMemberId={historyMemberId}
+                        onSelectMember={setHistoryMemberId}
+                    />
                 )}
             </div>
 
             {permissions.canManageMembers && (
-                <section className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-                    <button
-                        type="button"
-                        onClick={() => setIsHistoryOpen((prev) => !prev)}
-                        className="flex w-full items-center justify-between gap-4 px-6 py-5 text-left transition-colors hover:bg-slate-50"
-                    >
-                        <div>
-                            <div className="flex items-center gap-2 font-semibold text-slate-900">
-                                <History size={18} className="text-indigo-600" />
-                                직책/접근 변경 이력
-                            </div>
-                            <div className="mt-1 text-sm text-slate-500">
-                                멤버 표와 팀 지정 화면에서 바뀐 로그인 이메일, 직책, 상태, 소속 변경을 감사 로그로 추적합니다.
-                            </div>
-                        </div>
-                        <div className="flex items-center gap-3">
-                            {historyMember && (
-                                <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600">
-                                    기준 멤버 {historyMember.name}
-                                </span>
-                            )}
-                            {isHistoryOpen ? (
-                                <ChevronUp size={18} className="text-slate-400" />
-                            ) : (
-                                <ChevronDown size={18} className="text-slate-400" />
-                            )}
-                        </div>
-                    </button>
-
-                    {isHistoryOpen && (
-                        <>
-                            <div className="border-t border-slate-100 bg-slate-50/70 px-6 py-5">
-                                <label className="space-y-1.5 text-sm text-slate-600">
-                                    <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">이력 기준 멤버</span>
-                                    <select
-                                        value={historyMemberId ?? ''}
-                                        onChange={(event) => setHistoryMemberId(event.target.value || null)}
-                                        className="min-w-[220px] rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                                    >
-                                        {members.map((member) => (
-                                            <option key={member.id} value={member.id}>
-                                                {member.name}
-                                            </option>
-                                        ))}
-                                    </select>
-                                </label>
-                            </div>
-
-                            <div className="grid gap-6 p-5 sm:p-6 2xl:grid-cols-[340px_minmax(0,1fr)]">
-                                <div className="rounded-[28px] border border-slate-200 bg-slate-950 p-5 text-white">
-                                    <div className="text-sm font-semibold text-slate-300">선택한 멤버</div>
-                                    {historyMember ? (
-                                        <>
-                                            <div className="mt-3 text-2xl font-bold">{historyMember.name}</div>
-                                            <div className="mt-2 text-sm text-slate-300">
-                                                직책 {historyMember.roleName ?? '미지정'}
-                                            </div>
-                                            <div className="mt-5 space-y-3">
-                                                <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
-                                                    <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">로그인 이메일</div>
-                                                    <div className="mt-2 break-all text-sm font-medium text-white">{historyMember.loginEmail ?? '아직 없음'}</div>
-                                                </div>
-                                                <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
-                                                    <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">현재 상태</div>
-                                                    <div className="mt-2 text-sm font-medium text-white">
-                                                        {memberStatusLabels[historyMember.status ?? 'active']} · {historyMember.authUserId ? '계정 발급 완료' : '계정 미발급'}
-                                                    </div>
-                                                </div>
-                                                <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
-                                                    <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">최근 변경</div>
-                                                    <div className="mt-2 text-sm leading-6 text-slate-200">
-                                                        {memberHistoryEntries[0]?.summary ?? '아직 멤버 변경 이력이 없습니다. 이번 버전 이후 변경부터 누적됩니다.'}
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </>
-                                    ) : (
-                                        <div className="mt-3 text-sm text-slate-300">먼저 멤버를 선택해 주세요.</div>
-                                    )}
-                                </div>
-
-                                <div className="space-y-3">
-                                    {memberHistoryEntries.map((entry) => {
-                                        const changeBadges = getHistoryChangeBadges(entry);
-                                        return (
-                                            <div key={entry.id} className="rounded-[24px] border border-slate-200 bg-slate-50 px-5 py-4">
-                                                <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                                                    <div>
-                                                        <div className="font-semibold text-slate-900">{entry.summary}</div>
-                                                        <div className="mt-1 text-sm text-slate-500">
-                                                            {entry.actorName ?? '시스템'} · {formatDateTime(entry.createdAt)}
-                                                        </div>
-                                                    </div>
-                                                    <div className="flex flex-wrap gap-2">
-                                                        {changeBadges.length > 0 ? changeBadges.map((badge) => (
-                                                            <span key={`${entry.id}-${badge}`} className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600">
-                                                                {badge}
-                                                            </span>
-                                                        )) : (
-                                                            <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600">
-                                                                변경 기록
-                                                            </span>
-                                                        )}
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        );
-                                    })}
-
-                                    {historyMember && memberHistoryEntries.length === 0 && (
-                                        <div className="rounded-[24px] border border-dashed border-slate-300 bg-slate-50 px-6 py-12 text-center text-slate-500">
-                                            {historyMember.name}의 역할 변경 이력이 아직 없습니다. 이번 버전 이후부터 직책, 이메일, 계정 상태, 소속 변경이 자동으로 누적됩니다.
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
-                        </>
-                    )}
-                </section>
+                <HistorySection
+                    isOpen={isHistoryOpen}
+                    historyMember={historyMember}
+                    historyMemberId={historyMemberId}
+                    members={members}
+                    memberHistoryEntries={memberHistoryEntries}
+                    memberStatusLabels={memberStatusLabels}
+                    onToggle={() => setIsHistoryOpen((prev) => !prev)}
+                    onChangeHistoryMemberId={setHistoryMemberId}
+                    getChangeBadges={getHistoryChangeBadges}
+                    formatDateTime={formatDateTime}
+                />
             )}
 
             {permissions.canManageMembers && (
-                <section className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-                    <button
-                        type="button"
-                        onClick={() => setIsHiddenMembersOpen((prev) => !prev)}
-                        className="flex w-full items-center justify-between gap-4 px-6 py-5 text-left transition-colors hover:bg-slate-50"
-                    >
-                        <div>
-                            <div className="flex items-center gap-2 font-semibold text-slate-900">
-                                <XCircle size={18} className="text-slate-500" />
-                                숨김 멤버 보기/복구
-                            </div>
-                            <div className="mt-1 text-sm text-slate-500">
-                                목록에서 숨긴 멤버를 확인하고 다시 복구할 수 있습니다.
-                            </div>
-                        </div>
-                        <div className="flex items-center gap-3">
-                            <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600">
-                                {hiddenMembers.length}명
-                            </span>
-                            {isHiddenMembersOpen ? (
-                                <ChevronUp size={18} className="text-slate-400" />
-                            ) : (
-                                <ChevronDown size={18} className="text-slate-400" />
-                            )}
-                        </div>
-                    </button>
-
-                    {isHiddenMembersOpen && (
-                        <div className="border-t border-slate-100 px-5 py-5 sm:px-6">
-                            {hiddenMembers.length === 0 ? (
-                                <div className="rounded-[24px] border border-dashed border-slate-300 bg-slate-50 px-6 py-10 text-center text-sm text-slate-500">
-                                    현재 숨김 처리된 멤버가 없습니다.
-                                </div>
-                            ) : (
-                                <div className="space-y-3">
-                                    {hiddenMembers.map((member) => (
-                                        <div
-                                            key={member.id}
-                                            className="flex flex-col gap-4 rounded-[24px] border border-slate-200 bg-slate-50 px-5 py-4 lg:flex-row lg:items-center lg:justify-between"
-                                        >
-                                            <div className="min-w-0">
-                                                <div className="flex flex-wrap items-center gap-2">
-                                                    <div className="font-semibold text-slate-900">{member.name}</div>
-                                                    <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600">
-                                                        {member.roleName ?? '직책 미지정'}
-                                                    </span>
-                                                    <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600">
-                                                        {memberStatusLabels[member.status ?? 'inactive']}
-                                                    </span>
-                                                </div>
-                                                <div className="mt-2 text-sm text-slate-500">
-                                                    {member.loginEmail ?? '로그인 이메일 없음'}
-                                                    <span className="mx-2 text-slate-300">·</span>
-                                                    팀 {getMemberTeamLabels(member).join(', ') || '미지정'}
-                                                    <span className="mx-2 text-slate-300">·</span>
-                                                    가입일 {formatDate(member.joinedAt)}
-                                                </div>
-                                            </div>
-
-                                            <div className="flex flex-wrap gap-2">
-                                                <button
-                                                    type="button"
-                                                    disabled={savingMemberId === member.id}
-                                                    onClick={() => {
-                                                        void handleRestoreMember(member.id);
-                                                    }}
-                                                    className="inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm font-semibold text-emerald-700 transition-colors hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
-                                                >
-                                                    <RotateCcw size={16} />
-                                                    {savingMemberId === member.id ? '복구 중' : '복구'}
-                                                </button>
-                                                <button
-                                                    type="button"
-                                                    disabled={hardDeletingMemberId === member.id}
-                                                    onClick={() => setHiddenMemberIdPendingDelete(member.id)}
-                                                    className="inline-flex items-center justify-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2.5 text-sm font-semibold text-rose-700 transition-colors hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
-                                                >
-                                                    <Trash2 size={16} />
-                                                    {hardDeletingMemberId === member.id ? '삭제 중' : '영구 삭제'}
-                                                </button>
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-                            )}
-                        </div>
-                    )}
-                </section>
+                <HiddenMembersSection
+                    isOpen={isHiddenMembersOpen}
+                    hiddenMembers={hiddenMembers}
+                    savingMemberId={savingMemberId}
+                    hardDeletingMemberId={hardDeletingMemberId}
+                    memberStatusLabels={memberStatusLabels}
+                    onToggle={() => setIsHiddenMembersOpen((prev) => !prev)}
+                    onRestoreMember={(memberId) => {
+                        void handleRestoreMember(memberId);
+                    }}
+                    onRequestDeleteMember={setHiddenMemberIdPendingDelete}
+                    getMemberTeamLabels={getMemberTeamLabels}
+                    formatDate={formatDate}
+                />
             )}
 
-            <AppDialog
+            <AddMemberDialog
                 isOpen={isAddMemberDialogOpen}
-                title="새 멤버 등록"
-                description="이름과 로그인 이메일을 먼저 등록하고, 저장 뒤 표에서 직책과 팀을 바로 조정할 수 있습니다."
-                size="md"
+                memberName={newMemberName}
+                memberLoginEmail={newMemberLoginEmail}
                 onClose={() => setIsAddMemberDialogOpen(false)}
-            >
-                <form
-                    onSubmit={async (event) => {
-                        await handleAddMember(event);
-                        setIsAddMemberDialogOpen(false);
-                    }}
-                    className="space-y-4"
-                >
-                    <label className="block space-y-2">
-                        <span className="text-sm font-medium text-slate-700">이름</span>
-                        <input
-                            type="text"
-                            placeholder="새 멤버 이름"
-                            value={newMemberName}
-                            onChange={(event) => setNewMemberName(event.target.value)}
-                            className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                        />
-                    </label>
-                    <label className="block space-y-2">
-                        <span className="text-sm font-medium text-slate-700">로그인 이메일</span>
-                        <input
-                            type="email"
-                            placeholder="example@school.kr"
-                            value={newMemberLoginEmail}
-                            onChange={(event) => setNewMemberLoginEmail(event.target.value)}
-                            className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                        />
-                    </label>
-                    <div className="flex flex-wrap justify-end gap-2 pt-2">
-                        <button
-                            type="button"
-                            onClick={() => setIsAddMemberDialogOpen(false)}
-                            className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
-                        >
-                            취소
-                        </button>
-                        <button
-                            type="submit"
-                            disabled={!newMemberName.trim()}
-                            className="rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-700 disabled:opacity-50"
-                        >
-                            저장
-                        </button>
-                    </div>
-                </form>
-            </AppDialog>
+                onSubmit={async (event) => {
+                    await handleAddMember(event);
+                    setIsAddMemberDialogOpen(false);
+                }}
+                onChangeMemberName={setNewMemberName}
+                onChangeMemberLoginEmail={setNewMemberLoginEmail}
+            />
 
-            <AppDialog
+            <OnboardingGuideDialog
                 isOpen={isGuideDialogOpen}
-                title="관리자 온보딩 가이드"
-                description="새 회원을 실제 로그인 가능한 상태로 만들 때 필요한 최소 절차입니다."
-                size="lg"
                 onClose={() => setIsGuideDialogOpen(false)}
-            >
-                <div className="grid gap-4 md:grid-cols-2">
-                    <div className="rounded-[24px] border border-slate-200 bg-slate-50 px-5 py-5">
-                        <div className="font-semibold text-slate-900">1. 로그인 이메일 등록</div>
-                        <div className="mt-2 text-sm leading-7 text-slate-600">실제로 로그인에 사용할 이메일을 입력합니다. 저장만으로는 접근이 열리지 않고, 계정 발급까지 해야 비밀번호 로그인이 가능합니다.</div>
-                    </div>
-                    <div className="rounded-[24px] border border-slate-200 bg-slate-50 px-5 py-5">
-                        <div className="font-semibold text-slate-900">2. 직책 선택</div>
-                        <div className="mt-2 text-sm leading-7 text-slate-600">직책 이름과 시스템 권한은 분리되어 있습니다. 회장과 개발 관리자는 서로 다른 이름이어도 같은 최고 권한을 가질 수 있습니다.</div>
-                    </div>
-                    <div className="rounded-[24px] border border-slate-200 bg-slate-50 px-5 py-5">
-                        <div className="font-semibold text-slate-900">3. 계정 발급</div>
-                        <div className="mt-2 text-sm leading-7 text-slate-600">관리 열의 `계정 발급` 버튼으로 임시 비밀번호를 만듭니다. 기존 계정이 있으면 새 임시 비밀번호로 재발급됩니다.</div>
-                    </div>
-                    <div className="rounded-[24px] border border-slate-200 bg-slate-50 px-5 py-5">
-                        <div className="font-semibold text-slate-900">4. 상태 확인</div>
-                        <div className="mt-2 text-sm leading-7 text-slate-600">계정 발급 뒤에는 `활동 중(active)` 상태만 유지하면 됩니다. 보류나 비활성 상태면 로그인은 되더라도 실제 접근이 제한됩니다.</div>
-                    </div>
-                </div>
-                <div className="mt-4 rounded-[24px] border border-indigo-200 bg-indigo-50 px-5 py-4 text-sm leading-7 text-indigo-900">
-                    접근 준비 큐에 잡히는 이유는 이메일 미등록, 계정 미발급, 보류/비활성 상태 중 하나입니다. 표에서 바로 수정하거나 접근 준비 큐 팝업에서 일괄 처리할 수 있습니다.
-                </div>
-            </AppDialog>
+            />
 
-            <AppDialog
+            <BulkImportDialog
                 isOpen={isBulkImportDialogOpen}
-                title="CSV 대량 등록"
-                description="파일 업로드 또는 붙여넣기로 새 멤버 생성과 기존 멤버 갱신을 한 번에 처리합니다."
-                size="xl"
+                csvText={bulkCsvText}
+                importStatus={bulkImportStatus}
+                importErrors={parsedBulkImport.errors}
+                previewRows={parsedBulkImport.rows}
+                emailIncludedCount={parsedBulkImport.rows.filter((row) => row.loginEmail).length}
+                isImporting={isImportingMembers}
                 onClose={() => setIsBulkImportDialogOpen(false)}
-            >
-                <div className="grid gap-6 2xl:grid-cols-[minmax(0,1.2fr)_360px]">
-                    <div className="space-y-4">
-                        <div className="flex flex-wrap gap-2">
-                            <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50">
-                                <Upload size={16} />
-                                CSV 파일 불러오기
-                                <input
-                                    type="file"
-                                    accept=".csv,text/csv"
-                                    onChange={(event) => void handleMemberCsvFile(event)}
-                                    className="hidden"
-                                />
-                            </label>
-                            <button
-                                type="button"
-                                onClick={() => setBulkCsvText(sampleMemberCsv)}
-                                className="inline-flex items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm font-medium text-indigo-700 transition-colors hover:bg-indigo-100"
-                            >
-                                <FileText size={16} />
-                                예시 채우기
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => {
-                                    setBulkCsvText('');
-                                    setBulkImportStatus(null);
-                                }}
-                                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
-                            >
-                                초기화
-                            </button>
-                        </div>
+                onChangeCsvText={setBulkCsvText}
+                onLoadSample={() => setBulkCsvText(sampleMemberCsv)}
+                onReset={() => {
+                    setBulkCsvText('');
+                    setBulkImportStatus(null);
+                }}
+                onFileChange={(event) => void handleMemberCsvFile(event)}
+                onExecuteImport={() => void handleBulkImportMembers()}
+            />
 
-                        <textarea
-                            value={bulkCsvText}
-                            onChange={(event) => setBulkCsvText(event.target.value)}
-                            rows={12}
-                            placeholder="CSV를 붙여넣거나 파일을 불러오세요."
-                            className="w-full rounded-[24px] border border-slate-200 bg-slate-50 px-4 py-4 text-sm font-mono leading-6 outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                        />
-
-                        {bulkImportStatus && (
-                            <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
-                                {bulkImportStatus}
-                            </div>
-                        )}
-
-                        {parsedBulkImport.errors.length > 0 && (
-                            <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-                                {parsedBulkImport.errors.join(' / ')}
-                            </div>
-                        )}
-
-                        <button
-                            type="button"
-                            onClick={() => void handleBulkImportMembers()}
-                            disabled={parsedBulkImport.rows.length === 0 || parsedBulkImport.errors.length > 0 || isImportingMembers}
-                            className="inline-flex items-center gap-2 rounded-2xl bg-indigo-600 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-indigo-700 disabled:opacity-50"
-                        >
-                            <Upload size={16} />
-                            {isImportingMembers ? '대량 등록 처리 중...' : '대량 등록 실행'}
-                        </button>
-                    </div>
-
-                    <div className="space-y-4">
-                        <div className="rounded-[24px] border border-slate-200 bg-slate-950 p-5 text-white">
-                            <div className="text-sm font-semibold text-slate-300">미리보기</div>
-                            <div className="mt-4 grid grid-cols-3 gap-3">
-                                <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3">
-                                    <div className="text-[11px] uppercase tracking-[0.18em] text-slate-400">행 수</div>
-                                    <div className="mt-2 text-xl font-bold">{parsedBulkImport.rows.length}</div>
-                                </div>
-                                <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3">
-                                    <div className="text-[11px] uppercase tracking-[0.18em] text-slate-400">오류</div>
-                                    <div className="mt-2 text-xl font-bold">{parsedBulkImport.errors.length}</div>
-                                </div>
-                                <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3">
-                                    <div className="text-[11px] uppercase tracking-[0.18em] text-slate-400">이메일 포함</div>
-                                    <div className="mt-2 text-xl font-bold">{parsedBulkImport.rows.filter((row) => row.loginEmail).length}</div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div className="rounded-[24px] border border-slate-200 bg-slate-50 p-4">
-                            <div className="text-sm font-semibold text-slate-900">처리 규칙</div>
-                            <div className="mt-3 space-y-2 text-sm leading-6 text-slate-600">
-                                <div>새 멤버는 `name`으로 생성되고, `login_email`이 있으면 로그인 준비까지 바로 이어집니다.</div>
-                                <div>기존 멤버는 `login_email` 우선, 없으면 `name` 기준으로 찾아 업데이트합니다.</div>
-                                <div>`role`, `team`은 현재 시스템에 이미 등록된 이름과 정확히 맞아야 반영됩니다.</div>
-                                <div>`status`는 `active`, `dormant`, `inactive` 또는 한글 값으로 넣을 수 있습니다.</div>
-                            </div>
-                        </div>
-
-                        <div className="space-y-3 rounded-[24px] border border-slate-200 bg-white p-4">
-                            {parsedBulkImport.rows.slice(0, 5).map((row) => (
-                                <div key={`${row.line}-${row.name}`} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                                    <div className="flex items-center justify-between gap-3">
-                                        <div className="font-medium text-slate-900">{row.name}</div>
-                                        <div className="text-xs font-semibold text-slate-400">{row.line}행</div>
-                                    </div>
-                                    <div className="mt-2 text-sm text-slate-600">
-                                        {row.loginEmail ?? '이메일 없음'}
-                                        <span className="text-slate-300"> · </span>
-                                        {row.roleName ?? '직책 미지정'}
-                                        <span className="text-slate-300"> · </span>
-                                        {row.teamName ?? '팀 미지정'}
-                                    </div>
-                                </div>
-                            ))}
-
-                            {parsedBulkImport.rows.length === 0 && (
-                                <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
-                                    CSV를 불러오면 여기서 상위 5개 행을 먼저 확인할 수 있습니다.
-                                </div>
-                            )}
-                        </div>
-                    </div>
-                </div>
-            </AppDialog>
-
-            <AppDialog
-                isOpen={Boolean(provisionedAccount)}
-                title="임시 비밀번호 발급 완료"
-                description="아래 비밀번호를 회원에게 안전하게 전달해 주세요. 첫 로그인 뒤에는 새 비밀번호 설정이 강제됩니다."
-                size="md"
+            <ProvisionedAccountDialog
+                provisionedAccount={provisionedAccount}
                 onClose={() => setProvisionedAccount(null)}
-            >
-                {provisionedAccount && (
-                    <div className="space-y-4">
-                        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                            <div className="text-sm text-slate-500">회원</div>
-                            <div className="mt-1 font-semibold text-slate-900">{provisionedAccount.memberName}</div>
-                        </div>
-                        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                            <div className="text-sm text-slate-500">로그인 이메일</div>
-                            <div className="mt-1 font-semibold text-slate-900">{provisionedAccount.email}</div>
-                        </div>
-                        <div className="rounded-2xl border border-indigo-200 bg-indigo-50 p-4">
-                            <div className="text-sm text-indigo-700">임시 비밀번호</div>
-                            <div className="mt-2 break-all font-mono text-lg font-bold text-indigo-950">{provisionedAccount.temporaryPassword}</div>
-                        </div>
-                        <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm leading-7 text-slate-600">
-                            {provisionedAccount.isExistingAccount
-                                ? '기존 계정의 비밀번호를 새 임시 비밀번호로 재설정했습니다.'
-                                : '새 계정을 만들고 임시 비밀번호를 발급했습니다.'}
-                        </div>
-                    </div>
-                )}
-            </AppDialog>
+            />
 
             <RoleSettingsDialog
                 isOpen={isRoleSettingsDialogOpen}
@@ -2238,480 +1088,116 @@ export const DashboardTab: React.FC = () => {
                 onUpdated={refreshData}
             />
 
-            <AppDialog
+            <AddTeamDialog
                 isOpen={isAddTeamDialogOpen}
-                title="팀 추가"
-                description="새 팀을 만들면 곧바로 팀 지정 화면에서 멤버를 배정할 수 있습니다."
-                size="md"
+                teamName={newTeamName}
+                teamType={newTeamType}
+                teamTypeOptions={teamTypeOptions}
+                teamTypeLabels={teamTypeLabels}
                 onClose={() => setIsAddTeamDialogOpen(false)}
-            >
-                <form
-                    onSubmit={async (event) => {
-                        try {
-                            await handleAddTeam(event);
-                            setDraftTeamMemberIds([]);
-                            setTeamAssignmentQuery('');
-                            setIsAddTeamDialogOpen(false);
-                            setIsTeamAssignmentDialogOpen(true);
-                        } catch (error) {
-                            showActionError(error);
-                        }
-                    }}
-                    className="space-y-4"
-                >
-                    <label className="block space-y-2">
-                        <span className="text-sm font-medium text-slate-700">팀 이름</span>
-                        <input
-                            type="text"
-                            value={newTeamName}
-                            onChange={(event) => setNewTeamName(event.target.value)}
-                            placeholder="예: 운영팀, AI 스터디"
-                            className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                        />
-                    </label>
-                    <label className="block space-y-2">
-                        <span className="text-sm font-medium text-slate-700">팀 유형</span>
-                        <select
-                            value={newTeamType}
-                            onChange={(event) => setNewTeamType(event.target.value as TeamType)}
-                            className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                        >
-                            {teamTypeOptions.map((teamType) => (
-                                <option key={teamType} value={teamType}>
-                                    {teamTypeLabels[teamType]}
-                                </option>
-                            ))}
-                        </select>
-                    </label>
-                    <div className="flex flex-wrap justify-end gap-2 pt-2">
-                        <button
-                            type="button"
-                            onClick={() => setIsAddTeamDialogOpen(false)}
-                            className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
-                        >
-                            취소
-                        </button>
-                        <button
-                            type="submit"
-                            disabled={!newTeamName.trim()}
-                            className="rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-700 disabled:opacity-50"
-                        >
-                            팀 만들기
-                        </button>
-                    </div>
-                </form>
-            </AppDialog>
+                onSubmit={async (event) => {
+                    try {
+                        await handleAddTeam(event);
+                        setDraftTeamMemberIds([]);
+                        setTeamAssignmentQuery('');
+                        setIsAddTeamDialogOpen(false);
+                        setIsTeamAssignmentDialogOpen(true);
+                    } catch (error) {
+                        showActionError(error);
+                    }
+                }}
+                onChangeTeamName={setNewTeamName}
+                onChangeTeamType={setNewTeamType}
+            />
 
-            <AppDialog
-                isOpen={isEditTeamDialogOpen && Boolean(editingTeam)}
-                title={editingTeam ? `${editingTeam.name} 팀 수정` : '팀 수정'}
-                description="팀 이름과 팀 유형을 수정할 수 있습니다."
-                size="md"
+            <EditTeamDialog
+                isOpen={isEditTeamDialogOpen}
+                editingTeam={editingTeam}
+                editingTeamName={editingTeamName}
+                editingTeamType={editingTeamType}
+                isSaving={isSavingTeamEdit}
+                allMembers={allMembers}
+                teamTypeOptions={teamTypeOptions}
+                teamTypeLabels={teamTypeLabels}
                 onClose={() => {
                     setIsEditTeamDialogOpen(false);
                     setEditingTeamId(null);
                 }}
-            >
-                {editingTeam && (
-                    <div className="space-y-4">
-                        <label className="block space-y-2">
-                            <span className="text-sm font-medium text-slate-700">팀 이름</span>
-                            <input
-                                type="text"
-                                value={editingTeamName}
-                                onChange={(event) => setEditingTeamName(event.target.value)}
-                                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                            />
-                        </label>
-                        <label className="block space-y-2">
-                            <span className="text-sm font-medium text-slate-700">팀 유형</span>
-                            <select
-                                value={editingTeamType}
-                                onChange={(event) => setEditingTeamType(event.target.value as TeamType)}
-                                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                            >
-                                {teamTypeOptions.map((teamType) => (
-                                    <option key={teamType} value={teamType}>
-                                        {teamTypeLabels[teamType]}
-                                    </option>
-                                ))}
-                            </select>
-                        </label>
-                        <div className="rounded-[24px] border border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-600">
-                            현재 배정 인원 {allMembers.filter((member) => (member.teamIds ?? []).includes(editingTeam.id) || member.teamId === editingTeam.id).length}명
-                        </div>
-                        <div className="flex flex-wrap justify-end gap-2 pt-2">
-                            <button
-                                type="button"
-                                onClick={() => {
-                                    setIsEditTeamDialogOpen(false);
-                                    setEditingTeamId(null);
-                                }}
-                                className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
-                            >
-                                취소
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => {
-                                    void handleSaveTeamEdit();
-                                }}
-                                disabled={isSavingTeamEdit || !editingTeamName.trim()}
-                                className="rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-700 disabled:opacity-50"
-                            >
-                                {isSavingTeamEdit ? '저장 중...' : '저장'}
-                            </button>
-                        </div>
-                    </div>
-                )}
-            </AppDialog>
+                onSave={() => {
+                    void handleSaveTeamEdit();
+                }}
+                onChangeTeamName={setEditingTeamName}
+                onChangeTeamType={setEditingTeamType}
+            />
 
-            <AppDialog
-                isOpen={isTeamAssignmentDialogOpen && Boolean(selectedTeamForManagement)}
-                title={selectedTeamForManagement ? `${selectedTeamForManagement.name} 팀원 지정` : '팀원 지정'}
-                description="카드를 눌러 선택한 뒤 저장할 때만 실제 팀 배정에 반영됩니다."
-                size="xl"
+            <TeamAssignmentDialog
+                isOpen={isTeamAssignmentDialogOpen}
+                selectedTeam={selectedTeamForManagement}
+                teamTypeLabels={teamTypeLabels}
+                actualAssignedCount={actualAssignedMemberIds.length}
+                teamAssignmentQuery={teamAssignmentQuery}
+                draftTeamMemberIds={draftTeamMemberIds}
+                hiddenTeamMembers={hiddenTeamMembers}
+                teamMembers={teamMembers}
+                assignableMembers={assignableMembers}
+                hasTeamAssignmentChanges={hasTeamAssignmentChanges}
+                isSavingTeamAssignment={isSavingTeamAssignment}
                 onClose={() => setIsTeamAssignmentDialogOpen(false)}
-            >
-                {selectedTeamForManagement && (
-                    <div className="space-y-5">
-                        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-                            <div>
-                                <div className="text-sm font-semibold text-indigo-600">팀 지정</div>
-                                <div className="mt-1 text-xl font-bold text-slate-900">{selectedTeamForManagement.name}</div>
-                                <div className="mt-2 text-sm text-slate-500">
-                                    {teamTypeLabels[selectedTeamForManagement.type]} · 현재 {actualAssignedMemberIds.length}명 배정
-                                </div>
-                            </div>
-                            <label className="relative block lg:w-[320px]">
-                                <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                                <input
-                                    type="text"
-                                    value={teamAssignmentQuery}
-                                    onChange={(event) => setTeamAssignmentQuery(event.target.value)}
-                                    placeholder="이름 또는 직책으로 검색"
-                                    className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-9 pr-3 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                                />
-                            </label>
-                        </div>
+                onChangeQuery={setTeamAssignmentQuery}
+                onToggleMember={(memberId) => {
+                    setDraftTeamMemberIds((current) =>
+                        current.includes(memberId)
+                            ? current.filter((currentMemberId) => currentMemberId !== memberId)
+                            : [...current, memberId],
+                    );
+                }}
+                onResetDraft={handleResetTeamAssignmentDraft}
+                onSave={() => {
+                    void handleSaveTeamAssignment();
+                }}
+                getMemberTeamLabels={getMemberTeamLabels}
+            />
 
-                        <div className="rounded-[24px] border border-slate-200 bg-slate-50 px-4 py-4">
-                            <div className="flex flex-wrap items-center gap-2">
-                                <span className="rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-700">
-                                    선택 {draftTeamMemberIds.length}명
-                                </span>
-                                <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600">
-                                    숨김 유지 {hiddenTeamMembers.length}명
-                                </span>
-                                {hasTeamAssignmentChanges && (
-                                    <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700">
-                                        저장 전 변경 사항 있음
-                                    </span>
-                                )}
-                            </div>
-                            <div className="mt-3 flex flex-wrap gap-2">
-                                {teamMembers.length > 0 ? teamMembers.map((member) => (
-                                <span
-                                    key={`${selectedTeamForManagement.id}-${member.id}`}
-                                    className="rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-700"
-                                >
-                                    {member.name}
-                                </span>
-                                )) : (
-                                    <span className="text-sm text-slate-400">현재 공개 멤버 중 배정된 인원이 없습니다.</span>
-                                )}
-                                {hiddenTeamMembers.map((member) => (
-                                    <span
-                                        key={`${selectedTeamForManagement.id}-hidden-${member.id}`}
-                                        className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700"
-                                    >
-                                        숨김 · {member.name}
-                                    </span>
-                                ))}
-                            </div>
-                        </div>
-
-                        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-5">
-                            {assignableMembers.map((member) => {
-                                const memberTeams = getMemberTeamLabels(member);
-                                const isChecked = draftTeamMemberIds.includes(member.id);
-
-                                return (
-                                    <button
-                                        key={member.id}
-                                        type="button"
-                                        onClick={() => {
-                                            setDraftTeamMemberIds((current) =>
-                                                current.includes(member.id)
-                                                    ? current.filter((memberId) => memberId !== member.id)
-                                                    : [...current, member.id],
-                                            );
-                                        }}
-                                        className={`rounded-[24px] border px-4 py-4 text-left transition-all ${
-                                            isChecked
-                                                ? 'border-indigo-400 bg-indigo-50 shadow-sm shadow-indigo-100'
-                                                : 'border-slate-200 bg-white hover:border-slate-300 hover:shadow-sm'
-                                        }`}
-                                    >
-                                        <div className="flex items-start justify-between gap-3">
-                                            <div className="min-w-0">
-                                                <div>
-                                                    <div className="font-semibold text-slate-900">{member.name}</div>
-                                                    <div className="mt-1 text-sm text-slate-500">{member.roleName ?? '직책 미지정'}</div>
-                                                </div>
-                                            </div>
-                                            <span className={`inline-flex h-7 w-7 items-center justify-center rounded-full border ${isChecked ? 'border-indigo-300 bg-indigo-600 text-white' : 'border-slate-200 bg-white text-slate-300'}`}>
-                                                <Check size={15} />
-                                            </span>
-                                        </div>
-                                        <div className="mt-4 flex flex-wrap gap-2">
-                                            {memberTeams.length > 0 ? memberTeams.map((teamName) => (
-                                                <span
-                                                    key={`${member.id}-${teamName}`}
-                                                    className={`rounded-full border px-3 py-1 text-xs font-semibold ${teamName === selectedTeamForManagement.name && isChecked ? 'border-indigo-200 bg-white text-indigo-700' : 'border-slate-200 bg-slate-50 text-slate-600'}`}
-                                                >
-                                                    {teamName}
-                                                </span>
-                                            )) : (
-                                                <span className="rounded-full border border-dashed border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-400">
-                                                    팀 미지정
-                                                </span>
-                                            )}
-                                        </div>
-                                    </button>
-                                );
-                            })}
-                        </div>
-
-                        {assignableMembers.length === 0 && (
-                            <div className="rounded-[24px] border border-dashed border-slate-300 bg-slate-50 px-6 py-10 text-center text-sm text-slate-500">
-                                검색 조건에 맞는 공개 멤버가 없습니다.
-                            </div>
-                        )}
-
-                        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-4">
-                            <div className="text-sm text-slate-500">
-                                숨김 멤버 {hiddenTeamMembers.length}명은 이 모달에서 노출되지 않지만 저장 시 그대로 유지됩니다.
-                            </div>
-                            <div className="flex flex-wrap gap-2">
-                                <button
-                                    type="button"
-                                    onClick={handleResetTeamAssignmentDraft}
-                                    className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
-                                >
-                                    초기화
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => setIsTeamAssignmentDialogOpen(false)}
-                                    className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
-                                >
-                                    취소
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        void handleSaveTeamAssignment();
-                                    }}
-                                    disabled={isSavingTeamAssignment || !hasTeamAssignmentChanges}
-                                    className="rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-700 disabled:opacity-50"
-                                >
-                                    {isSavingTeamAssignment ? '저장 중...' : '저장'}
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                )}
-            </AppDialog>
-
-            <AppDialog
-                isOpen={Boolean(teamPendingDelete)}
-                title={teamPendingDelete ? `${teamPendingDelete.name} 팀 삭제` : '팀 삭제'}
-                description="팀을 삭제하면 팀 연결이 해제되고, 대표 팀은 남은 첫 팀으로 다시 계산됩니다."
-                size="md"
+            <TeamDeleteDialog
+                teamPendingDelete={teamPendingDelete}
+                members={members}
+                hiddenMembers={hiddenMembers}
+                isDeletingTeam={isDeletingTeam}
                 onClose={() => setTeamIdPendingDelete(null)}
-            >
-                {teamPendingDelete && (
-                    <div className="space-y-4">
-                        <div className="rounded-[24px] border border-rose-200 bg-rose-50 px-4 py-4 text-sm leading-7 text-rose-900">
-                            이 팀에 연결된 멤버가 있더라도 삭제할 수 있습니다. 배정된 멤버의 대표 팀은 남아 있는 팀 중 첫 번째 팀으로 자동 재계산됩니다.
-                        </div>
-                        <div className="rounded-[24px] border border-slate-200 bg-slate-50 px-4 py-4">
-                            <div className="text-sm font-semibold text-slate-900">삭제 영향</div>
-                            <div className="mt-2 text-sm text-slate-600">
-                                총 {allMembers.filter((member) => (member.teamIds ?? []).includes(teamPendingDelete.id) || member.teamId === teamPendingDelete.id).length}명
-                                <span className="mx-2 text-slate-300">·</span>
-                                공개 {members.filter((member) => (member.teamIds ?? []).includes(teamPendingDelete.id) || member.teamId === teamPendingDelete.id).length}명
-                                <span className="mx-2 text-slate-300">·</span>
-                                숨김 {hiddenMembers.filter((member) => (member.teamIds ?? []).includes(teamPendingDelete.id) || member.teamId === teamPendingDelete.id).length}명
-                            </div>
-                        </div>
-                        <div className="flex flex-wrap justify-end gap-2">
-                            <button
-                                type="button"
-                                onClick={() => setTeamIdPendingDelete(null)}
-                                className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
-                            >
-                                취소
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => {
-                                    void handleDeleteTeamConfirm();
-                                }}
-                                disabled={isDeletingTeam}
-                                className="rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-rose-700 disabled:opacity-50"
-                            >
-                                {isDeletingTeam ? '삭제 중...' : '팀 삭제'}
-                            </button>
-                        </div>
-                    </div>
-                )}
-            </AppDialog>
+                onDelete={() => {
+                    void handleDeleteTeamConfirm();
+                }}
+            />
 
-            <AppDialog
-                isOpen={Boolean(hiddenMemberPendingDelete)}
-                title={hiddenMemberPendingDelete ? `${hiddenMemberPendingDelete.name} 영구 삭제` : '영구 삭제'}
-                description="활동 기록이 남아 있는 숨김 멤버는 영구 삭제할 수 없습니다."
-                size="md"
+            <HiddenMemberDeleteDialog
+                hiddenMemberPendingDelete={hiddenMemberPendingDelete}
+                hardDeletingMemberId={hardDeletingMemberId}
                 onClose={() => setHiddenMemberIdPendingDelete(null)}
-            >
-                {hiddenMemberPendingDelete && (
-                    <div className="space-y-4">
-                        <div className="rounded-[24px] border border-rose-200 bg-rose-50 px-4 py-4 text-sm leading-7 text-rose-900">
-                            멤버 정보, 팀 연결, 배지, 계정 연결 정보가 함께 삭제됩니다. 이 작업은 되돌릴 수 없습니다.
-                        </div>
-                        <div className="rounded-[24px] border border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-600">
-                            활동 기록이 하나라도 있으면 서버에서 삭제를 거부하고 숨김 상태만 유지됩니다.
-                        </div>
-                        <div className="flex flex-wrap justify-end gap-2">
-                            <button
-                                type="button"
-                                onClick={() => setHiddenMemberIdPendingDelete(null)}
-                                className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
-                            >
-                                취소
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => {
-                                    void handleHardDeleteMemberConfirm();
-                                }}
-                                disabled={hardDeletingMemberId === hiddenMemberPendingDelete.id}
-                                className="rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-rose-700 disabled:opacity-50"
-                            >
-                                {hardDeletingMemberId === hiddenMemberPendingDelete.id ? '삭제 중...' : '영구 삭제'}
-                            </button>
-                        </div>
-                    </div>
-                )}
-            </AppDialog>
+                onDelete={() => {
+                    void handleHardDeleteMemberConfirm();
+                }}
+            />
 
-            <AppDialog
+            <AccessQueueDialog
                 isOpen={isQueueDialogOpen}
-                title="접근 준비 큐"
-                description="로그인 이메일, 계정 발급, 회원 상태가 아직 맞지 않은 멤버만 따로 모아 둔 목록입니다."
-                size="xl"
+                approvalQueue={approvalQueue}
+                accessPreparation={accessPreparation}
+                savingMemberId={savingMemberId}
+                provisioningMemberId={provisioningMemberId}
                 onClose={() => setIsQueueDialogOpen(false)}
-            >
-                <div className="mb-4 grid gap-3 sm:grid-cols-3">
-                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                        <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">이메일 미등록</div>
-                        <div className="mt-2 text-2xl font-bold text-slate-900">{accessPreparation.missingEmail}</div>
-                    </div>
-                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                        <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">계정 미발급</div>
-                        <div className="mt-2 text-2xl font-bold text-slate-900">{accessPreparation.missingAccount}</div>
-                    </div>
-                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                        <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">보류/비활성</div>
-                        <div className="mt-2 text-2xl font-bold text-slate-900">{accessPreparation.dormantOrInactive}</div>
-                    </div>
-                </div>
-
-                <div className="space-y-4">
-                    {approvalQueue.length === 0 ? (
-                        <div className="rounded-[24px] border border-emerald-200 bg-emerald-50 px-6 py-10 text-center">
-                            <div className="text-lg font-semibold text-emerald-800">현재 처리할 접근 준비 대상이 없습니다.</div>
-                            <div className="mt-2 text-sm text-emerald-700">로그인 이메일과 계정 발급이 완료된 회원은 즉시 서비스에 접근할 수 있습니다.</div>
-                        </div>
-                    ) : (
-                        approvalQueue.map((member) => {
-                            const approvalTags = getAccessPrepTags(member);
-                            const isSavingRow = savingMemberId === member.id;
-                            const canProvision = Boolean(member.loginEmail);
-
-                            return (
-                                <div key={member.id} className="rounded-[24px] border border-slate-200 bg-slate-50 p-5">
-                                    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                                        <div className="space-y-3">
-                                            <div>
-                                                <div className="text-lg font-bold text-slate-900">{member.name}</div>
-                                                <div className="mt-1 text-sm text-slate-500">{member.loginEmail ?? '로그인 이메일이 아직 등록되지 않았습니다.'}</div>
-                                            </div>
-
-                                            <div className="flex flex-wrap gap-2">
-                                                {approvalTags.map((tag) => (
-                                                    <span key={tag.label} className={`inline-flex rounded-full border px-3 py-1 text-xs font-semibold ${tag.className}`}>
-                                                        {tag.label}
-                                                    </span>
-                                                ))}
-                                            </div>
-
-                                            <div className="text-sm text-slate-500">
-                                                직책 {member.roleName ?? '미지정'} · 팀 {getMemberTeamLabels(member).join(', ') || '미지정'} · 가입일 {formatDate(member.joinedAt)}
-                                            </div>
-                                        </div>
-
-                                        <div className="flex flex-wrap gap-2 lg:justify-end">
-                                            <button
-                                                type="button"
-                                                disabled={!canProvision || provisioningMemberId === member.id}
-                                                onClick={() => {
-                                                    void handleProvisionMemberAccount(member);
-                                                }}
-                                                className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
-                                            >
-                                                <KeyRound size={16} />
-                                                {provisioningMemberId === member.id ? '발급 중' : member.authUserId ? '재발급' : '계정 발급'}
-                                            </button>
-                                            <button
-                                                type="button"
-                                                disabled={isSavingRow}
-                                                onClick={() => {
-                                                    void handleMemberUpdate(member.id, { status: 'dormant' });
-                                                }}
-                                                className="inline-flex items-center gap-2 rounded-xl border border-violet-200 bg-violet-50 px-4 py-2 text-sm font-semibold text-violet-700 transition-colors hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-60"
-                                            >
-                                                <Clock3 size={16} />
-                                                보류
-                                            </button>
-                                            <button
-                                                type="button"
-                                                disabled={isSavingRow}
-                                                onClick={() => {
-                                                    void handleMemberUpdate(member.id, { status: 'inactive' });
-                                                }}
-                                                className="inline-flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-sm font-semibold text-rose-700 transition-colors hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
-                                            >
-                                                <XCircle size={16} />
-                                                반려
-                                            </button>
-                                        </div>
-                                    </div>
-
-                                    {!canProvision && (
-                                        <div className="mt-4 inline-flex items-center gap-2 rounded-full border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs font-semibold text-sky-700">
-                                            <Mail size={14} />
-                                            로그인 이메일을 먼저 입력해야 계정을 발급할 수 있습니다.
-                                        </div>
-                                    )}
-                                </div>
-                            );
-                        })
-                    )}
-                </div>
-            </AppDialog>
+                onProvisionMemberAccount={(member) => {
+                    void handleProvisionMemberAccount(member);
+                }}
+                onMarkDormant={(memberId) => {
+                    void handleMemberUpdate(memberId, { status: 'dormant' });
+                }}
+                onMarkInactive={(memberId) => {
+                    void handleMemberUpdate(memberId, { status: 'inactive' });
+                }}
+                getAccessPrepTags={getAccessPrepTags}
+                getMemberTeamLabels={getMemberTeamLabels}
+                formatDate={formatDate}
+            />
         </div>
     );
 };

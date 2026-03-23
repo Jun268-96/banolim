@@ -7,6 +7,7 @@ import type {
     RecapSnapshotPeriod,
     SeasonSummary,
 } from '../types';
+import { isTimestampWithinRange, toLocalDayKey } from './domain/activityLogs';
 
 const formatMonthLabel = (value: Date) =>
     new Intl.DateTimeFormat('ko-KR', { year: 'numeric', month: 'long' }).format(value);
@@ -15,14 +16,6 @@ const formatDate = (value?: string | null) =>
     value
         ? new Intl.DateTimeFormat('ko-KR', { dateStyle: 'medium' }).format(new Date(value))
         : '-';
-
-const toLocalDayKey = (value: string) => {
-    const date = new Date(value);
-    const year = date.getFullYear();
-    const month = `${date.getMonth() + 1}`.padStart(2, '0');
-    const day = `${date.getDate()}`.padStart(2, '0');
-    return `${year}-${month}-${day}`;
-};
 
 export const buildRecapScope = (periodType: RecapSnapshotPeriod, season: SeasonSummary | null) => {
     const now = new Date();
@@ -53,11 +46,6 @@ export const buildRecapScope = (periodType: RecapSnapshotPeriod, season: SeasonS
     };
 };
 
-const isWithinScope = (timestamp: string, start: Date, end: Date) => {
-    const value = new Date(timestamp);
-    return value >= start && value <= end;
-};
-
 const buildHighlight = (label: string, value: string, description: string): RecapSnapshotHighlight => ({
     label,
     value,
@@ -78,8 +66,8 @@ export const buildMemberRecapSnapshotDraft = ({
     periodType: RecapSnapshotPeriod;
 }): RecapSnapshotDraft => {
     const scope = buildRecapScope(periodType, season);
-    const scopeLogs = logs.filter((log) => isWithinScope(log.timestamp, scope.start, scope.end));
-    const scopeBadges = memberBadges.filter((badge) => isWithinScope(badge.awardedAt, scope.start, scope.end));
+    const scopeLogs = logs.filter((log) => isTimestampWithinRange(log.timestamp, scope.start, scope.end));
+    const scopeBadges = memberBadges.filter((badge) => isTimestampWithinRange(badge.awardedAt, scope.start, scope.end));
 
     const totalPoints = scopeLogs.reduce((sum, log) => sum + log.pointDelta, 0);
     const activeDays = new Set(scopeLogs.map((log) => toLocalDayKey(log.timestamp))).size;
@@ -188,8 +176,8 @@ export const buildOverallRecapSnapshotDraft = ({
     periodType: RecapSnapshotPeriod;
 }): RecapSnapshotDraft => {
     const scope = buildRecapScope(periodType, season);
-    const scopeLogs = logs.filter((log) => isWithinScope(log.timestamp, scope.start, scope.end));
-    const scopeBadges = memberBadges.filter((badge) => isWithinScope(badge.awardedAt, scope.start, scope.end));
+    const scopeLogs = logs.filter((log) => isTimestampWithinRange(log.timestamp, scope.start, scope.end));
+    const scopeBadges = memberBadges.filter((badge) => isTimestampWithinRange(badge.awardedAt, scope.start, scope.end));
 
     const totalPoints = scopeLogs.reduce((sum, log) => sum + log.pointDelta, 0);
     const uniqueMemberCount = new Set(scopeLogs.map((log) => log.memberId)).size;

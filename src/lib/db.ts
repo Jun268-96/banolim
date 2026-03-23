@@ -8,9 +8,6 @@ import type {
     AnnouncementItem,
     AuditLogEntry,
     Badge,
-    BadgeCriteria,
-    BadgeEvaluationScope,
-    BadgeTone,
     BadgeUpsertInput,
     Category,
     CorrectionRequest,
@@ -33,8 +30,32 @@ import type {
     TeamType,
     SeasonStatus,
 } from '../types';
-import { isSupabaseConfigured, supabase, supabaseAnonKey, supabaseUrl } from './supabase';
+import { isSupabaseConfigured, supabaseAnonKey, supabaseUrl } from './supabase';
 import type { Database, Json } from '../types/database';
+import { getSupabaseClient } from './api/shared/client';
+import { mapBadgeRow, mapMemberBadgeRow } from './api/mappers/badges';
+import {
+    parseHardDeleteMemberResult,
+    parseSeasonDataResetResult,
+    parseTeamDeleteResult,
+    parseTeamMemberUpdateResult,
+} from './api/mappers/results';
+import {
+    filterMembersForAttendanceGroup,
+    getAttendanceRule,
+    getAttendanceTargetGroupLabel,
+} from './domain/attendance';
+import { filterEffectiveActivityLogs } from './domain/activityLogs';
+import { getErrorMessage, isMissingSupabaseRelationError, isNetworkFetchError } from './api/shared/errors';
+import {
+    clearLatestDataFallbackState,
+    notifySiteBannerListeners,
+    reportDataFallback,
+    subscribeToDataFallbackState,
+    subscribeToSiteBannerChanges,
+    getLatestDataFallbackState,
+} from './api/shared/fallbackState';
+import { localState } from './api/shared/localState';
 import {
     computeBadgeMetrics,
     getBadgeCriteriaSummary,
@@ -69,10 +90,11 @@ type GetAuditLogsOptions = {
     entityId?: string;
     limit?: number;
 };
-export type DataFallbackState = {
-    id: string;
-    task: string;
-    message: string;
+export {
+    clearLatestDataFallbackState,
+    getLatestDataFallbackState,
+    subscribeToDataFallbackState,
+    subscribeToSiteBannerChanges,
 };
 
 const createLocalId = (prefix: string) => `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
@@ -101,16 +123,10 @@ const attendanceStatusLabels: Record<AttendanceStatus, string> = {
     late: '지각',
     absent: '결석',
 };
-const attendanceRuleMatchers: Record<AttendanceStatus, RegExp> = {
-    present: /(정기모임\s*출석|출석|참석|attendance|present)/i,
-    late: /(지각|late)/i,
-    absent: /(불참|결석|absence|absent)/i,
-};
-
 const dedupeTeamIds = (teamIds: Array<string | null | undefined>) => [...new Set(teamIds.filter((teamId): teamId is string => Boolean(teamId)))];
 
-const getLocalRoleById = (roleId?: string | null) => localRoles.find((role) => role.id === roleId) ?? null;
-const getLocalTeamById = (teamId?: string | null) => localTeams.find((team) => team.id === teamId) ?? null;
+const getLocalRoleById = (roleId?: string | null) => localState.roles.find((role) => role.id === roleId) ?? null;
+const getLocalTeamById = (teamId?: string | null) => localState.teams.find((team) => team.id === teamId) ?? null;
 
 const buildLocalMemberAuditSummary = (memberName: string, changes: Record<string, unknown>, action: 'created' | 'updated') => {
     if (action === 'created') {
@@ -125,94 +141,7 @@ const buildLocalMemberAuditSummary = (memberName: string, changes: Record<string
     return `${memberName} · 회원 정보 수정`;
 };
 
-let latestDataFallbackState: DataFallbackState | null = null;
-const dataFallbackListeners = new Set<() => void>();
 const cachedMemberResults = new Map<string, Member[]>();
-const siteBannerListeners = new Set<() => void>();
-
-const notifyDataFallbackListeners = () => {
-    dataFallbackListeners.forEach((listener) => listener());
-};
-
-const notifySiteBannerListeners = () => {
-    siteBannerListeners.forEach((listener) => listener());
-};
-
-const getErrorMessage = (error: unknown) => {
-    if (error instanceof Error) {
-        return error.message;
-    }
-
-    if (typeof error === 'string') {
-        return error;
-    }
-
-    if (error && typeof error === 'object') {
-        const message = 'message' in error && typeof error.message === 'string' ? error.message : null;
-        const details = 'details' in error && typeof error.details === 'string' ? error.details : null;
-        const hint = 'hint' in error && typeof error.hint === 'string' ? error.hint : null;
-        return [message, details, hint].filter(Boolean).join(' · ') || '알 수 없는 오류';
-    }
-
-    return '알 수 없는 오류';
-};
-
-const toRecord = (value: unknown): Record<string, unknown> =>
-    value && typeof value === 'object' && !Array.isArray(value)
-        ? value as Record<string, unknown>
-        : {};
-
-const getStringField = (value: unknown, key: string) => {
-    const record = toRecord(value);
-    return typeof record[key] === 'string' ? record[key] : '';
-};
-
-const getNumberField = (value: unknown, key: string) => {
-    const record = toRecord(value);
-    return typeof record[key] === 'number' ? record[key] : 0;
-};
-
-const getOptionalNumberField = (value: unknown, key: string) => {
-    const record = toRecord(value);
-    return typeof record[key] === 'number' ? record[key] : undefined;
-};
-
-const getBooleanField = (value: unknown, key: string) => {
-    const record = toRecord(value);
-    return Boolean(record[key]);
-};
-
-const parseBadgeEvaluationScope = (value: unknown): BadgeEvaluationScope =>
-    value === 'lifetime' ? 'lifetime' : 'season';
-
-const parseBadgeCriteriaValue = (value: unknown): BadgeCriteria => {
-    const record = toRecord(value);
-    return normalizeBadgeCriteria({
-        activityCount: typeof record.activityCount === 'number' ? record.activityCount : undefined,
-        attendanceCount: typeof record.attendanceCount === 'number' ? record.attendanceCount : undefined,
-        spotlightCount: typeof record.spotlightCount === 'number' ? record.spotlightCount : undefined,
-        uniqueActivityTypeCount: typeof record.uniqueActivityTypeCount === 'number' ? record.uniqueActivityTypeCount : undefined,
-        evidenceCount: typeof record.evidenceCount === 'number' ? record.evidenceCount : undefined,
-        activeDayCount: typeof record.activeDayCount === 'number' ? record.activeDayCount : undefined,
-        totalPoints: typeof record.totalPoints === 'number' ? record.totalPoints : undefined,
-    });
-};
-
-const mapBadgeRow = (
-    row: Pick<BadgeRow, 'id' | 'code' | 'name' | 'description' | 'icon_key' | 'image_url' | 'tone' | 'evaluation_scope' | 'criteria_json' | 'sort_order' | 'is_active'>,
-): Badge => ({
-    id: row.id,
-    code: row.code,
-    name: row.name,
-    description: row.description,
-    iconKey: row.icon_key,
-    imageUrl: row.image_url,
-    tone: (row.tone as BadgeTone | null) ?? 'sky',
-    evaluationScope: parseBadgeEvaluationScope(row.evaluation_scope),
-    criteria: parseBadgeCriteriaValue(row.criteria_json),
-    sortOrder: row.sort_order,
-    isActive: row.is_active,
-});
 
 const normalizeBadgeInput = (input: BadgeUpsertInput): BadgeUpsertInput => {
     const finalCode = normalizeBadgeCode(input.code);
@@ -248,449 +177,12 @@ const normalizeBadgeInput = (input: BadgeUpsertInput): BadgeUpsertInput => {
     };
 };
 
-const parseTeamMemberUpdateResult = (value: unknown): TeamMemberUpdateResult => ({
-    teamId: getStringField(value, 'teamId'),
-    teamName: getStringField(value, 'teamName'),
-    memberCount: getNumberField(value, 'memberCount'),
-    addedCount: getNumberField(value, 'addedCount'),
-    removedCount: getNumberField(value, 'removedCount'),
-});
-
-const parseTeamDeleteResult = (value: unknown): TeamDeleteResult => ({
-    teamId: getStringField(value, 'teamId'),
-    teamName: getStringField(value, 'teamName'),
-    teamType: (getStringField(value, 'teamType') as TeamType) || 'core',
-    affectedMemberCount: getNumberField(value, 'affectedMemberCount'),
-});
-
-const parseSeasonDataResetResult = (value: unknown): SeasonDataResetResult => ({
-    seasonId: getStringField(value, 'seasonId'),
-    seasonName: getStringField(value, 'seasonName'),
-    activityRecordCount: getNumberField(value, 'activityRecordCount'),
-    pointLedgerCount: getNumberField(value, 'pointLedgerCount'),
-    correctionRequestCount: getOptionalNumberField(value, 'correctionRequestCount'),
-    recapSnapshotCount: getNumberField(value, 'recapSnapshotCount'),
-    affectedMemberCount: getNumberField(value, 'affectedMemberCount'),
-    badgeRefreshCount: getNumberField(value, 'badgeRefreshCount'),
-    attendanceSessionCount: getOptionalNumberField(value, 'attendanceSessionCount'),
-    attendanceSessionMemberCount: getOptionalNumberField(value, 'attendanceSessionMemberCount'),
-});
-
-const parseHardDeleteMemberResult = (value: unknown): HardDeleteMemberResult => {
-    const deletedCounts = toRecord(toRecord(value).deletedCounts);
-
-    return {
-        memberId: getStringField(value, 'memberId'),
-        memberName: getStringField(value, 'memberName'),
-        deletedAuthUser: getBooleanField(value, 'deletedAuthUser'),
-        deletedCounts: {
-            memberBadges: getNumberField(deletedCounts, 'memberBadges'),
-            memberTeamLinks: getNumberField(deletedCounts, 'memberTeamLinks'),
-            recapSnapshots: getNumberField(deletedCounts, 'recapSnapshots'),
-            userProfiles: getNumberField(deletedCounts, 'userProfiles'),
-            attendanceSessionMembers: getNumberField(deletedCounts, 'attendanceSessionMembers'),
-            attendanceCheckins: getNumberField(deletedCounts, 'attendanceCheckins'),
-        },
-    };
-};
-
-const isNetworkFetchError = (error: unknown) => {
-    const message = getErrorMessage(error).toLowerCase();
-    return message.includes('failed to fetch') || message.includes('networkerror');
-};
-
-const isMissingSupabaseRelationError = (error: unknown, relationNames: string[]) => {
-    const message = getErrorMessage(error).toLowerCase();
-    const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
-        ? error.code.toUpperCase()
-        : '';
-
-    const mentionsRelation = relationNames.some((relationName) => {
-        const normalizedName = relationName.toLowerCase();
-        return message.includes(`public.${normalizedName}`) || message.includes(`'${normalizedName}'`);
-    });
-
-    return mentionsRelation && (
-        code === 'PGRST205'
-        || message.includes('schema cache')
-        || message.includes('could not find the table')
-        || message.includes('does not exist')
-    );
-};
-
-const reportDataFallback = (task: string, error: unknown) => {
-    latestDataFallbackState = {
-        id: `${task}-${Date.now()}`,
-        task,
-        message: getErrorMessage(error),
-    };
-    notifyDataFallbackListeners();
-};
-
 const sleep = (ms: number) => new Promise((resolve) => {
     window.setTimeout(resolve, ms);
 });
 
-export const getLatestDataFallbackState = () => latestDataFallbackState;
-
-export const subscribeToDataFallbackState = (listener: () => void) => {
-    dataFallbackListeners.add(listener);
-    return () => {
-        dataFallbackListeners.delete(listener);
-    };
-};
-
-export const clearLatestDataFallbackState = () => {
-    latestDataFallbackState = null;
-    notifyDataFallbackListeners();
-};
-
-export const subscribeToSiteBannerChanges = (listener: () => void) => {
-    siteBannerListeners.add(listener);
-    return () => {
-        siteBannerListeners.delete(listener);
-    };
-};
-
-let localMembers: Member[] = [
-    {
-        id: 'm1',
-        name: '이동섭',
-        score: 180,
-        loginEmail: 'leader@banollim.app',
-        authUserId: 'auth_m1',
-        authProvisionedAt: '2026-03-01T09:00:00.000Z',
-        passwordResetRequired: false,
-        isApproved: true,
-        roleId: 'r1',
-        roleName: '회장',
-        teamId: 't1',
-        teamName: '임원진',
-        status: 'active',
-        joinedAt: '2026-03-01',
-        isVisible: true,
-    },
-    {
-        id: 'm2',
-        name: '김주영',
-        score: 135,
-        loginEmail: 'vice@banollim.app',
-        authUserId: 'auth_m2',
-        authProvisionedAt: '2026-03-01T09:10:00.000Z',
-        passwordResetRequired: false,
-        isApproved: true,
-        roleId: 'r2',
-        roleName: '부회장',
-        teamId: 't1',
-        teamName: '임원진',
-        status: 'active',
-        joinedAt: '2026-03-01',
-        isVisible: true,
-    },
-    {
-        id: 'm3',
-        name: '김세현',
-        score: 95,
-        loginEmail: 'plan@banollim.app',
-        authUserId: null,
-        authProvisionedAt: null,
-        passwordResetRequired: false,
-        isApproved: true,
-        roleId: 'r3',
-        roleName: '기획팀장',
-        teamId: 't2',
-        teamName: '기획팀',
-        status: 'active',
-        joinedAt: '2026-03-02',
-        isVisible: true,
-    },
-    {
-        id: 'm4',
-        name: '이민희',
-        score: 40,
-        loginEmail: null,
-        authUserId: null,
-        authProvisionedAt: null,
-        passwordResetRequired: false,
-        isApproved: false,
-        roleId: null,
-        roleName: '홍보팀장',
-        teamId: 't3',
-        teamName: '홍보팀',
-        status: 'dormant',
-        joinedAt: '2026-03-03',
-        isVisible: true,
-    },
-];
-
-let localCategories: Category[] = [
-    {
-        id: 'p1',
-        activityTypeId: 'at_attendance_present',
-        categoryName: '정기모임 출석',
-        groupName: 'attendance',
-        pointValue: 10,
-        penaltyPoint: 0,
-        conditionSummary: '정시 참석 시 기본 점수 지급',
-        conditionJson: { summary: '정시 참석 시 기본 점수 지급' },
-        version: 1,
-        isActive: true,
-    },
-    {
-        id: 'p2',
-        activityTypeId: 'at_study',
-        categoryName: '스터디 참여',
-        groupName: 'study',
-        pointValue: 15,
-        penaltyPoint: 0,
-        conditionSummary: '스터디 출석 또는 실습 참여 완료',
-        conditionJson: { summary: '스터디 출석 또는 실습 참여 완료' },
-        version: 1,
-        isActive: true,
-    },
-    {
-        id: 'p3',
-        activityTypeId: 'at_presentation',
-        categoryName: '발표',
-        groupName: 'contribution',
-        pointValue: 30,
-        penaltyPoint: 0,
-        conditionSummary: '정기 발표 또는 세션 리딩',
-        conditionJson: { summary: '정기 발표 또는 세션 리딩' },
-        version: 2,
-        isActive: true,
-    },
-    {
-        id: 'p4',
-        activityTypeId: 'at_attendance_late',
-        categoryName: '지각',
-        groupName: 'attendance',
-        pointValue: -5,
-        penaltyPoint: 5,
-        conditionSummary: '정기모임 시작 이후 입장',
-        conditionJson: { summary: '정기모임 시작 이후 입장' },
-        version: 1,
-        isActive: true,
-    },
-    {
-        id: 'p5',
-        activityTypeId: 'at_attendance_absent',
-        categoryName: '불참',
-        groupName: 'attendance',
-        pointValue: 0,
-        penaltyPoint: 0,
-        conditionSummary: '사전 공유된 불참 처리 규칙 적용',
-        conditionJson: { summary: '사전 공유된 불참 처리 규칙 적용' },
-        version: 1,
-        isActive: true,
-    },
-];
-
-const defaultActivityGroups: ActivityGroup[] = [
-    { code: 'attendance', name: '출석', sortOrder: 10, isActive: true },
-    { code: 'study', name: '스터디', sortOrder: 20, isActive: true },
-    { code: 'contribution', name: '기여', sortOrder: 30, isActive: true },
-    { code: 'operations', name: '운영', sortOrder: 40, isActive: true },
-    { code: 'manual', name: '기타', sortOrder: 50, isActive: true },
-];
-
-let localActivityGroups: ActivityGroup[] = [...defaultActivityGroups];
-
-let localLogs: ActivityLog[] = [
-    {
-        id: 'l1',
-        recordId: 'record_l1',
-        timestamp: new Date(Date.now() - 1000 * 60 * 60 * 24 * 2).toISOString(),
-        memberId: 'm1',
-        categoryId: 'p1',
-        pointDelta: 10,
-        reason: '정기모임 출석',
-        note: '주간 정기모임',
-        evidenceUrl: 'https://example.com/attendance-sheet',
-        recordStatus: 'confirmed',
-    },
-    {
-        id: 'l2',
-        recordId: 'record_l2',
-        timestamp: new Date(Date.now() - 1000 * 60 * 60 * 24).toISOString(),
-        memberId: 'm2',
-        categoryId: 'p3',
-        pointDelta: 30,
-        reason: '발표',
-        note: 'AI 스터디 세션',
-        evidenceUrl: 'https://example.com/slides/ai-study',
-        recordStatus: 'confirmed',
-    },
-];
-
-const localAuditLogs: AuditLogEntry[] = [
-    {
-        id: 'audit_1',
-        actorId: null,
-        actorName: '로컬 운영자',
-        entityType: 'activity_record',
-        entityId: 'record_l1',
-        action: 'created',
-        summary: '이동섭 · 정기모임 출석 기록 생성',
-        createdAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 2).toISOString(),
-        diff: {
-            memberId: 'm1',
-            memberName: '이동섭',
-            pointRuleId: 'p1',
-            ruleName: '정기모임 출석',
-            delta: 10,
-            reason: '정기모임 출석',
-        },
-    },
-    {
-        id: 'audit_2',
-        actorId: null,
-        actorName: '로컬 운영자',
-        entityType: 'activity_record',
-        entityId: 'record_l2',
-        action: 'created',
-        summary: '김주영 · 발표 기록 생성',
-        createdAt: new Date(Date.now() - 1000 * 60 * 60 * 24).toISOString(),
-        diff: {
-            memberId: 'm2',
-            memberName: '김주영',
-            pointRuleId: 'p3',
-            ruleName: '발표',
-            delta: 30,
-            reason: '발표',
-        },
-    },
-];
-
-const localCorrectionRequests: CorrectionRequest[] = [
-    {
-        id: 'correction_1',
-        requesterMemberId: 'm1',
-        requesterName: '이동섭',
-        activityRecordId: 'record_l1',
-        status: 'pending',
-        reason: '주간 정기모임이 아니라 월간 전체모임 출석으로 기록되어 메모 수정이 필요합니다.',
-        reviewNote: null,
-        reviewedBy: null,
-        reviewedByName: null,
-        reviewedAt: null,
-        createdAt: new Date(Date.now() - 1000 * 60 * 60 * 18).toISOString(),
-        updatedAt: new Date(Date.now() - 1000 * 60 * 60 * 18).toISOString(),
-        activitySummary: '정기모임 출석',
-        activityOccurredAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 2).toISOString(),
-        activityPointDelta: 10,
-    },
-];
-
-let localBadges: Badge[] = [
-    {
-        id: 'badge_first_step',
-        code: 'first_step',
-        name: '첫 발자국',
-        description: '첫 활동 기록을 남겼습니다.',
-        iconKey: 'bandi-core',
-        imageUrl: null,
-        tone: 'gold',
-        evaluationScope: 'season',
-        criteria: { activityCount: 1 },
-        sortOrder: 10,
-        isActive: true,
-    },
-    {
-        id: 'badge_steady_rhythm',
-        code: 'steady_rhythm',
-        name: '꾸준한 리듬',
-        description: '서로 다른 날짜에 3회 이상 활동을 이어갔습니다.',
-        iconKey: 'bandi-orbit',
-        imageUrl: null,
-        tone: 'emerald',
-        evaluationScope: 'season',
-        criteria: { activeDayCount: 3 },
-        sortOrder: 20,
-        isActive: true,
-    },
-    {
-        id: 'badge_attendance_radar',
-        code: 'attendance_radar',
-        name: '출석 레이더',
-        description: '출석 계열 활동을 5회 이상 기록했습니다.',
-        iconKey: 'school-signal',
-        imageUrl: null,
-        tone: 'sky',
-        evaluationScope: 'season',
-        criteria: { attendanceCount: 5 },
-        sortOrder: 30,
-        isActive: true,
-    },
-    {
-        id: 'badge_spotlight',
-        code: 'spotlight',
-        name: '스포트라이트',
-        description: '발표 또는 고점수 기여를 남겼습니다.',
-        iconKey: 'bandi-flash',
-        imageUrl: null,
-        tone: 'rose',
-        evaluationScope: 'season',
-        criteria: { spotlightCount: 1 },
-        sortOrder: 40,
-        isActive: true,
-    },
-    {
-        id: 'badge_multi_tool',
-        code: 'multi_tool',
-        name: '멀티 플레이어',
-        description: '서로 다른 활동 유형 4개 이상을 경험했습니다.',
-        iconKey: 'didi-toolkit',
-        imageUrl: null,
-        tone: 'sky',
-        evaluationScope: 'season',
-        criteria: { uniqueActivityTypeCount: 4 },
-        sortOrder: 50,
-        isActive: true,
-    },
-    {
-        id: 'badge_archive_keeper',
-        code: 'archive_keeper',
-        name: '기록 보관자',
-        description: '증빙 링크가 포함된 활동을 2건 이상 남겼습니다.',
-        iconKey: 'didi-archive',
-        imageUrl: null,
-        tone: 'emerald',
-        evaluationScope: 'season',
-        criteria: { evidenceCount: 2 },
-        sortOrder: 60,
-        isActive: true,
-    },
-];
-
-const localMemberBadges: MemberBadge[] = [];
-
-const localRoles: RoleSummary[] = [
-    { id: 'r1', name: '회장', permissionScope: 'super_admin', rankOrder: 10 },
-    { id: 'r2', name: '부회장', permissionScope: 'operator', rankOrder: 20 },
-    { id: 'r3', name: '기획팀장', permissionScope: 'operator', rankOrder: 30 },
-    { id: 'r4', name: '일반회원', permissionScope: 'member', rankOrder: 100 },
-];
-
-const localTeams: TeamSummary[] = [
-    { id: 't1', name: '임원진', type: 'core', isActive: true },
-    { id: 't2', name: '기획팀', type: 'core', isActive: true },
-    { id: 't3', name: '홍보팀', type: 'core', isActive: true },
-    { id: 't4', name: '운영팀', type: 'core', isActive: true },
-    { id: 't5', name: '스터디', type: 'study', isActive: true },
-];
-
-let localMemberTeamLinks: Array<{ id: string; memberId: string; teamId: string; createdAt: string }> = localMembers
-    .filter((member) => member.teamId)
-    .map((member, index) => ({
-        id: `member_team_${index + 1}`,
-        memberId: member.id,
-        teamId: member.teamId!,
-        createdAt: new Date().toISOString(),
-    }));
-
 const getLocalMemberTeamIds = (memberId: string) =>
-    dedupeTeamIds(localMemberTeamLinks.filter((link) => link.memberId === memberId).map((link) => link.teamId));
+    dedupeTeamIds(localState.memberTeamLinks.filter((link) => link.memberId === memberId).map((link) => link.teamId));
 
 const getLocalMemberTeamNames = (memberId: string) =>
     getLocalMemberTeamIds(memberId)
@@ -699,8 +191,8 @@ const getLocalMemberTeamNames = (memberId: string) =>
 
 const syncLocalMemberTeamState = (memberId: string, requestedTeamIds: string[]) => {
     const normalizedTeamIds = dedupeTeamIds(requestedTeamIds).filter((teamId) => Boolean(getLocalTeamById(teamId)));
-    localMemberTeamLinks = [
-        ...localMemberTeamLinks.filter((link) => link.memberId !== memberId),
+    localState.memberTeamLinks = [
+        ...localState.memberTeamLinks.filter((link) => link.memberId !== memberId),
         ...normalizedTeamIds.map((teamId) => ({
             id: createLocalId('member_team'),
             memberId,
@@ -714,7 +206,7 @@ const syncLocalMemberTeamState = (memberId: string, requestedTeamIds: string[]) 
         .map((teamId) => getLocalTeamById(teamId)?.name ?? null)
         .filter((teamName): teamName is string => Boolean(teamName));
 
-    localMembers = localMembers.map((member) =>
+    localState.members = localState.members.map((member) =>
         member.id === memberId
             ? {
                 ...member,
@@ -727,27 +219,8 @@ const syncLocalMemberTeamState = (memberId: string, requestedTeamIds: string[]) 
     );
 };
 
-const localCurrentSeason: SeasonSummary = {
-    id: 'season_2026_spring',
-    name: '2026 상반기',
-    status: 'active',
-    startDate: '2026-03-01',
-    endDate: '2026-08-31',
-};
-
-const localSeasons: SeasonSummary[] = [
-    localCurrentSeason,
-    {
-        id: 'season_2025_fall',
-        name: '2025 하반기',
-        status: 'closed',
-        startDate: '2025-09-01',
-        endDate: '2026-02-28',
-    },
-];
-
 const getLocalCurrentSeasonSummary = () =>
-    [...localSeasons]
+    [...localState.seasons]
         .filter((season) => season.status === 'active')
         .sort((a, b) => b.startDate.localeCompare(a.startDate))[0] ?? null;
 
@@ -758,59 +231,6 @@ const isTimestampInSeason = (timestamp: string, season: SeasonSummary) => {
 
     return targetTime >= seasonStartTime && targetTime <= seasonEndTime;
 };
-
-let localAnnouncements: AnnouncementItem[] = [
-    {
-        id: 'notice_1',
-        title: '3월 정기모임 운영 안내',
-        body: '이번 주 정기모임은 활동 리캡 공유와 시즌 출석 규칙 안내를 함께 진행합니다.',
-        startAt: new Date(Date.now() - 1000 * 60 * 60 * 24).toISOString(),
-        endAt: null,
-        isPinned: true,
-        isActive: true,
-        createdAt: new Date(Date.now() - 1000 * 60 * 60 * 24).toISOString(),
-    },
-    {
-        id: 'notice_2',
-        title: '발표 자료 제출 마감',
-        body: '발표자는 모임 전날 밤 10시까지 자료 링크를 제출해 주세요.',
-        startAt: new Date().toISOString(),
-        endAt: null,
-        isPinned: false,
-        isActive: true,
-        createdAt: new Date().toISOString(),
-    },
-];
-
-let localScheduleEvents: ScheduleEventItem[] = [
-    {
-        id: 'schedule_1',
-        title: '정기모임 오프라인 세션',
-        description: '출석 체크와 시즌 규칙 설명, 팀별 브리핑을 진행합니다.',
-        location: '반디스쿨 3층 세미나실',
-        startAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 2).toISOString(),
-        endAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 2 + 1000 * 60 * 90).toISOString(),
-        seasonId: localCurrentSeason.id,
-        isActive: true,
-        createdAt: new Date().toISOString(),
-    },
-    {
-        id: 'schedule_2',
-        title: '운영진 주간 체크인',
-        description: '승인 대기, 정정 요청, 리캡 공유 카드 현황을 점검합니다.',
-        location: '온라인 미트',
-        startAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 4).toISOString(),
-        endAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 4 + 1000 * 60 * 45).toISOString(),
-        seasonId: localCurrentSeason.id,
-        isActive: true,
-        createdAt: new Date().toISOString(),
-    },
-];
-
-let localSiteBanners: SiteBanner[] = [];
-let localRecapSnapshots: RecapSnapshot[] = [];
-let localAttendanceSessions: AttendanceSession[] = [];
-let localAttendanceSessionMembers: AttendanceSessionMember[] = [];
 
 const sortMembers = (members: Member[]) => [...members].sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
 const sortAnnouncements = (items: AnnouncementItem[]) =>
@@ -829,12 +249,12 @@ const sortAttendanceSessions = (items: AttendanceSession[]) =>
     });
 
 const getLocalCategoryById = (categoryId?: string | null) =>
-    localCategories.find((category) => category.id === categoryId) ?? null;
+    localState.categories.find((category) => category.id === categoryId) ?? null;
 
 const rebuildLocalAttendanceSessions = () => {
-    const teamMap = new Map(localTeams.map((team) => [team.id, team.name]));
+    const teamMap = new Map(localState.teams.map((team) => [team.id, team.name]));
 
-    localAttendanceSessions = sortAttendanceSessions(localAttendanceSessions.map((session) =>
+    localState.attendanceSessions = sortAttendanceSessions(localState.attendanceSessions.map((session) =>
         mapAttendanceSession(
             {
                 id: session.id,
@@ -850,7 +270,7 @@ const rebuildLocalAttendanceSessions = () => {
                 target_group_type: session.targetGroupType,
                 target_team_id: session.targetTeamId ?? null,
             },
-            localAttendanceSessionMembers.filter((entry) => entry.sessionId === session.id),
+            localState.attendanceSessionMembers.filter((entry) => entry.sessionId === session.id),
             teamMap,
         ),
     ));
@@ -865,28 +285,28 @@ const refreshLocalMemberBadgesForMembers = (memberIds: string[]) => {
 
     normalizedMemberIds.forEach((memberId) => syncLocalMemberBadges(memberId));
 
-    return localMemberBadges.filter((badge) => normalizedMemberIds.includes(badge.memberId)).length;
+    return localState.memberBadges.filter((badge) => normalizedMemberIds.includes(badge.memberId)).length;
 };
 
 const removeLocalActivityRecords = (predicate: (log: ActivityLog, category: Category | null) => boolean) => {
-    const targetedLogs = localLogs.filter((log) => predicate(log, getLocalCategoryById(log.categoryId)));
+    const targetedLogs = localState.logs.filter((log) => predicate(log, getLocalCategoryById(log.categoryId)));
     const targetedRecordIds = new Set(targetedLogs.map((log) => log.recordId).filter((recordId): recordId is string => Boolean(recordId)));
     const targetedMemberIds = [...new Set(targetedLogs.map((log) => log.memberId))];
-    const pointLedgerCount = localLogs.filter((log) => log.recordId && targetedRecordIds.has(log.recordId)).length;
-    const correctionRequestCount = localCorrectionRequests.filter((request) =>
+    const pointLedgerCount = localState.logs.filter((log) => log.recordId && targetedRecordIds.has(log.recordId)).length;
+    const correctionRequestCount = localState.correctionRequests.filter((request) =>
         Boolean(request.activityRecordId && targetedRecordIds.has(request.activityRecordId)),
     ).length;
 
-    localLogs = localLogs.filter((log) => !log.recordId || !targetedRecordIds.has(log.recordId));
-    localAttendanceSessionMembers = localAttendanceSessionMembers.map((entry) =>
+    localState.logs = localState.logs.filter((log) => !log.recordId || !targetedRecordIds.has(log.recordId));
+    localState.attendanceSessionMembers = localState.attendanceSessionMembers.map((entry) =>
         entry.activityRecordId && targetedRecordIds.has(entry.activityRecordId)
             ? { ...entry, activityRecordId: null }
             : entry,
     );
 
-    for (let index = localCorrectionRequests.length - 1; index >= 0; index -= 1) {
-        if (localCorrectionRequests[index].activityRecordId && targetedRecordIds.has(localCorrectionRequests[index].activityRecordId!)) {
-            localCorrectionRequests.splice(index, 1);
+    for (let index = localState.correctionRequests.length - 1; index >= 0; index -= 1) {
+        if (localState.correctionRequests[index].activityRecordId && targetedRecordIds.has(localState.correctionRequests[index].activityRecordId!)) {
+            localState.correctionRequests.splice(index, 1);
         }
     }
 
@@ -901,10 +321,10 @@ const removeLocalActivityRecords = (predicate: (log: ActivityLog, category: Cate
 };
 
 const enrichLocalLogs = () => {
-    const memberMap = new Map(localMembers.map((member) => [member.id, member]));
-    const categoryMap = new Map(localCategories.map((category) => [category.id, category]));
+    const memberMap = new Map(localState.members.map((member) => [member.id, member]));
+    const categoryMap = new Map(localState.categories.map((category) => [category.id, category]));
 
-    return [...localLogs]
+    return [...localState.logs]
         .map((log) => ({
             ...log,
             memberName: memberMap.get(log.memberId)?.name ?? '알 수 없는 멤버',
@@ -914,7 +334,7 @@ const enrichLocalLogs = () => {
 };
 
 const getLocalSelfMember = (memberId?: string | null) => {
-    const sortedMembers = sortMembers(localMembers);
+    const sortedMembers = sortMembers(localState.members);
 
     if (!memberId) {
         return sortedMembers[0] ?? null;
@@ -939,7 +359,7 @@ const sortCorrectionRequests = (requests: CorrectionRequest[]) =>
     [...requests].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 
 const logLocalAuditEntry = (entry: Omit<AuditLogEntry, 'id' | 'createdAt'> & { createdAt?: string }) => {
-    localAuditLogs.push({
+    localState.auditLogs.push({
         id: createLocalId('audit'),
         createdAt: entry.createdAt ?? new Date().toISOString(),
         ...entry,
@@ -948,20 +368,20 @@ const logLocalAuditEntry = (entry: Omit<AuditLogEntry, 'id' | 'createdAt'> & { c
 
 const getLocalCorrectionRequests = (requesterMemberId?: string | null) =>
     sortCorrectionRequests(
-        localCorrectionRequests
+        localState.correctionRequests
             .filter((request) => !requesterMemberId || request.requesterMemberId === requesterMemberId)
             .map((request) => ({ ...request })),
     );
 
 const getEffectiveLocalLogsForMember = (memberId: string) =>
-    enrichLocalLogs().filter((log) => log.memberId === memberId && !log.isReversal && log.recordStatus !== 'reversed');
+    filterEffectiveActivityLogs(enrichLocalLogs()).filter((log) => log.memberId === memberId);
 
 const getLocalBadgeMetricsForScope = (memberId: string, badge: Badge, seasonId?: string | null) => {
     const effectiveLogs = getEffectiveLocalLogsForMember(memberId);
     const scopedLogs = badge.evaluationScope === 'lifetime'
         ? effectiveLogs
         : effectiveLogs.filter((log) => {
-            const targetSeason = localSeasons.find((season) => season.id === seasonId) ?? null;
+            const targetSeason = localState.seasons.find((season) => season.id === seasonId) ?? null;
             return targetSeason ? isTimestampInSeason(log.timestamp, targetSeason) : false;
         });
 
@@ -969,14 +389,14 @@ const getLocalBadgeMetricsForScope = (memberId: string, badge: Badge, seasonId?:
 };
 
 const syncLocalMemberBadges = (memberId?: string | null) => {
-    const targetIds = memberId ? [memberId] : localMembers.map((member) => member.id);
-    const activeSeasonId = getLocalCurrentSeasonSummary()?.id ?? localCurrentSeason.id;
+    const targetIds = memberId ? [memberId] : localState.members.map((member) => member.id);
+    const activeSeasonId = getLocalCurrentSeasonSummary()?.id ?? localState.currentSeason.id;
 
     targetIds.forEach((targetId) => {
-        const badgesBySort = [...localBadges].sort((a, b) => (a.sortOrder ?? 999) - (b.sortOrder ?? 999) || a.name.localeCompare(b.name));
+        const badgesBySort = [...localState.badges].sort((a, b) => (a.sortOrder ?? 999) - (b.sortOrder ?? 999) || a.name.localeCompare(b.name));
 
         badgesBySort.forEach((badge) => {
-            const existingAward = localMemberBadges.find((entry) => entry.memberId === targetId && entry.badgeId === badge.id) ?? null;
+            const existingAward = localState.memberBadges.find((entry) => entry.memberId === targetId && entry.badgeId === badge.id) ?? null;
             const targetSeasonId = badge.evaluationScope === 'season'
                 ? existingAward?.seasonId ?? activeSeasonId
                 : null;
@@ -984,7 +404,7 @@ const syncLocalMemberBadges = (memberId?: string | null) => {
             const isEligible = badge.isActive !== false && isBadgeEarnedByMetrics(badge.criteria, metrics);
 
             if (isEligible && !existingAward) {
-                localMemberBadges.push({
+                localState.memberBadges.push({
                     id: createLocalId('member_badge'),
                     memberId: targetId,
                     badgeId: badge.id,
@@ -1002,16 +422,16 @@ const syncLocalMemberBadges = (memberId?: string | null) => {
             }
 
             if (!isEligible && existingAward) {
-                const targetIndex = localMemberBadges.findIndex((entry) => entry.id === existingAward.id);
+                const targetIndex = localState.memberBadges.findIndex((entry) => entry.id === existingAward.id);
                 if (targetIndex >= 0) {
-                    localMemberBadges.splice(targetIndex, 1);
+                    localState.memberBadges.splice(targetIndex, 1);
                 }
             }
 
             if (isEligible && existingAward) {
-                const targetIndex = localMemberBadges.findIndex((entry) => entry.id === existingAward.id);
+                const targetIndex = localState.memberBadges.findIndex((entry) => entry.id === existingAward.id);
                 if (targetIndex >= 0) {
-                    localMemberBadges.splice(targetIndex, 1, {
+                    localState.memberBadges.splice(targetIndex, 1, {
                         ...existingAward,
                         badgeCode: badge.code,
                         badgeName: badge.name,
@@ -1037,19 +457,19 @@ const getLocalMemberBadges = (memberId?: string | null) => {
 
     syncLocalMemberBadges(targetId);
 
-    return [...localMemberBadges]
+    return [...localState.memberBadges]
         .filter((entry) => entry.memberId === targetId)
         .sort((a, b) => {
-            const badgeA = localBadges.find((badge) => badge.id === a.badgeId);
-            const badgeB = localBadges.find((badge) => badge.id === b.badgeId);
+            const badgeA = localState.badges.find((badge) => badge.id === a.badgeId);
+            const badgeB = localState.badges.find((badge) => badge.id === b.badgeId);
             return (badgeA?.sortOrder ?? 999) - (badgeB?.sortOrder ?? 999) || b.awardedAt.localeCompare(a.awardedAt);
         });
 };
 
 const getAllLocalMemberBadges = () => {
-    localMembers.forEach((member) => syncLocalMemberBadges(member.id));
+    localState.members.forEach((member) => syncLocalMemberBadges(member.id));
 
-    return [...localMemberBadges].sort((a, b) => b.awardedAt.localeCompare(a.awardedAt));
+    return [...localState.memberBadges].sort((a, b) => b.awardedAt.localeCompare(a.awardedAt));
 };
 
 const parseJsonObject = (value: Json): Record<string, unknown> | null => {
@@ -1127,57 +547,6 @@ const mapRecapSnapshot = (
     };
 };
 
-const getAttendanceRule = (categories: Category[], status: AttendanceStatus) =>
-    categories.find((category) => {
-        if (!attendanceRuleMatchers[status].test(category.categoryName)) {
-            return false;
-        }
-
-        if (status === 'present') {
-            return !attendanceRuleMatchers.late.test(category.categoryName)
-                && !attendanceRuleMatchers.absent.test(category.categoryName);
-        }
-
-        return true;
-    }) ?? null;
-
-const filterMembersForAttendanceGroup = (
-    members: Member[],
-    targetGroupType: AttendanceTargetGroup,
-    targetTeamId?: string | null,
-) =>
-    members.filter((member) => {
-        if (member.status === 'inactive') {
-            return false;
-        }
-
-        if (targetGroupType === 'all') {
-            return true;
-        }
-
-        if (targetGroupType === 'ungrouped') {
-            return (member.teamIds ?? []).length === 0 && !member.teamId;
-        }
-
-        return (member.teamIds ?? []).includes(targetTeamId ?? '') || member.teamId === targetTeamId;
-    });
-
-const getAttendanceTargetGroupLabel = (
-    targetGroupType: AttendanceTargetGroup,
-    targetTeamId: string | null | undefined,
-    teamMap: Map<string, string>,
-) => {
-    if (targetGroupType === 'all') {
-        return '전체 멤버';
-    }
-
-    if (targetGroupType === 'ungrouped') {
-        return '팀 미지정';
-    }
-
-    return targetTeamId ? teamMap.get(targetTeamId) ?? '삭제된 팀' : '삭제된 팀';
-};
-
 const mapAttendanceSessionMember = (
     row: Pick<AttendanceSessionMemberRow, 'id' | 'session_id' | 'member_id' | 'attendance_status' | 'activity_record_id' | 'created_at' | 'updated_at'>,
     memberMap: Map<string, Member>,
@@ -1249,14 +618,6 @@ const fallback = <T>(task: string, getLocalValue: () => T, error?: unknown): T =
     return getLocalValue();
 };
 
-const getSupabaseClient = () => {
-    if (!supabase) {
-        throw new Error('Supabase 클라이언트가 설정되지 않았습니다.');
-    }
-
-    return supabase;
-};
-
 const createActivityCode = () => `manual-${Date.now()}`;
 
 const getConditionSummary = (value: Json | Record<string, unknown> | null | undefined) => {
@@ -1296,15 +657,15 @@ const createLocalActivityEntryRecord = (
     const occurredAt = options?.occurredAt ?? new Date().toISOString();
     const evidenceUrl = options?.evidenceUrl?.trim() || null;
     const recordId = createLocalId('record');
-    const category = localCategories.find((item) => item.id === categoryId);
-    const member = localMembers.find((item) => item.id === memberId);
+    const category = localState.categories.find((item) => item.id === categoryId);
+    const member = localState.members.find((item) => item.id === memberId);
 
     if (!category || !member) {
         throw new Error('활동 기록에 필요한 멤버 또는 규칙을 찾지 못했습니다.');
     }
 
     member.score += category.pointValue;
-    localLogs.push({
+    localState.logs.push({
         id: createLocalId('log'),
         recordId,
         timestamp: occurredAt,
@@ -1342,15 +703,15 @@ const createLocalActivityEntryRecord = (
 
 const reverseLocalActivityEntryRecord = (recordId: string, note?: string | null) => {
     const trimmedNote = note?.trim() || null;
-    const originalLog = localLogs.find((log) => log.recordId === recordId && !log.reversalOf);
-    const hasReversal = localLogs.some((log) => log.reversalOf === originalLog?.id);
+    const originalLog = localState.logs.find((log) => log.recordId === recordId && !log.reversalOf);
+    const hasReversal = localState.logs.some((log) => log.reversalOf === originalLog?.id);
 
     if (!originalLog || hasReversal) {
         return;
     }
 
-    const category = localCategories.find((item) => item.id === originalLog.categoryId);
-    const member = localMembers.find((item) => item.id === originalLog.memberId);
+    const category = localState.categories.find((item) => item.id === originalLog.categoryId);
+    const member = localState.members.find((item) => item.id === originalLog.memberId);
 
     if (member) {
         member.score -= originalLog.pointDelta;
@@ -1358,7 +719,7 @@ const reverseLocalActivityEntryRecord = (recordId: string, note?: string | null)
 
     const reversalTimestamp = new Date().toISOString();
 
-    localLogs = localLogs.map((log) =>
+    localState.logs = localState.logs.map((log) =>
         log.recordId === recordId
             ? {
                 ...log,
@@ -1367,7 +728,7 @@ const reverseLocalActivityEntryRecord = (recordId: string, note?: string | null)
             : log,
     );
 
-    localLogs.push({
+    localState.logs.push({
         id: createLocalId('log'),
         recordId,
         timestamp: reversalTimestamp,
@@ -1501,7 +862,7 @@ export const getMembers = async (options?: { includeLoginEmail?: boolean; includ
 
     if (!isSupabaseConfigured) {
         return sortMembers(
-            localMembers
+            localState.members
                 .filter((member) => includeHidden || member.isVisible !== false)
                 .map((member) => ({
                     ...member,
@@ -1637,7 +998,7 @@ export const getMembers = async (options?: { includeLoginEmail?: boolean; includ
             'getMembers',
             () =>
                 sortMembers(
-                    localMembers
+                    localState.members
                         .filter((member) => includeHidden || member.isVisible !== false)
                         .map((member) => ({
                             ...member,
@@ -1657,7 +1018,7 @@ export const isRegisteredLoginEmail = async (email: string): Promise<boolean> =>
     }
 
     if (!isSupabaseConfigured) {
-        return localMembers.some((member) => normalizeLoginEmail(member.loginEmail) === normalizedEmail);
+        return localState.members.some((member) => normalizeLoginEmail(member.loginEmail) === normalizedEmail);
     }
 
     try {
@@ -1683,7 +1044,7 @@ export const provisionMemberPasswordAuth = async (memberId: string): Promise<{
     memberName: string;
     isExistingAccount: boolean;
 }> => {
-    const member = localMembers.find((entry) => entry.id === memberId) ?? null;
+    const member = localState.members.find((entry) => entry.id === memberId) ?? null;
 
     if (!isSupabaseConfigured) {
         if (!member?.loginEmail) {
@@ -1693,7 +1054,7 @@ export const provisionMemberPasswordAuth = async (memberId: string): Promise<{
         const temporaryPassword = createTemporaryPassword();
         const provisionedAt = new Date().toISOString();
 
-        localMembers = localMembers.map((entry) =>
+        localState.members = localState.members.map((entry) =>
             entry.id === memberId
                 ? {
                     ...entry,
@@ -1774,7 +1135,7 @@ export const completeMyPasswordSetup = async (): Promise<void> => {
 
 export const getActivityGroups = async (): Promise<ActivityGroup[]> => {
     if (!isSupabaseConfigured) {
-        return [...localActivityGroups]
+        return [...localState.activityGroups]
             .filter((group) => group.isActive)
             .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
     }
@@ -1801,7 +1162,7 @@ export const getActivityGroups = async (): Promise<ActivityGroup[]> => {
         return fallback(
             'getActivityGroups',
             () =>
-                [...localActivityGroups]
+                [...localState.activityGroups]
                     .filter((group) => group.isActive)
                     .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name)),
             error,
@@ -1826,7 +1187,7 @@ export const addActivityGroup = async ({ name, sortOrder }: ActivityGroupInput):
             sortOrder: nextSortOrder,
             isActive: true,
         };
-        localActivityGroups.push(nextGroup);
+        localState.activityGroups.push(nextGroup);
         return nextGroup;
     }
 
@@ -1872,7 +1233,7 @@ export const updateActivityGroup = async (
             sortOrder: nextSortOrder,
             isActive: true,
         };
-        localActivityGroups = localActivityGroups.map((group) => (group.code === code ? nextGroup : group));
+        localState.activityGroups = localState.activityGroups.map((group) => (group.code === code ? nextGroup : group));
         return nextGroup;
     }
 
@@ -1900,12 +1261,12 @@ export const updateActivityGroup = async (
 };
 
 export const deleteActivityGroup = async (code: string): Promise<void> => {
-    const isUsedLocally = localCategories.some((category) => category.groupName === code);
+    const isUsedLocally = localState.categories.some((category) => category.groupName === code);
     if (!isSupabaseConfigured) {
         if (isUsedLocally) {
             throw new Error('이 분류를 사용하는 규칙이 있어 삭제할 수 없습니다.');
         }
-        localActivityGroups = localActivityGroups.filter((group) => group.code !== code);
+        localState.activityGroups = localState.activityGroups.filter((group) => group.code !== code);
         return;
     }
 
@@ -1931,7 +1292,7 @@ export const deleteActivityGroup = async (code: string): Promise<void> => {
 
 export const getCategories = async (): Promise<Category[]> => {
     if (!isSupabaseConfigured) {
-        return localCategories
+        return localState.categories
             .filter((category) => category.isActive !== false)
             .sort((a, b) => a.categoryName.localeCompare(b.categoryName));
     }
@@ -1964,7 +1325,7 @@ export const getCategories = async (): Promise<Category[]> => {
         return fallback(
             'getCategories',
             () =>
-                localCategories
+                localState.categories
                     .filter((category) => category.isActive !== false)
                     .sort((a, b) => a.categoryName.localeCompare(b.categoryName)),
             error,
@@ -2057,22 +1418,6 @@ const mapMyActivityLogRow = (row: MyActivityLogRow): ActivityLog => ({
     recordStatus: row.record_status,
 });
 
-const mapMyMemberBadgeRow = (row: MyMemberBadgeRow): MemberBadge => ({
-    id: row.id,
-    memberId: row.member_id,
-    badgeId: row.badge_id,
-    badgeCode: row.badge_code,
-    badgeName: row.badge_name,
-    badgeDescription: row.badge_description,
-    iconKey: row.icon_key,
-    imageUrl: row.image_url,
-    tone: (row.tone as BadgeTone | null) ?? 'sky',
-    evaluationScope: parseBadgeEvaluationScope(row.evaluation_scope),
-    criteria: parseBadgeCriteriaValue(row.criteria_json),
-    awardedAt: row.awarded_at,
-    seasonId: row.season_id,
-});
-
 const mapCorrectionRequestRow = (
     row: CorrectionRequestRow,
     logs: ActivityLog[],
@@ -2157,7 +1502,7 @@ export const getMyMemberBadges = async (memberId?: string | null): Promise<Membe
             throw error;
         }
 
-        return ((data ?? []) as MyMemberBadgeRow[]).map(mapMyMemberBadgeRow);
+        return ((data ?? []) as MyMemberBadgeRow[]).map(mapMemberBadgeRow);
     } catch (error) {
         return fallback('getMyMemberBadges', () => getLocalMemberBadges(memberId), error);
     }
@@ -2167,7 +1512,7 @@ export const getBadges = async (options?: { includeInactive?: boolean }): Promis
     const includeInactive = options?.includeInactive ?? false;
 
     if (!isSupabaseConfigured) {
-        return [...localBadges]
+        return [...localState.badges]
             .filter((badge) => includeInactive || badge.isActive !== false)
             .sort((a, b) => (a.sortOrder ?? 999) - (b.sortOrder ?? 999) || a.name.localeCompare(b.name));
     }
@@ -2195,7 +1540,7 @@ export const getBadges = async (options?: { includeInactive?: boolean }): Promis
     } catch (error) {
         return fallback(
             'getBadges',
-            () => [...localBadges]
+            () => [...localState.badges]
                 .filter((badge) => includeInactive || badge.isActive !== false)
                 .sort((a, b) => (a.sortOrder ?? 999) - (b.sortOrder ?? 999) || a.name.localeCompare(b.name)),
             error,
@@ -2243,18 +1588,20 @@ export const getMemberBadges = async (): Promise<MemberBadge[]> => {
                 return [];
             }
 
+            const mappedBadge = mapBadgeRow(badge);
+
             return [{
                 id: entry.id,
                 memberId: entry.member_id,
                 badgeId: entry.badge_id,
-                badgeCode: badge.code,
-                badgeName: badge.name,
-                badgeDescription: badge.description,
-                iconKey: badge.icon_key,
-                imageUrl: badge.image_url,
-                tone: (badge.tone as BadgeTone | null) ?? 'sky',
-                evaluationScope: parseBadgeEvaluationScope(badge.evaluation_scope),
-                criteria: parseBadgeCriteriaValue(badge.criteria_json),
+                badgeCode: mappedBadge.code,
+                badgeName: mappedBadge.name,
+                badgeDescription: mappedBadge.description,
+                iconKey: mappedBadge.iconKey,
+                imageUrl: mappedBadge.imageUrl,
+                tone: mappedBadge.tone,
+                evaluationScope: mappedBadge.evaluationScope,
+                criteria: mappedBadge.criteria,
                 awardedAt: entry.awarded_at,
                 seasonId: entry.season_id,
             }];
@@ -2272,8 +1619,8 @@ export const addBadge = async (input: BadgeUpsertInput): Promise<Badge> => {
             id: createLocalId('badge'),
             ...normalizedInput,
         };
-        localBadges = [...localBadges, badge].sort((a, b) => (a.sortOrder ?? 999) - (b.sortOrder ?? 999) || a.name.localeCompare(b.name));
-        refreshLocalMemberBadgesForMembers(localMembers.map((member) => member.id));
+        localState.badges = [...localState.badges, badge].sort((a, b) => (a.sortOrder ?? 999) - (b.sortOrder ?? 999) || a.name.localeCompare(b.name));
+        refreshLocalMemberBadgesForMembers(localState.members.map((member) => member.id));
         logLocalAuditEntry({
             actorId: null,
             actorName: '로컬 운영자',
@@ -2325,7 +1672,7 @@ export const updateBadge = async (id: string, input: BadgeUpsertInput): Promise<
     const normalizedInput = normalizeBadgeInput(input);
 
     if (!isSupabaseConfigured) {
-        const existingBadge = localBadges.find((badge) => badge.id === id);
+        const existingBadge = localState.badges.find((badge) => badge.id === id);
         if (!existingBadge) {
             throw new Error('수정할 배지를 찾지 못했습니다.');
         }
@@ -2334,10 +1681,10 @@ export const updateBadge = async (id: string, input: BadgeUpsertInput): Promise<
             ...existingBadge,
             ...normalizedInput,
         };
-        localBadges = localBadges
+        localState.badges = localState.badges
             .map((badge) => (badge.id === id ? nextBadge : badge))
             .sort((a, b) => (a.sortOrder ?? 999) - (b.sortOrder ?? 999) || a.name.localeCompare(b.name));
-        refreshLocalMemberBadgesForMembers(localMembers.map((member) => member.id));
+        refreshLocalMemberBadgesForMembers(localState.members.map((member) => member.id));
         return nextBadge;
     }
 
@@ -2373,10 +1720,10 @@ export const updateBadge = async (id: string, input: BadgeUpsertInput): Promise<
 
 export const deleteBadge = async (id: string): Promise<void> => {
     if (!isSupabaseConfigured) {
-        localBadges = localBadges.filter((badge) => badge.id !== id);
-        for (let index = localMemberBadges.length - 1; index >= 0; index -= 1) {
-            if (localMemberBadges[index].badgeId === id) {
-                localMemberBadges.splice(index, 1);
+        localState.badges = localState.badges.filter((badge) => badge.id !== id);
+        for (let index = localState.memberBadges.length - 1; index >= 0; index -= 1) {
+            if (localState.memberBadges[index].badgeId === id) {
+                localState.memberBadges.splice(index, 1);
             }
         }
         return;
@@ -2407,7 +1754,7 @@ export const getRecapSnapshots = async (options?: {
     const limit = options?.limit ?? 8;
 
     if (!isSupabaseConfigured) {
-        return [...localRecapSnapshots]
+        return [...localState.recapSnapshots]
             .filter((snapshot) => (!scope || snapshot.scope === scope) && (!memberId || snapshot.memberId === memberId) && (!periodType || snapshot.periodType === periodType))
             .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
             .slice(0, limit);
@@ -2459,7 +1806,7 @@ export const getRecapSnapshots = async (options?: {
         return fallback(
             'getRecapSnapshots',
             () =>
-                [...localRecapSnapshots]
+                [...localState.recapSnapshots]
                     .filter((snapshot) => (!scope || snapshot.scope === scope) && (!memberId || snapshot.memberId === memberId) && (!periodType || snapshot.periodType === periodType))
                     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
                     .slice(0, limit),
@@ -2481,7 +1828,7 @@ export const createRecapSnapshots = async (drafts: RecapSnapshotDraft[]): Promis
             createdAt,
             createdByName: '로컬 운영자',
         }));
-        localRecapSnapshots = [...snapshots, ...localRecapSnapshots].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+        localState.recapSnapshots = [...snapshots, ...localState.recapSnapshots].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
         return snapshots;
     }
 
@@ -2532,7 +1879,7 @@ export const createRecapSnapshots = async (drafts: RecapSnapshotDraft[]): Promis
             createdAt,
             createdByName: '로컬 운영자',
         }));
-        localRecapSnapshots = [...snapshots, ...localRecapSnapshots].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+        localState.recapSnapshots = [...snapshots, ...localState.recapSnapshots].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
         return fallback('createRecapSnapshots', () => snapshots, error);
     }
 };
@@ -2544,7 +1891,7 @@ export const getAuditLogs = async (options?: GetAuditLogsOptions): Promise<Audit
 
     if (!isSupabaseConfigured) {
         return sortAuditLogs(
-            localAuditLogs.filter((entry) => (!entityType || entry.entityType === entityType) && (!entityId || entry.entityId === entityId)),
+            localState.auditLogs.filter((entry) => (!entityType || entry.entityType === entityType) && (!entityId || entry.entityId === entityId)),
         ).slice(0, limit);
     }
 
@@ -2599,7 +1946,7 @@ export const getAuditLogs = async (options?: GetAuditLogsOptions): Promise<Audit
             'getAuditLogs',
             () =>
                 sortAuditLogs(
-                    localAuditLogs.filter((entry) => (!entityType || entry.entityType === entityType) && (!entityId || entry.entityId === entityId)),
+                    localState.auditLogs.filter((entry) => (!entityType || entry.entityType === entityType) && (!entityId || entry.entityId === entityId)),
                 ).slice(0, limit),
             error,
         );
@@ -2660,7 +2007,7 @@ export const addMember = async (name: string, loginEmail?: string | null): Promi
             status: 'active',
             joinedAt: new Date().toISOString().slice(0, 10),
         };
-        localMembers.push(newMember);
+        localState.members.push(newMember);
         logLocalAuditEntry({
             actorId: null,
             actorName: '로컬 운영자',
@@ -2734,7 +2081,7 @@ export const addMember = async (name: string, loginEmail?: string | null): Promi
             joinedAt: new Date().toISOString().slice(0, 10),
             isVisible: true,
         };
-        localMembers.push(newMember);
+        localState.members.push(newMember);
         logLocalAuditEntry({
             actorId: null,
             actorName: '로컬 운영자',
@@ -2786,13 +2133,13 @@ export const getCurrentSeason = async (): Promise<SeasonSummary | null> => {
             endDate: data.end_date,
         };
     } catch (error) {
-        return fallback('getCurrentSeason', () => localCurrentSeason, error);
+        return fallback('getCurrentSeason', () => localState.currentSeason, error);
     }
 };
 
 export const getRoles = async (): Promise<RoleSummary[]> => {
     if (!isSupabaseConfigured) {
-        return [...localRoles].sort((a, b) => a.rankOrder - b.rankOrder);
+        return [...localState.roles].sort((a, b) => a.rankOrder - b.rankOrder);
     }
 
     try {
@@ -2813,7 +2160,7 @@ export const getRoles = async (): Promise<RoleSummary[]> => {
             rankOrder: role.rank_order,
         }));
     } catch (error) {
-        return fallback('getRoles', () => [...localRoles].sort((a, b) => a.rankOrder - b.rankOrder), error);
+        return fallback('getRoles', () => [...localState.roles].sort((a, b) => a.rankOrder - b.rankOrder), error);
     }
 };
 
@@ -2825,7 +2172,7 @@ export const addRole = async (name: string, permissionScope: string, rankOrder: 
             permissionScope,
             rankOrder,
         };
-        localRoles.push(role);
+        localState.roles.push(role);
         return role;
     }
 
@@ -2858,7 +2205,7 @@ export const addRole = async (name: string, permissionScope: string, rankOrder: 
             permissionScope,
             rankOrder,
         };
-        localRoles.push(role);
+        localState.roles.push(role);
         return fallback('addRole', () => role, error);
     }
 };
@@ -2876,12 +2223,12 @@ export const updateRole = async (
     },
 ): Promise<RoleSummary> => {
     if (!isSupabaseConfigured) {
-        const roleIndex = localRoles.findIndex((role) => role.id === id);
-        const previousRole = roleIndex >= 0 ? localRoles[roleIndex] : null;
+        const roleIndex = localState.roles.findIndex((role) => role.id === id);
+        const previousRole = roleIndex >= 0 ? localState.roles[roleIndex] : null;
 
         if (roleIndex >= 0) {
-            localRoles.splice(roleIndex, 1, {
-                ...localRoles[roleIndex],
+            localState.roles.splice(roleIndex, 1, {
+                ...localState.roles[roleIndex],
                 name,
                 permissionScope,
                 rankOrder,
@@ -2889,7 +2236,7 @@ export const updateRole = async (
         }
 
         if (previousRole && previousRole.name !== name) {
-            localMembers = localMembers.map((member) =>
+            localState.members = localState.members.map((member) =>
                 member.roleId === id
                     ? {
                         ...member,
@@ -2899,7 +2246,7 @@ export const updateRole = async (
             );
         }
 
-        const updated = localRoles.find((role) => role.id === id);
+        const updated = localState.roles.find((role) => role.id === id);
         if (!updated) {
             throw new Error('수정할 역할을 찾지 못했습니다.');
         }
@@ -2932,7 +2279,7 @@ export const updateRole = async (
         };
     } catch (error) {
         return fallback('updateRole', () => {
-            const role = localRoles.find((item) => item.id === id);
+            const role = localState.roles.find((item) => item.id === id);
             if (!role) {
                 throw new Error('수정할 역할을 찾지 못했습니다.');
             }
@@ -2943,11 +2290,11 @@ export const updateRole = async (
 
 export const deleteRole = async (id: string): Promise<void> => {
     if (!isSupabaseConfigured) {
-        const roleIndex = localRoles.findIndex((role) => role.id === id);
+        const roleIndex = localState.roles.findIndex((role) => role.id === id);
         if (roleIndex >= 0) {
-            localRoles.splice(roleIndex, 1);
+            localState.roles.splice(roleIndex, 1);
         }
-        localMembers = localMembers.map((member) =>
+        localState.members = localState.members.map((member) =>
             member.roleId === id
                 ? {
                     ...member,
@@ -2973,7 +2320,7 @@ export const deleteRole = async (id: string): Promise<void> => {
 
 export const getTeams = async (): Promise<TeamSummary[]> => {
     if (!isSupabaseConfigured) {
-        return [...localTeams].sort((a, b) => a.name.localeCompare(b.name));
+        return [...localState.teams].sort((a, b) => a.name.localeCompare(b.name));
     }
 
     try {
@@ -2994,13 +2341,13 @@ export const getTeams = async (): Promise<TeamSummary[]> => {
             isActive: team.is_active,
         }));
     } catch (error) {
-        return fallback('getTeams', () => [...localTeams].sort((a, b) => a.name.localeCompare(b.name)), error);
+        return fallback('getTeams', () => [...localState.teams].sort((a, b) => a.name.localeCompare(b.name)), error);
     }
 };
 
 export const getAnnouncements = async (): Promise<AnnouncementItem[]> => {
     if (!isSupabaseConfigured) {
-        return sortAnnouncements(localAnnouncements.filter((item) => item.isActive));
+        return sortAnnouncements(localState.announcements.filter((item) => item.isActive));
     }
 
     try {
@@ -3029,7 +2376,7 @@ export const getAnnouncements = async (): Promise<AnnouncementItem[]> => {
             createdAt: item.created_at,
         }));
     } catch (error) {
-        return fallback('getAnnouncements', () => sortAnnouncements(localAnnouncements.filter((item) => item.isActive)), error);
+        return fallback('getAnnouncements', () => sortAnnouncements(localState.announcements.filter((item) => item.isActive)), error);
     }
 };
 
@@ -3046,7 +2393,7 @@ const mapSiteBanner = (
 
 export const getSiteBanners = async (): Promise<SiteBanner[]> => {
     if (!isSupabaseConfigured) {
-        return sortSiteBanners(localSiteBanners.filter((item) => item.isActive));
+        return sortSiteBanners(localState.siteBanners.filter((item) => item.isActive));
     }
 
     try {
@@ -3073,7 +2420,7 @@ export const getSiteBanners = async (): Promise<SiteBanner[]> => {
             return [];
         }
 
-        return fallback('getSiteBanners', () => sortSiteBanners(localSiteBanners.filter((item) => item.isActive)), error);
+        return fallback('getSiteBanners', () => sortSiteBanners(localState.siteBanners.filter((item) => item.isActive)), error);
     }
 };
 
@@ -3086,7 +2433,7 @@ export const addSiteBanner = async (input: { title?: string | null; imageUrl: st
     }
 
     if (!isSupabaseConfigured) {
-        const nextDisplayOrder = sortSiteBanners(localSiteBanners).at(-1)?.displayOrder ?? 0;
+        const nextDisplayOrder = sortSiteBanners(localState.siteBanners).at(-1)?.displayOrder ?? 0;
         const item: SiteBanner = {
             id: createLocalId('banner'),
             title,
@@ -3095,7 +2442,7 @@ export const addSiteBanner = async (input: { title?: string | null; imageUrl: st
             isActive: true,
             createdAt: new Date().toISOString(),
         };
-        localSiteBanners.push(item);
+        localState.siteBanners.push(item);
         notifySiteBannerListeners();
         return item;
     }
@@ -3122,7 +2469,7 @@ export const addSiteBanner = async (input: { title?: string | null; imageUrl: st
         notifySiteBannerListeners();
         return mapSiteBanner(data);
     } catch (error) {
-        const nextDisplayOrder = sortSiteBanners(localSiteBanners).at(-1)?.displayOrder ?? 0;
+        const nextDisplayOrder = sortSiteBanners(localState.siteBanners).at(-1)?.displayOrder ?? 0;
         const item: SiteBanner = {
             id: createLocalId('banner'),
             title,
@@ -3131,7 +2478,7 @@ export const addSiteBanner = async (input: { title?: string | null; imageUrl: st
             isActive: true,
             createdAt: new Date().toISOString(),
         };
-        localSiteBanners.push(item);
+        localState.siteBanners.push(item);
         notifySiteBannerListeners();
         return fallback('addSiteBanner', () => item, error);
     }
@@ -3139,7 +2486,7 @@ export const addSiteBanner = async (input: { title?: string | null; imageUrl: st
 
 export const moveSiteBanner = async (id: string, direction: 'up' | 'down'): Promise<void> => {
     const moveLocal = () => {
-        const sorted = sortSiteBanners(localSiteBanners);
+        const sorted = sortSiteBanners(localState.siteBanners);
         const currentIndex = sorted.findIndex((item) => item.id === id);
         if (currentIndex === -1) {
             return;
@@ -3153,7 +2500,7 @@ export const moveSiteBanner = async (id: string, direction: 'up' | 'down'): Prom
         const current = sorted[currentIndex];
         const target = sorted[targetIndex];
         [current.displayOrder, target.displayOrder] = [target.displayOrder, current.displayOrder];
-        localSiteBanners = sortSiteBanners(sorted);
+        localState.siteBanners = sortSiteBanners(sorted);
         notifySiteBannerListeners();
     };
 
@@ -3195,7 +2542,7 @@ export const moveSiteBanner = async (id: string, direction: 'up' | 'down'): Prom
 
 export const deleteSiteBanner = async (id: string): Promise<void> => {
     if (!isSupabaseConfigured) {
-        localSiteBanners = localSiteBanners.filter((item) => item.id !== id);
+        localState.siteBanners = localState.siteBanners.filter((item) => item.id !== id);
         notifySiteBannerListeners();
         return;
     }
@@ -3208,7 +2555,7 @@ export const deleteSiteBanner = async (id: string): Promise<void> => {
         }
         notifySiteBannerListeners();
     } catch (error) {
-        localSiteBanners = localSiteBanners.filter((item) => item.id !== id);
+        localState.siteBanners = localState.siteBanners.filter((item) => item.id !== id);
         notifySiteBannerListeners();
         fallback('deleteSiteBanner', () => undefined, error);
     }
@@ -3240,7 +2587,7 @@ export const addAnnouncement = async (input: {
             isActive: true,
             createdAt: new Date().toISOString(),
         };
-        localAnnouncements.push(item);
+        localState.announcements.push(item);
         return item;
     }
 
@@ -3284,14 +2631,14 @@ export const addAnnouncement = async (input: {
             isActive: true,
             createdAt: new Date().toISOString(),
         };
-        localAnnouncements.push(item);
+        localState.announcements.push(item);
         return fallback('addAnnouncement', () => item, error);
     }
 };
 
 export const deleteAnnouncement = async (id: string): Promise<void> => {
     if (!isSupabaseConfigured) {
-        localAnnouncements = localAnnouncements.filter((item) => item.id !== id);
+        localState.announcements = localState.announcements.filter((item) => item.id !== id);
         return;
     }
 
@@ -3302,14 +2649,14 @@ export const deleteAnnouncement = async (id: string): Promise<void> => {
             throw error;
         }
     } catch (error) {
-        localAnnouncements = localAnnouncements.filter((item) => item.id !== id);
+        localState.announcements = localState.announcements.filter((item) => item.id !== id);
         fallback('deleteAnnouncement', () => undefined, error);
     }
 };
 
 export const getScheduleEvents = async (): Promise<ScheduleEventItem[]> => {
     if (!isSupabaseConfigured) {
-        return sortScheduleEvents(localScheduleEvents.filter((item) => item.isActive));
+        return sortScheduleEvents(localState.scheduleEvents.filter((item) => item.isActive));
     }
 
     try {
@@ -3338,13 +2685,13 @@ export const getScheduleEvents = async (): Promise<ScheduleEventItem[]> => {
             createdAt: item.created_at,
         }));
     } catch (error) {
-        return fallback('getScheduleEvents', () => sortScheduleEvents(localScheduleEvents.filter((item) => item.isActive)), error);
+        return fallback('getScheduleEvents', () => sortScheduleEvents(localState.scheduleEvents.filter((item) => item.isActive)), error);
     }
 };
 
 export const getAttendanceSessions = async (): Promise<AttendanceSession[]> => {
     if (!isSupabaseConfigured) {
-        return sortAttendanceSessions(localAttendanceSessions);
+        return sortAttendanceSessions(localState.attendanceSessions);
     }
 
     try {
@@ -3399,7 +2746,7 @@ export const getAttendanceSessions = async (): Promise<AttendanceSession[]> => {
             return [];
         }
 
-        return fallback('getAttendanceSessions', () => sortAttendanceSessions(localAttendanceSessions), error);
+        return fallback('getAttendanceSessions', () => sortAttendanceSessions(localState.attendanceSessions), error);
     }
 };
 
@@ -3460,7 +2807,7 @@ export const createAttendanceSession = async (input: {
             updatedAt: createdAt,
         }));
 
-        localAttendanceSessionMembers = [...localAttendanceSessionMembers, ...entries];
+        localState.attendanceSessionMembers = [...localState.attendanceSessionMembers, ...entries];
         const session: AttendanceSession = {
             id: sessionId,
             title,
@@ -3480,7 +2827,7 @@ export const createAttendanceSession = async (input: {
             statusCounts: buildAttendanceStatusCounts(entries),
             entries,
         };
-        localAttendanceSessions = sortAttendanceSessions([session, ...localAttendanceSessions]);
+        localState.attendanceSessions = sortAttendanceSessions([session, ...localState.attendanceSessions]);
         return session;
     };
 
@@ -3550,7 +2897,7 @@ export const createAttendanceSession = async (input: {
 
 export const setAttendanceSessionActive = async (id: string, isActive: boolean): Promise<void> => {
     if (!isSupabaseConfigured) {
-        localAttendanceSessions = localAttendanceSessions.map((session) =>
+        localState.attendanceSessions = localState.attendanceSessions.map((session) =>
             session.id === id
                 ? { ...session, isActive }
                 : session,
@@ -3594,7 +2941,7 @@ export const updateAttendanceSessionMemberStatus = async (input: {
 
     const reason = `${input.title} · ${attendanceStatusLabels[input.status]}`;
     const applyLocalUpdate = async () => {
-        const sessionMember = localAttendanceSessionMembers.find((entry) => entry.sessionId === input.sessionId && entry.memberId === input.memberId);
+        const sessionMember = localState.attendanceSessionMembers.find((entry) => entry.sessionId === input.sessionId && entry.memberId === input.memberId);
         if (!sessionMember) {
             throw new Error('출석 세션 멤버 정보를 찾지 못했습니다.');
         }
@@ -3608,7 +2955,7 @@ export const updateAttendanceSessionMemberStatus = async (input: {
             reason,
         });
 
-        localAttendanceSessionMembers = localAttendanceSessionMembers.map((entry) =>
+        localState.attendanceSessionMembers = localState.attendanceSessionMembers.map((entry) =>
             entry.id === sessionMember.id
                 ? {
                     ...entry,
@@ -3619,7 +2966,7 @@ export const updateAttendanceSessionMemberStatus = async (input: {
                 : entry,
         );
 
-        localAttendanceSessions = localAttendanceSessions.map((session) =>
+        localState.attendanceSessions = localState.attendanceSessions.map((session) =>
             session.id === input.sessionId
                 ? mapAttendanceSession(
                     {
@@ -3636,8 +2983,8 @@ export const updateAttendanceSessionMemberStatus = async (input: {
                         target_group_type: session.targetGroupType,
                         target_team_id: session.targetTeamId ?? null,
                     },
-                    localAttendanceSessionMembers.filter((entry) => entry.sessionId === input.sessionId),
-                    new Map(localTeams.map((team) => [team.id, team.name])),
+                    localState.attendanceSessionMembers.filter((entry) => entry.sessionId === input.sessionId),
+                    new Map(localState.teams.map((team) => [team.id, team.name])),
                 )
                 : session,
         );
@@ -3723,7 +3070,7 @@ export const addScheduleEvent = async (input: {
             isActive: true,
             createdAt: new Date().toISOString(),
         };
-        localScheduleEvents.push(item);
+        localState.scheduleEvents.push(item);
         return item;
     }
 
@@ -3770,14 +3117,14 @@ export const addScheduleEvent = async (input: {
             isActive: true,
             createdAt: new Date().toISOString(),
         };
-        localScheduleEvents.push(item);
+        localState.scheduleEvents.push(item);
         return fallback('addScheduleEvent', () => item, error);
     }
 };
 
 export const deleteScheduleEvent = async (id: string): Promise<void> => {
     if (!isSupabaseConfigured) {
-        localScheduleEvents = localScheduleEvents.filter((item) => item.id !== id);
+        localState.scheduleEvents = localState.scheduleEvents.filter((item) => item.id !== id);
         return;
     }
 
@@ -3788,7 +3135,7 @@ export const deleteScheduleEvent = async (id: string): Promise<void> => {
             throw error;
         }
     } catch (error) {
-        localScheduleEvents = localScheduleEvents.filter((item) => item.id !== id);
+        localState.scheduleEvents = localState.scheduleEvents.filter((item) => item.id !== id);
         fallback('deleteScheduleEvent', () => undefined, error);
     }
 };
@@ -3801,7 +3148,7 @@ export const addTeam = async (name: string, type: TeamType): Promise<TeamSummary
             type,
             isActive: true,
         };
-        localTeams.push(team);
+        localState.teams.push(team);
         return team;
     }
 
@@ -3834,7 +3181,7 @@ export const addTeam = async (name: string, type: TeamType): Promise<TeamSummary
             type,
             isActive: true,
         };
-        localTeams.push(team);
+        localState.teams.push(team);
         return fallback('addTeam', () => team, error);
     }
 };
@@ -3847,20 +3194,20 @@ export const updateTeam = async (id: string, input: { name: string; type: TeamTy
     }
 
     if (!isSupabaseConfigured) {
-        const teamIndex = localTeams.findIndex((team) => team.id === id);
+        const teamIndex = localState.teams.findIndex((team) => team.id === id);
         if (teamIndex < 0) {
             throw new Error('수정할 팀을 찾지 못했습니다.');
         }
 
-        const previousTeam = localTeams[teamIndex];
+        const previousTeam = localState.teams[teamIndex];
         const nextTeam: TeamSummary = {
             ...previousTeam,
             name,
             type: input.type,
         };
 
-        localTeams.splice(teamIndex, 1, nextTeam);
-        localMembers = localMembers.map((member) => {
+        localState.teams.splice(teamIndex, 1, nextTeam);
+        localState.members = localState.members.map((member) => {
             const teamIds = getLocalMemberTeamIds(member.id);
             const teamNames = teamIds
                 .map((teamId) => getLocalTeamById(teamId)?.name ?? null)
@@ -3920,12 +3267,12 @@ export const replaceTeamMembers = async (teamId: string, memberIds: string[]): P
     const normalizedMemberIds = [...new Set(memberIds.filter(Boolean))];
 
     if (!isSupabaseConfigured) {
-        const team = localTeams.find((item) => item.id === teamId) ?? null;
+        const team = localState.teams.find((item) => item.id === teamId) ?? null;
         if (!team) {
             throw new Error('팀 정보를 찾지 못했습니다.');
         }
 
-        const currentMemberIds = localMembers
+        const currentMemberIds = localState.members
             .filter((member) => (member.teamIds ?? []).includes(teamId) || member.teamId === teamId)
             .map((member) => member.id);
         const affectedMemberIds = [...new Set([...currentMemberIds, ...normalizedMemberIds])];
@@ -3980,20 +3327,20 @@ export const replaceTeamMembers = async (teamId: string, memberIds: string[]): P
 
 export const deleteTeam = async (teamId: string): Promise<TeamDeleteResult> => {
     if (!isSupabaseConfigured) {
-        const teamIndex = localTeams.findIndex((team) => team.id === teamId);
+        const teamIndex = localState.teams.findIndex((team) => team.id === teamId);
         if (teamIndex < 0) {
             throw new Error('삭제할 팀을 찾지 못했습니다.');
         }
 
-        const team = localTeams[teamIndex];
+        const team = localState.teams[teamIndex];
         const affectedMemberIds = [...new Set(
-            localMembers
+            localState.members
                 .filter((member) => (member.teamIds ?? []).includes(teamId) || member.teamId === teamId)
                 .map((member) => member.id),
         )];
 
-        localMemberTeamLinks = localMemberTeamLinks.filter((link) => link.teamId !== teamId);
-        localTeams.splice(teamIndex, 1);
+        localState.memberTeamLinks = localState.memberTeamLinks.filter((link) => link.teamId !== teamId);
+        localState.teams.splice(teamIndex, 1);
         affectedMemberIds.forEach((memberId) => {
             syncLocalMemberTeamState(memberId, getLocalMemberTeamIds(memberId));
         });
@@ -4040,10 +3387,10 @@ export const setMemberTeams = async (memberId: string, nextTeamIds: string[]): P
     const normalizedTeamIds = dedupeTeamIds(nextTeamIds);
 
     if (!isSupabaseConfigured) {
-        const previousMember = localMembers.find((member) => member.id === memberId);
+        const previousMember = localState.members.find((member) => member.id === memberId);
         const previousTeamIds = getLocalMemberTeamIds(memberId);
         syncLocalMemberTeamState(memberId, normalizedTeamIds);
-        const nextMember = localMembers.find((member) => member.id === memberId);
+        const nextMember = localState.members.find((member) => member.id === memberId);
 
         if (previousMember && nextMember && previousTeamIds.join('|') !== normalizedTeamIds.join('|')) {
             const previousTeamNames = previousTeamIds
@@ -4111,7 +3458,7 @@ export const setMemberTeams = async (memberId: string, nextTeamIds: string[]): P
 
 export const getSeasons = async (): Promise<SeasonSummary[]> => {
     if (!isSupabaseConfigured) {
-        return [...localSeasons].sort((a, b) => b.startDate.localeCompare(a.startDate));
+        return [...localState.seasons].sort((a, b) => b.startDate.localeCompare(a.startDate));
     }
 
     try {
@@ -4133,7 +3480,7 @@ export const getSeasons = async (): Promise<SeasonSummary[]> => {
             endDate: season.end_date,
         }));
     } catch (error) {
-        return fallback('getSeasons', () => [...localSeasons].sort((a, b) => b.startDate.localeCompare(a.startDate)), error);
+        return fallback('getSeasons', () => [...localState.seasons].sort((a, b) => b.startDate.localeCompare(a.startDate)), error);
     }
 };
 
@@ -4151,7 +3498,7 @@ export const addSeason = async (
             startDate,
             endDate,
         };
-        localSeasons.push(season);
+        localState.seasons.push(season);
         return season;
     }
 
@@ -4187,7 +3534,7 @@ export const addSeason = async (
             startDate,
             endDate,
         };
-        localSeasons.push(season);
+        localState.seasons.push(season);
         return fallback('addSeason', () => season, error);
     }
 };
@@ -4199,8 +3546,8 @@ export const resetActivityDataCurrentSeason = async (): Promise<SeasonDataResetR
             throw new Error('현재 진행 중인 시즌이 없습니다.');
         }
 
-        const recapSnapshotCount = localRecapSnapshots.filter((snapshot) => snapshot.seasonId === season.id).length;
-        localRecapSnapshots = localRecapSnapshots.filter((snapshot) => snapshot.seasonId !== season.id);
+        const recapSnapshotCount = localState.recapSnapshots.filter((snapshot) => snapshot.seasonId === season.id).length;
+        localState.recapSnapshots = localState.recapSnapshots.filter((snapshot) => snapshot.seasonId !== season.id);
 
         const removed = removeLocalActivityRecords((log) => isTimestampInSeason(log.timestamp, season));
         const badgeRefreshCount = refreshLocalMemberBadgesForMembers(removed.memberIds);
@@ -4255,14 +3602,14 @@ export const resetAttendanceDataCurrentSeason = async (): Promise<SeasonDataRese
             throw new Error('현재 진행 중인 시즌이 없습니다.');
         }
 
-        const sessionIds = new Set(localAttendanceSessions.filter((session) => session.seasonId === season.id).map((session) => session.id));
+        const sessionIds = new Set(localState.attendanceSessions.filter((session) => session.seasonId === season.id).map((session) => session.id));
         const attendanceSessionCount = sessionIds.size;
-        const attendanceSessionMemberCount = localAttendanceSessionMembers.filter((entry) => sessionIds.has(entry.sessionId)).length;
-        const recapSnapshotCount = localRecapSnapshots.filter((snapshot) => snapshot.seasonId === season.id).length;
+        const attendanceSessionMemberCount = localState.attendanceSessionMembers.filter((entry) => sessionIds.has(entry.sessionId)).length;
+        const recapSnapshotCount = localState.recapSnapshots.filter((snapshot) => snapshot.seasonId === season.id).length;
 
-        localRecapSnapshots = localRecapSnapshots.filter((snapshot) => snapshot.seasonId !== season.id);
-        localAttendanceSessions = localAttendanceSessions.filter((session) => !sessionIds.has(session.id));
-        localAttendanceSessionMembers = localAttendanceSessionMembers.filter((entry) => !sessionIds.has(entry.sessionId));
+        localState.recapSnapshots = localState.recapSnapshots.filter((snapshot) => snapshot.seasonId !== season.id);
+        localState.attendanceSessions = localState.attendanceSessions.filter((session) => !sessionIds.has(session.id));
+        localState.attendanceSessionMembers = localState.attendanceSessionMembers.filter((entry) => !sessionIds.has(entry.sessionId));
 
         const removed = removeLocalActivityRecords((log, category) =>
             isTimestampInSeason(log.timestamp, season) && category?.groupName === 'attendance',
@@ -4321,8 +3668,8 @@ export const resetManualActivityDataCurrentSeason = async (): Promise<SeasonData
             throw new Error('현재 진행 중인 시즌이 없습니다.');
         }
 
-        const recapSnapshotCount = localRecapSnapshots.filter((snapshot) => snapshot.seasonId === season.id).length;
-        localRecapSnapshots = localRecapSnapshots.filter((snapshot) => snapshot.seasonId !== season.id);
+        const recapSnapshotCount = localState.recapSnapshots.filter((snapshot) => snapshot.seasonId === season.id).length;
+        localState.recapSnapshots = localState.recapSnapshots.filter((snapshot) => snapshot.seasonId !== season.id);
 
         const removed = removeLocalActivityRecords((log, category) =>
             isTimestampInSeason(log.timestamp, season) && category?.groupName !== 'attendance',
@@ -4374,8 +3721,8 @@ export const resetManualActivityDataCurrentSeason = async (): Promise<SeasonData
 
 export const deleteMember = async (id: string): Promise<void> => {
     if (!isSupabaseConfigured) {
-        const previousMember = localMembers.find((member) => member.id === id);
-        localMembers = localMembers.map((member) =>
+        const previousMember = localState.members.find((member) => member.id === id);
+        localState.members = localState.members.map((member) =>
             member.id === id
                 ? {
                     ...member,
@@ -4384,7 +3731,7 @@ export const deleteMember = async (id: string): Promise<void> => {
                 }
                 : member,
         );
-        const member = localMembers.find((entry) => entry.id === id);
+        const member = localState.members.find((entry) => entry.id === id);
         if (member && previousMember) {
             logLocalAuditEntry({
                 actorId: null,
@@ -4420,15 +3767,15 @@ export const deleteMember = async (id: string): Promise<void> => {
             throw error;
         }
     } catch (error) {
-        localMembers = localMembers.filter((member) => member.id !== id);
-        localLogs = localLogs.filter((log) => log.memberId !== id);
+        localState.members = localState.members.filter((member) => member.id !== id);
+        localState.logs = localState.logs.filter((log) => log.memberId !== id);
         fallback('deleteMember', () => undefined, error);
     }
 };
 
 export const hardDeleteHiddenMember = async (memberId: string): Promise<HardDeleteMemberResult> => {
     if (!isSupabaseConfigured) {
-        const member = localMembers.find((entry) => entry.id === memberId) ?? null;
+        const member = localState.members.find((entry) => entry.id === memberId) ?? null;
         if (!member) {
             throw new Error('멤버 정보를 찾지 못했습니다.');
         }
@@ -4437,33 +3784,33 @@ export const hardDeleteHiddenMember = async (memberId: string): Promise<HardDele
             throw new Error('숨김 처리된 멤버만 영구 삭제할 수 있습니다.');
         }
 
-        if (localLogs.some((log) => log.memberId === memberId && Boolean(log.recordId))) {
+        if (localState.logs.some((log) => log.memberId === memberId && Boolean(log.recordId))) {
             throw new Error('활동 기록이 남아 있는 회원은 영구 삭제할 수 없습니다.');
         }
 
-        const memberBadgeCount = localMemberBadges.filter((badge) => badge.memberId === memberId).length;
-        const memberTeamLinkCount = localMemberTeamLinks.filter((link) => link.memberId === memberId).length;
-        const recapSnapshotCount = localRecapSnapshots.filter((snapshot) => snapshot.memberId === memberId).length;
-        const attendanceSessionMemberCount = localAttendanceSessionMembers.filter((entry) => entry.memberId === memberId).length;
+        const memberBadgeCount = localState.memberBadges.filter((badge) => badge.memberId === memberId).length;
+        const memberTeamLinkCount = localState.memberTeamLinks.filter((link) => link.memberId === memberId).length;
+        const recapSnapshotCount = localState.recapSnapshots.filter((snapshot) => snapshot.memberId === memberId).length;
+        const attendanceSessionMemberCount = localState.attendanceSessionMembers.filter((entry) => entry.memberId === memberId).length;
         const deletedAuthUser = Boolean(member.authUserId);
 
-        for (let index = localMemberBadges.length - 1; index >= 0; index -= 1) {
-            if (localMemberBadges[index].memberId === memberId) {
-                localMemberBadges.splice(index, 1);
+        for (let index = localState.memberBadges.length - 1; index >= 0; index -= 1) {
+            if (localState.memberBadges[index].memberId === memberId) {
+                localState.memberBadges.splice(index, 1);
             }
         }
 
-        localMemberTeamLinks = localMemberTeamLinks.filter((link) => link.memberId !== memberId);
-        localRecapSnapshots = localRecapSnapshots.filter((snapshot) => snapshot.memberId !== memberId);
-        localAttendanceSessionMembers = localAttendanceSessionMembers.filter((entry) => entry.memberId !== memberId);
+        localState.memberTeamLinks = localState.memberTeamLinks.filter((link) => link.memberId !== memberId);
+        localState.recapSnapshots = localState.recapSnapshots.filter((snapshot) => snapshot.memberId !== memberId);
+        localState.attendanceSessionMembers = localState.attendanceSessionMembers.filter((entry) => entry.memberId !== memberId);
 
-        for (let index = localCorrectionRequests.length - 1; index >= 0; index -= 1) {
-            if (localCorrectionRequests[index].requesterMemberId === memberId) {
-                localCorrectionRequests.splice(index, 1);
+        for (let index = localState.correctionRequests.length - 1; index >= 0; index -= 1) {
+            if (localState.correctionRequests[index].requesterMemberId === memberId) {
+                localState.correctionRequests.splice(index, 1);
             }
         }
 
-        localMembers = localMembers.filter((entry) => entry.id !== memberId);
+        localState.members = localState.members.filter((entry) => entry.id !== memberId);
         rebuildLocalAttendanceSessions();
 
         logLocalAuditEntry({
@@ -4547,10 +3894,10 @@ export const updateMember = async (
     updates: Partial<Pick<Member, 'name' | 'loginEmail' | 'roleId' | 'teamId' | 'status' | 'isApproved' | 'isVisible'>>,
 ): Promise<void> => {
     if (!isSupabaseConfigured) {
-        const previousMember = localMembers.find((member) => member.id === id);
+        const previousMember = localState.members.find((member) => member.id === id);
         const previousTeamIds = getLocalMemberTeamIds(id);
 
-        localMembers = localMembers.map((member) => {
+        localState.members = localState.members.map((member) => {
             if (member.id !== id) {
                 return member;
             }
@@ -4562,7 +3909,7 @@ export const updateMember = async (
                 name: updates.name ?? member.name,
                 loginEmail: updates.loginEmail !== undefined ? normalizeLoginEmail(updates.loginEmail) : member.loginEmail ?? null,
                 roleId: nextRoleId,
-                roleName: nextRoleId ? localRoles.find((role) => role.id === nextRoleId)?.name ?? null : null,
+                roleName: nextRoleId ? localState.roles.find((role) => role.id === nextRoleId)?.name ?? null : null,
                 status: updates.status ?? member.status,
                 isApproved: updates.isApproved ?? member.isApproved,
                 isVisible: updates.isVisible ?? member.isVisible,
@@ -4576,7 +3923,7 @@ export const updateMember = async (
             syncLocalMemberTeamState(id, nextTeamIds);
         }
 
-        const nextMember = localMembers.find((member) => member.id === id);
+        const nextMember = localState.members.find((member) => member.id === id);
 
         if (nextMember && previousMember) {
             const changes: Record<string, unknown> = {};
@@ -4701,7 +4048,7 @@ export const addCategory = async ({
             version: 1,
             isActive: true,
         };
-        localCategories.push(newCategory);
+        localState.categories.push(newCategory);
         return newCategory;
     }
 
@@ -4763,7 +4110,7 @@ export const addCategory = async ({
             version: 1,
             isActive: true,
         };
-        localCategories.push(newCategory);
+        localState.categories.push(newCategory);
         return fallback('addCategory', () => newCategory, error);
     }
 };
@@ -4779,12 +4126,12 @@ export const createCategoryVersion = async (
     const conditionJson = normalizedConditionSummary ? { summary: normalizedConditionSummary } : {};
 
     if (!isSupabaseConfigured) {
-        const sourceCategory = localCategories.find((category) => category.id === sourceRuleId);
+        const sourceCategory = localState.categories.find((category) => category.id === sourceRuleId);
         if (!sourceCategory || !sourceCategory.activityTypeId) {
             return null;
         }
 
-        localCategories = localCategories.map((category) =>
+        localState.categories = localState.categories.map((category) =>
             category.id === sourceRuleId
                 ? {
                     ...category,
@@ -4805,7 +4152,7 @@ export const createCategoryVersion = async (
             version: (sourceCategory.version ?? 1) + 1,
             isActive: true,
         };
-        localCategories.push(nextCategory);
+        localState.categories.push(nextCategory);
         return nextCategory;
     }
 
@@ -4851,7 +4198,7 @@ export const createCategoryVersion = async (
 
 export const deleteCategory = async (id: string): Promise<void> => {
     if (!isSupabaseConfigured) {
-        localCategories = localCategories.map((category) =>
+        localState.categories = localState.categories.map((category) =>
             category.id === id
                 ? {
                     ...category,
@@ -4873,7 +4220,7 @@ export const deleteCategory = async (id: string): Promise<void> => {
             throw error;
         }
     } catch (error) {
-        localCategories = localCategories.map((category) =>
+        localState.categories = localState.categories.map((category) =>
             category.id === id
                 ? {
                     ...category,
@@ -4932,14 +4279,14 @@ export const submitCorrectionRequest = async (recordId: string, reason: string):
     const applyLocalSubmit = () => {
         const relatedLog = enrichLocalLogs().find((log) => log.recordId === recordId && !log.isReversal);
         const requester = relatedLog
-            ? localMembers.find((member) => member.id === relatedLog.memberId) ?? null
+            ? localState.members.find((member) => member.id === relatedLog.memberId) ?? null
             : getLocalSelfMember();
 
         if (!relatedLog || !requester) {
             throw new Error('정정 요청 대상을 찾지 못했습니다.');
         }
 
-        const hasOpenRequest = localCorrectionRequests.some(
+        const hasOpenRequest = localState.correctionRequests.some(
             (request) =>
                 request.requesterMemberId === requester.id &&
                 request.activityRecordId === recordId &&
@@ -4951,7 +4298,7 @@ export const submitCorrectionRequest = async (recordId: string, reason: string):
         }
 
         const createdAt = new Date().toISOString();
-        localCorrectionRequests.push({
+        localState.correctionRequests.push({
             id: createLocalId('correction'),
             requesterMemberId: requester.id,
             requesterName: requester.name,
@@ -5000,7 +4347,7 @@ export const updateCorrectionRequestStatus = async (
 
     const applyLocalUpdate = () => {
         const reviewer = getLocalSelfMember();
-        const request = localCorrectionRequests.find((item) => item.id === requestId);
+        const request = localState.correctionRequests.find((item) => item.id === requestId);
 
         if (!request) {
             throw new Error('정정 요청을 찾지 못했습니다.');

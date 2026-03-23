@@ -1,40 +1,27 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { Activity, BadgeCheck, Flame, Link2, Medal, MessageSquareWarning, PlayCircle, Send, ShieldCheck, Sparkles, TrendingUp, TriangleAlert, UserRound } from 'lucide-react';
+import React, { useMemo, useState } from 'react';
+import { Sparkles, TriangleAlert } from 'lucide-react';
 import type {
     ActivityLog,
-    AnnouncementItem,
-    Badge,
     CorrectionRequest,
     CorrectionRequestStatus,
-    Member,
-    MemberBadge,
     RecapSnapshot,
     MemberStatus,
-    ScheduleEventItem,
-    SeasonSummary,
 } from '../../types';
+import { submitCorrectionRequest } from '../../lib/api/member/self';
 import {
-    getAnnouncements,
-    getBadges,
-    getCorrectionRequests,
-    getCurrentSeason,
-    getMyActivityLogs,
-    getMyMemberBadges,
-    getMyMemberOverview,
-    getRecapSnapshots,
-    getScheduleEvents,
-    submitCorrectionRequest,
-} from '../../lib/db';
-import {
-    badgeScopeLabels,
     computeBadgeMetrics,
-    getBadgeArtworkUrl,
     getBadgeRequirementEntries,
 } from '../../lib/badges';
+import { filterEffectiveActivityLogs, filterLogsWithinRange, toLocalDayKey } from '../../lib/domain/activityLogs';
 import { roleLabels } from '../../lib/permissions';
 import { useAuth } from '../auth/auth-context';
+import { useMemberHomeResources } from './hooks/useMemberHomeResources';
+import { MemberAccountSection } from './sections/MemberAccountSection';
+import { MemberActivitySection } from './sections/MemberActivitySection';
+import { MemberBadgeSection } from './sections/MemberBadgeSection';
+import { MemberHomeOverviewSection } from './sections/MemberHomeOverviewSection';
+import { MemberRecapSection } from './sections/MemberRecapSection';
 import { MemberRecapViewer } from './MemberRecapViewer';
-import { NoticeScheduleBoard } from '../shared/NoticeScheduleBoard';
 import { RecapSnapshotViewer } from '../recap/RecapSnapshotViewer';
 
 type TimelineRange = '30d' | '90d' | 'all';
@@ -71,12 +58,12 @@ const timelineRangeOptions: Array<{ id: TimelineRange; label: string }> = [
     { id: '90d', label: '최근 90일' },
     { id: 'all', label: '전체' },
 ];
-const badgeToneClasses: Record<NonNullable<MemberBadge['tone']>, string> = {
+const badgeToneClasses = {
     gold: 'border-amber-200 bg-amber-50 text-amber-800',
     sky: 'border-sky-200 bg-sky-50 text-sky-800',
     emerald: 'border-emerald-200 bg-emerald-50 text-emerald-800',
     rose: 'border-rose-200 bg-rose-50 text-rose-800',
-};
+} as const;
 const bandiMascotUrl = new URL('../../../반디.png', import.meta.url).href;
 const didiMascotUrl = new URL('../../../디디.png', import.meta.url).href;
 const banollimSchoolLogoUrl = new URL('../../../반디스쿨 로고1.png', import.meta.url).href;
@@ -97,78 +84,32 @@ const formatMonthLabel = (value: string) =>
 const formatDayLabel = (value: string) =>
     new Intl.DateTimeFormat('ko-KR', { month: 'long', day: 'numeric', weekday: 'short' }).format(new Date(value));
 
-const toLocalDayKey = (value: string) => {
-    const date = new Date(value);
-    const year = date.getFullYear();
-    const month = `${date.getMonth() + 1}`.padStart(2, '0');
-    const day = `${date.getDate()}`.padStart(2, '0');
-    return `${year}-${month}-${day}`;
-};
-
 export const MemberHomeTab: React.FC = () => {
     const { profile } = useAuth();
     const [activeSection, setActiveSection] = useState<MemberHomeSection>('home');
-    const [season, setSeason] = useState<SeasonSummary | null>(null);
-    const [member, setMember] = useState<Member | null>(null);
-    const [logs, setLogs] = useState<ActivityLog[]>([]);
-    const [badgeCatalog, setBadgeCatalog] = useState<Badge[]>([]);
-    const [memberBadges, setMemberBadges] = useState<MemberBadge[]>([]);
-    const [recapSnapshots, setRecapSnapshots] = useState<RecapSnapshot[]>([]);
-    const [announcements, setAnnouncements] = useState<AnnouncementItem[]>([]);
-    const [scheduleEvents, setScheduleEvents] = useState<ScheduleEventItem[]>([]);
-    const [correctionRequests, setCorrectionRequests] = useState<CorrectionRequest[]>([]);
     const [selectedRequestLog, setSelectedRequestLog] = useState<ActivityLog | null>(null);
     const [selectedSnapshot, setSelectedSnapshot] = useState<RecapSnapshot | null>(null);
     const [timelineRange, setTimelineRange] = useState<TimelineRange>('90d');
     const [selectedRecapPeriod, setSelectedRecapPeriod] = useState<MemberRecapPeriod | null>(null);
     const [requestReason, setRequestReason] = useState('');
-    const [isLoading, setIsLoading] = useState(true);
     const [isSubmittingRequest, setIsSubmittingRequest] = useState(false);
     const [requestError, setRequestError] = useState<string | null>(null);
-
-    useEffect(() => {
-        let isMounted = true;
-
-        const loadData = async () => {
-            const [seasonData, memberData, logData, badgeCatalogData, memberBadgeData, correctionRequestData, announcementData, scheduleData] = await Promise.all([
-                getCurrentSeason(),
-                getMyMemberOverview(profile?.memberId ?? null),
-                getMyActivityLogs(profile?.memberId ?? null),
-                getBadges(),
-                getMyMemberBadges(profile?.memberId ?? null),
-                getCorrectionRequests({ requesterMemberId: profile?.memberId ?? null }),
-                getAnnouncements(),
-                getScheduleEvents(),
-            ]);
-            const recapSnapshotData = memberData
-                ? await getRecapSnapshots({ scope: 'member', memberId: memberData.id, limit: 4 })
-                : [];
-
-            if (!isMounted) {
-                return;
-            }
-
-            setSeason(seasonData);
-            setMember(memberData);
-            setLogs(logData);
-            setBadgeCatalog(badgeCatalogData);
-            setMemberBadges(memberBadgeData);
-            setRecapSnapshots(recapSnapshotData);
-            setCorrectionRequests(correctionRequestData);
-            setAnnouncements(announcementData);
-            setScheduleEvents(scheduleData);
-            setIsLoading(false);
-        };
-
-        void loadData();
-
-        return () => {
-            isMounted = false;
-        };
-    }, [profile?.memberId]);
+    const {
+        season,
+        member,
+        logs,
+        badgeCatalog,
+        memberBadges,
+        recapSnapshots,
+        announcements,
+        scheduleEvents,
+        correctionRequests,
+        isLoading,
+        refreshCorrectionRequests,
+    } = useMemberHomeResources(profile?.memberId ?? null);
 
     const effectiveLogs = useMemo(
-        () => logs.filter((log) => !log.isReversal && log.recordStatus !== 'reversed'),
+        () => filterEffectiveActivityLogs(logs),
         [logs],
     );
 
@@ -193,18 +134,11 @@ export const MemberHomeTab: React.FC = () => {
         const seasonStart = new Date(`${season.startDate}T00:00:00`);
         const seasonEnd = season.endDate ? new Date(`${season.endDate}T23:59:59`) : null;
 
-        return effectiveLogs.filter((log) => {
-            const occurredAt = new Date(log.timestamp);
-            if (occurredAt < seasonStart) {
-                return false;
-            }
-
-            if (seasonEnd && occurredAt > seasonEnd) {
-                return false;
-            }
-
-            return true;
-        });
+        return filterLogsWithinRange(
+            effectiveLogs,
+            seasonStart,
+            seasonEnd ?? new Date(),
+        );
     }, [effectiveLogs, season]);
 
     const recentSnapshot = useMemo(() => {
@@ -354,8 +288,7 @@ export const MemberHomeTab: React.FC = () => {
 
         try {
             await submitCorrectionRequest(selectedRequestLog.recordId, requestReason);
-            const nextRequests = await getCorrectionRequests({ requesterMemberId: profile?.memberId ?? null });
-            setCorrectionRequests(nextRequests);
+            await refreshCorrectionRequests();
             setRequestReason('');
             setSelectedRequestLog(null);
         } catch (error) {
@@ -454,604 +387,86 @@ export const MemberHomeTab: React.FC = () => {
                 </section>
 
                 {activeSection === 'home' && (
-                    <div className="space-y-6">
-                        <NoticeScheduleBoard
-                            announcements={announcements}
-                            scheduleEvents={scheduleEvents}
-                            title="공지와 다가오는 일정"
-                            description="운영진이 공유한 공지와 예정된 일정을 가장 먼저 확인할 수 있습니다."
-                        />
-
-                        <section className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
-                            <div className="flex items-center gap-2 font-semibold text-slate-900">
-                                <Sparkles size={18} className="text-indigo-600" />
-                                이번 시즌 점수
-                            </div>
-                            <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-3">
-                                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                                    <div className="text-sm text-slate-500">누적 점수</div>
-                                    <div className="mt-2 text-2xl font-bold text-slate-950">
-                                        {seasonScore > 0 ? '+' : ''}
-                                        {seasonScore}점
-                                    </div>
-                                    <div className="mt-1 text-sm text-slate-500">{season?.name ?? '시즌 기준 없음'}</div>
-                                </div>
-                                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                                    <div className="text-sm text-slate-500">기록 건수</div>
-                                    <div className="mt-2 text-2xl font-bold text-slate-950">{seasonLogCount}건</div>
-                                    <div className="mt-1 text-sm text-slate-500">이번 시즌 누적 활동</div>
-                                </div>
-                                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                                    <div className="text-sm text-slate-500">공식 배지</div>
-                                    <div className="mt-2 text-2xl font-bold text-indigo-600">{memberBadges.length}개</div>
-                                    <div className="mt-1 text-sm text-slate-500">활성 조건을 만족한 현재 배지 수</div>
-                                </div>
-                            </div>
-                        </section>
-
-                        <section className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
-                            <div className="flex items-center justify-between gap-3">
-                                <div className="flex items-center gap-2 font-semibold text-slate-900">
-                                    <Activity size={18} className="text-indigo-600" />
-                                    최근 활동
-                                </div>
-                                <button
-                                    type="button"
-                                    onClick={() => setActiveSection('activity')}
-                                    className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
-                                >
-                                    내 활동 보기
-                                </button>
-                            </div>
-                            <div className="mt-5 space-y-3">
-                                {homeRecentLogs.length > 0 ? (
-                                    homeRecentLogs.map((log) => (
-                                        <div key={log.id} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
-                                            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                                                <div>
-                                                    <div className="font-semibold text-slate-900">{log.categoryName ?? '알 수 없는 규칙'}</div>
-                                                    <div className="mt-1 text-sm text-slate-500">{log.reason ?? '기록 사유 없음'}</div>
-                                                </div>
-                                                <div className="text-sm text-slate-500">{formatDateTime(log.timestamp)}</div>
-                                            </div>
-                                            <div className="mt-3 flex items-center justify-between gap-3">
-                                                <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${log.pointDelta >= 0 ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-rose-200 bg-rose-50 text-rose-700'}`}>
-                                                    {log.pointDelta > 0 ? '+' : ''}
-                                                    {log.pointDelta}점
-                                                </span>
-                                                {log.evidenceUrl ? (
-                                                    <a
-                                                        href={log.evidenceUrl}
-                                                        target="_blank"
-                                                        rel="noreferrer"
-                                                        className="inline-flex items-center gap-1 text-sm font-medium text-sky-700 hover:text-sky-800"
-                                                    >
-                                                        <Link2 size={14} />
-                                                        증빙 보기
-                                                    </a>
-                                                ) : null}
-                                            </div>
-                                        </div>
-                                    ))
-                                ) : (
-                                    <div className="rounded-2xl border border-dashed border-slate-200 px-4 py-8 text-center text-sm text-slate-500">
-                                        최근 활동이 아직 없습니다.
-                                    </div>
-                                )}
-                            </div>
-                        </section>
-
-                        <section className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
-                            <div className="flex items-center gap-2 font-semibold text-slate-900">
-                                <TrendingUp size={18} className="text-indigo-600" />
-                                최근 30일 변화
-                            </div>
-                            <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-                                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                                    <div className="text-sm text-slate-500">최근 30일 점수</div>
-                                    <div className={`mt-2 text-2xl font-bold ${recentSnapshot.recentPoints >= 0 ? 'text-indigo-600' : 'text-rose-600'}`}>
-                                        {recentSnapshot.recentPoints > 0 ? '+' : ''}
-                                        {recentSnapshot.recentPoints}점
-                                    </div>
-                                </div>
-                                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                                    <div className="text-sm text-slate-500">활동 일수</div>
-                                    <div className="mt-2 text-2xl font-bold text-slate-950">{recentSnapshot.activeDays}일</div>
-                                </div>
-                                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                                    <div className="text-sm text-slate-500">연속 활동</div>
-                                    <div className="mt-2 flex items-center gap-2 text-2xl font-bold text-slate-950">
-                                        <Flame size={18} className="text-amber-500" />
-                                        {recentSnapshot.streakDays}일
-                                    </div>
-                                </div>
-                                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                                    <div className="text-sm text-slate-500">증빙 포함 기록</div>
-                                    <div className="mt-2 text-2xl font-bold text-slate-950">{recentSnapshot.evidenceCount}건</div>
-                                </div>
-                            </div>
-                            <div className="mt-4 rounded-2xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm leading-6 text-indigo-900">
-                                {growthDescription}
-                            </div>
-                        </section>
-                    </div>
+                    <MemberHomeOverviewSection
+                        announcements={announcements}
+                        scheduleEvents={scheduleEvents}
+                        seasonName={season?.name ?? '시즌 기준 없음'}
+                        seasonScore={seasonScore}
+                        seasonLogCount={seasonLogCount}
+                        memberBadgeCount={memberBadges.length}
+                        homeRecentLogs={homeRecentLogs}
+                        recentSnapshot={recentSnapshot}
+                        growthDescription={growthDescription}
+                        formatDateTime={formatDateTime}
+                        onOpenActivity={() => setActiveSection('activity')}
+                    />
                 )}
 
                 {activeSection === 'activity' && (
-                    <div className="space-y-6">
-                        <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
-                            <div className="border-b border-slate-100 px-6 py-5">
-                                <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-                                    <div>
-                                        <div className="flex items-center gap-2 font-semibold text-slate-900">
-                                            <Activity size={18} className="text-indigo-600" />
-                                            개인 활동 타임라인
-                                        </div>
-                                        <div className="mt-1 text-sm text-slate-500">저장된 활동을 시간순으로 묶어 보고, 바로 정정 요청까지 이어집니다.</div>
-                                    </div>
-                                    <div className="inline-flex rounded-2xl border border-slate-200 bg-slate-50 p-1">
-                                        {timelineRangeOptions.map((option) => (
-                                            <button
-                                                key={option.id}
-                                                type="button"
-                                                onClick={() => setTimelineRange(option.id)}
-                                                className={`rounded-xl px-3 py-2 text-sm font-semibold transition-colors ${
-                                                    timelineRange === option.id
-                                                        ? 'bg-white text-slate-900 shadow-sm'
-                                                        : 'text-slate-500 hover:text-slate-800'
-                                                }`}
-                                            >
-                                                {option.label}
-                                            </button>
-                                        ))}
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div className="space-y-8 px-6 py-6">
-                                {timelineGroups.map((group) => (
-                                    <div key={group.monthKey} className="space-y-3">
-                                        <div className="flex items-center gap-3">
-                                            <div className="text-sm font-semibold text-slate-900">{group.monthLabel}</div>
-                                            <div className="h-px flex-1 bg-slate-200" />
-                                        </div>
-
-                                        <div className="space-y-3">
-                                            {group.items.map((log) => {
-                                                const openRequest = openCorrectionRequestsByRecordId[log.recordId ?? ''];
-
-                                                return (
-                                                    <div
-                                                        key={log.id}
-                                                        className="rounded-[24px] border border-slate-200 bg-gradient-to-r from-white via-white to-slate-50 p-5 shadow-sm"
-                                                    >
-                                                        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                                                            <div className="space-y-3">
-                                                                <div className="flex flex-wrap items-center gap-2">
-                                                                    <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700">
-                                                                        {formatDayLabel(log.timestamp)}
-                                                                    </span>
-                                                                    {log.evidenceUrl && (
-                                                                        <a
-                                                                            href={log.evidenceUrl}
-                                                                            target="_blank"
-                                                                            rel="noreferrer"
-                                                                            className="inline-flex items-center gap-1 rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-medium text-sky-700 transition-colors hover:bg-sky-100"
-                                                                        >
-                                                                            <Link2 size={13} />
-                                                                            증빙 링크
-                                                                        </a>
-                                                                    )}
-                                                                </div>
-
-                                                                <div>
-                                                                    <div className="font-semibold text-slate-950">{log.categoryName ?? '알 수 없는 규칙'}</div>
-                                                                    <div className="mt-1 text-sm leading-6 text-slate-600">
-                                                                        {log.reason ?? '기록 사유 없음'}
-                                                                        {log.note ? <span className="text-slate-300"> · {log.note}</span> : null}
-                                                                    </div>
-                                                                </div>
-                                                            </div>
-
-                                                            <div className="flex flex-col items-start gap-3 lg:items-end">
-                                                                <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${log.pointDelta >= 0 ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-rose-200 bg-rose-50 text-rose-700'}`}>
-                                                                    {log.pointDelta > 0 ? '+' : ''}
-                                                                    {log.pointDelta}점
-                                                                </span>
-                                                                <div className="text-sm text-slate-500">{formatDateTime(log.timestamp)}</div>
-                                                            </div>
-                                                        </div>
-
-                                                        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                                                            <div className="text-sm text-slate-600">
-                                                                {openRequest ? '이미 정정 요청이 접수되어 운영진이 확인 중입니다.' : '기록이 다르면 바로 정정 요청을 보낼 수 있습니다.'}
-                                                            </div>
-                                                            {openRequest ? (
-                                                                <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${correctionRequestStatusClasses[openRequest.status]}`}>
-                                                                    {correctionRequestStatusLabels[openRequest.status]}
-                                                                </span>
-                                                            ) : (
-                                                                <button
-                                                                    type="button"
-                                                                    onClick={() => {
-                                                                        setSelectedRequestLog(log);
-                                                                        setRequestReason(`${log.categoryName ?? '활동'} 기록에 대한 정정 요청입니다. `);
-                                                                        setRequestError(null);
-                                                                    }}
-                                                                    disabled={!log.recordId}
-                                                                    className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 disabled:opacity-50"
-                                                                >
-                                                                    <MessageSquareWarning size={16} />
-                                                                    정정 요청
-                                                                </button>
-                                                            )}
-                                                        </div>
-                                                    </div>
-                                                );
-                                            })}
-                                        </div>
-                                    </div>
-                                ))}
-
-                                {timelineLogs.length === 0 && (
-                                    <div className="rounded-[24px] border border-dashed border-slate-200 bg-slate-50 px-6 py-14 text-center">
-                                        <div className="text-base font-semibold text-slate-900">아직 타임라인에 표시할 활동이 없습니다.</div>
-                                        <div className="mt-2 text-sm text-slate-500">기록이 저장되면 이곳에 월별 흐름과 정정 요청 버튼이 함께 표시됩니다.</div>
-                                    </div>
-                                )}
-                            </div>
-                        </section>
-
-                        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-                            <div className="flex items-center gap-2 font-semibold text-slate-900">
-                                <MessageSquareWarning size={18} className="text-indigo-600" />
-                                정정 요청
-                            </div>
-                            <div className="mt-5 space-y-4">
-                                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                                    <div className="text-sm font-medium text-slate-700">최근 요청 내역</div>
-                                    <div className="mt-3 space-y-3">
-                                        {correctionRequests.slice(0, 4).map((request) => (
-                                            <div key={request.id} className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
-                                                <div className="flex items-start justify-between gap-3">
-                                                    <div>
-                                                        <div className="font-medium text-slate-900">{request.activitySummary ?? '활동 기록'}</div>
-                                                        <div className="mt-1 text-sm text-slate-500">{formatDateTime(request.createdAt)}</div>
-                                                    </div>
-                                                    <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${correctionRequestStatusClasses[request.status]}`}>
-                                                        {correctionRequestStatusLabels[request.status]}
-                                                    </span>
-                                                </div>
-                                                <div className="mt-3 text-sm leading-6 text-slate-600">{request.reason}</div>
-                                                {request.reviewNote && (
-                                                    <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
-                                                        운영진 답변: {request.reviewNote}
-                                                    </div>
-                                                )}
-                                            </div>
-                                        ))}
-
-                                        {correctionRequests.length === 0 && (
-                                            <div className="rounded-2xl border border-dashed border-slate-200 px-4 py-6 text-center text-sm text-slate-500">
-                                                아직 제출한 정정 요청이 없습니다.
-                                            </div>
-                                        )}
-                                    </div>
-                                </div>
-
-                                {selectedRequestLog && (
-                                    <form onSubmit={handleSubmitCorrectionRequest} className="rounded-2xl border border-indigo-200 bg-indigo-50 p-4">
-                                        <div className="flex items-center gap-2 font-semibold text-slate-900">
-                                            <Send size={16} className="text-indigo-600" />
-                                            {selectedRequestLog.categoryName ?? '활동 기록'} 정정 요청 작성
-                                        </div>
-                                        <div className="mt-2 text-sm text-slate-600">
-                                            {formatDateTime(selectedRequestLog.timestamp)} 기록에 대해 운영진에게 검토를 요청합니다.
-                                        </div>
-                                        <textarea
-                                            value={requestReason}
-                                            onChange={(event) => setRequestReason(event.target.value)}
-                                            rows={4}
-                                            placeholder="어떤 부분이 잘못되었는지 구체적으로 남겨 주세요."
-                                            className="mt-4 w-full resize-none rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none transition-all focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                                        />
-                                        {requestError && (
-                                            <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-                                                {requestError}
-                                            </div>
-                                        )}
-                                        <div className="mt-4 flex flex-wrap gap-2">
-                                            <button
-                                                type="submit"
-                                                disabled={!requestReason.trim() || isSubmittingRequest}
-                                                className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-indigo-700 disabled:opacity-50"
-                                            >
-                                                {isSubmittingRequest ? '제출 중...' : '정정 요청 제출'}
-                                            </button>
-                                            <button
-                                                type="button"
-                                                onClick={() => {
-                                                    setSelectedRequestLog(null);
-                                                    setRequestReason('');
-                                                    setRequestError(null);
-                                                }}
-                                                className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
-                                            >
-                                                닫기
-                                            </button>
-                                        </div>
-                                    </form>
-                                )}
-                            </div>
-                        </section>
-                    </div>
+                    <MemberActivitySection
+                        timelineRange={timelineRange}
+                        timelineRangeOptions={timelineRangeOptions}
+                        timelineGroups={timelineGroups}
+                        timelineLogsCount={timelineLogs.length}
+                        correctionRequests={correctionRequests}
+                        openCorrectionRequestsByRecordId={openCorrectionRequestsByRecordId}
+                        correctionRequestStatusLabels={correctionRequestStatusLabels}
+                        correctionRequestStatusClasses={correctionRequestStatusClasses}
+                        selectedRequestLog={selectedRequestLog}
+                        requestReason={requestReason}
+                        requestError={requestError}
+                        isSubmittingRequest={isSubmittingRequest}
+                        onChangeTimelineRange={setTimelineRange}
+                        onSelectRequestLog={(log) => {
+                            setSelectedRequestLog(log);
+                            setRequestReason(`${log.categoryName ?? '활동'} 기록에 대한 정정 요청입니다. `);
+                            setRequestError(null);
+                        }}
+                        onChangeRequestReason={setRequestReason}
+                        onSubmitCorrectionRequest={handleSubmitCorrectionRequest}
+                        onCloseRequestForm={() => {
+                            setSelectedRequestLog(null);
+                            setRequestReason('');
+                            setRequestError(null);
+                        }}
+                        formatDayLabel={formatDayLabel}
+                        formatDateTime={formatDateTime}
+                    />
                 )}
 
                 {activeSection === 'recap' && (
-                    <div className="space-y-6">
-                        <section className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
-                            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                                <div>
-                                    <div className="flex items-center gap-2 font-semibold text-slate-900">
-                                        <Sparkles size={18} className="text-indigo-600" />
-                                        개인 리캡
-                                    </div>
-                                    <p className="mt-1 text-sm text-slate-500">이번 달 리캡과 시즌 리캡을 바로 열고, 저장된 개인 리캡도 여기서 다시 볼 수 있습니다.</p>
-                                </div>
-                                <div className="flex flex-wrap gap-2">
-                                    <button
-                                        type="button"
-                                        onClick={() => setSelectedRecapPeriod('month')}
-                                        className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50"
-                                    >
-                                        <PlayCircle size={16} className="text-indigo-600" />
-                                        이번 달 리캡
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={() => setSelectedRecapPeriod('season')}
-                                        className="inline-flex items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm font-semibold text-indigo-700 transition-colors hover:bg-indigo-100"
-                                    >
-                                        <Sparkles size={16} />
-                                        현재 시즌 리캡
-                                    </button>
-                                </div>
-                            </div>
-                        </section>
-
-                        <section className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
-                            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                                <div>
-                                    <div className="flex items-center gap-2 font-semibold text-slate-900">
-                                        <Sparkles size={18} className="text-indigo-600" />
-                                        저장된 개인 리캡
-                                    </div>
-                                    <p className="mt-1 text-sm text-slate-500">운영진이 월간 또는 시즌 리캡을 생성하면 이곳에 저장본이 쌓입니다.</p>
-                                </div>
-                                <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-500">
-                                    최근 {recapSnapshots.length}개
-                                </div>
-                            </div>
-
-                            <div className="mt-5 grid grid-cols-1 gap-4 2xl:grid-cols-2">
-                                {recapSnapshots.length === 0 ? (
-                                    <div className="rounded-[24px] border border-dashed border-slate-300 bg-slate-50 px-5 py-6 text-sm leading-7 text-slate-500 lg:col-span-2">
-                                        아직 저장된 개인 리캡이 없습니다. 운영진이 월간 또는 시즌 저장본을 생성하면 여기서 다시 열어볼 수 있습니다.
-                                    </div>
-                                ) : (
-                                    recapSnapshots.map((snapshot) => (
-                                        <button
-                                            key={snapshot.id}
-                                            type="button"
-                                            onClick={() => setSelectedSnapshot(snapshot)}
-                                            className="rounded-[28px] border border-slate-200 bg-gradient-to-br from-white via-white to-slate-50 p-5 text-left shadow-sm transition-transform hover:-translate-y-0.5"
-                                        >
-                                            <div className="flex items-start justify-between gap-4">
-                                                <div>
-                                                    <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-500">
-                                                        {snapshot.periodType === 'month' ? '월간 저장본' : '시즌 저장본'}
-                                                    </div>
-                                                    <div className="mt-3 text-lg font-bold text-slate-900">{snapshot.title}</div>
-                                                    <div className="mt-1 text-sm text-slate-500">{snapshot.subtitle}</div>
-                                                </div>
-                                                <div className="text-xs font-semibold text-slate-400">{formatDate(snapshot.createdAt)}</div>
-                                            </div>
-                                            <p className="mt-4 text-sm leading-7 text-slate-600">{snapshot.summary}</p>
-                                            <div className="mt-4 flex flex-wrap gap-2">
-                                                {snapshot.payload.stats.slice(0, 3).map((stat) => (
-                                                    <span
-                                                        key={`${snapshot.id}_${stat.label}`}
-                                                        className="rounded-full border border-slate-200 bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600"
-                                                    >
-                                                        {stat.label} · {stat.value}
-                                                    </span>
-                                                ))}
-                                            </div>
-                                        </button>
-                                    ))
-                                )}
-                            </div>
-                        </section>
-                    </div>
+                    <MemberRecapSection
+                        recapSnapshots={recapSnapshots}
+                        formatDate={formatDate}
+                        onOpenRecapPeriod={setSelectedRecapPeriod}
+                        onSelectSnapshot={setSelectedSnapshot}
+                    />
                 )}
 
                 {activeSection === 'badges' && (
-                    <div className="space-y-6">
-                        <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
-                            <div className="relative border-b border-slate-100 bg-gradient-to-br from-amber-50 via-white to-rose-50 px-6 py-5">
-                                <img
-                                    src={banollimSchoolLogoUrl}
-                                    alt="반디스쿨 로고"
-                                    className="pointer-events-none absolute right-4 top-4 h-16 w-auto opacity-20 saturate-50 sm:h-20"
-                                />
-                                <div className="relative flex items-start justify-between gap-4">
-                                    <div>
-                                        <div className="flex items-center gap-2 font-semibold text-slate-900">
-                                            <Medal size={18} className="text-indigo-600" />
-                                            공식 배지 컬렉션
-                                        </div>
-                                        <div className="mt-2 text-sm leading-6 text-slate-600">
-                                            활성 배지는 현재 기록 기준으로 실시간 계산됩니다. 아직 잠긴 배지도 조건과 함께 미리 볼 수 있습니다.
-                                        </div>
-                                    </div>
-                                    <img
-                                        src={bandiMascotUrl}
-                                        alt="반디 마스코트"
-                                        className="h-16 w-auto shrink-0 drop-shadow-[0_12px_24px_rgba(15,23,42,0.18)] sm:h-20"
-                                    />
-                                </div>
-                            </div>
-
-                            <div className="space-y-5 p-6">
-                                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                                    {badgeCards.map(({ badge, earnedBadge, requirementEntries }) => (
-                                        <div
-                                            key={badge.id}
-                                            className={`overflow-hidden rounded-[24px] border p-4 ${
-                                                earnedBadge
-                                                    ? badgeToneClasses[earnedBadge.tone ?? 'sky']
-                                                    : 'border-slate-200 bg-slate-50 text-slate-700'
-                                            }`}
-                                        >
-                                            <div className="flex items-start justify-between gap-4">
-                                                <div className="flex items-center gap-3">
-                                                    <div className={`flex h-14 w-14 items-center justify-center rounded-2xl border shadow-sm ${earnedBadge ? 'border-white/70 bg-white/80' : 'border-slate-200 bg-white'}`}>
-                                                        <img
-                                                            src={getBadgeArtworkUrl(earnedBadge ?? badge)}
-                                                            alt={badge.name}
-                                                            className="h-10 w-auto object-contain"
-                                                        />
-                                                    </div>
-                                                    <div>
-                                                        <div className="flex items-center gap-2 text-sm font-semibold">
-                                                            <BadgeCheck size={16} />
-                                                            {badge.name}
-                                                        </div>
-                                                        <div className="mt-1 text-xs opacity-80">
-                                                            {earnedBadge
-                                                                ? `${new Date(earnedBadge.awardedAt).toLocaleDateString('ko-KR')} 획득`
-                                                                : `${badgeScopeLabels[badge.evaluationScope ?? 'season']} 잠금`}
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                                <div className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] ${earnedBadge ? 'border-white/70 bg-white/80 opacity-90' : 'border-slate-200 bg-white text-slate-500'}`}>
-                                                    {(earnedBadge?.badgeCode ?? badge.code).replace(/_/g, ' ')}
-                                                </div>
-                                            </div>
-                                            <div className="mt-4 text-sm leading-6">
-                                                {badge.description}
-                                            </div>
-                                            <div className="mt-4 flex flex-wrap gap-2">
-                                                {requirementEntries.map((entry) => (
-                                                    <span
-                                                        key={`${badge.id}-${entry.key}`}
-                                                        className={`rounded-full border px-3 py-1 text-xs font-semibold ${
-                                                            entry.satisfied
-                                                                ? earnedBadge
-                                                                    ? 'border-white/70 bg-white/80'
-                                                                    : 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                                                                : 'border-slate-200 bg-white text-slate-500'
-                                                        }`}
-                                                    >
-                                                        {entry.label} {entry.current}/{entry.target}{entry.unit}
-                                                    </span>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    ))}
-
-                                    {badgeCards.length === 0 && (
-                                        <div className="rounded-[24px] border border-dashed border-slate-200 bg-slate-50 px-5 py-8 text-center text-sm text-slate-500 sm:col-span-2">
-                                            <img
-                                                src={didiMascotUrl}
-                                                alt="디디 마스코트"
-                                                className="mx-auto h-16 w-auto opacity-90"
-                                            />
-                                            <div className="mt-4 font-medium text-slate-700">첫 배지를 기다리는 중입니다.</div>
-                                            <div className="mt-2 leading-6">
-                                                활동 기록이 누적되면 이곳에 실시간으로 획득 배지가 추가됩니다.
-                                            </div>
-                                        </div>
-                                    )}
-                                </div>
-
-                                <div className="rounded-[24px] border border-slate-900 bg-slate-950 px-5 py-4 text-white">
-                                    <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                                        <div>
-                                            <div className="text-xs uppercase tracking-[0.16em] text-slate-400">다음 챌린지</div>
-                                            <div className="mt-2 text-lg font-semibold text-white">{memberBadges.length}개 배지 획득</div>
-                                            <div className="mt-2 max-w-xl text-sm leading-6 text-slate-300">{badgeChallengeCopy}</div>
-                                        </div>
-                                        <img
-                                            src={didiMascotUrl}
-                                            alt="디디 마스코트"
-                                            className="h-20 w-auto shrink-0 self-end drop-shadow-[0_14px_24px_rgba(0,0,0,0.25)]"
-                                        />
-                                    </div>
-                                </div>
-                            </div>
-                        </section>
-                    </div>
+                    <MemberBadgeSection
+                        badgeCards={badgeCards}
+                        memberBadges={memberBadges}
+                        badgeChallengeCopy={badgeChallengeCopy}
+                        badgeToneClasses={badgeToneClasses}
+                        bandiMascotUrl={bandiMascotUrl}
+                        didiMascotUrl={didiMascotUrl}
+                        banollimSchoolLogoUrl={banollimSchoolLogoUrl}
+                    />
                 )}
 
                 {activeSection === 'account' && (
-                    <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
-                        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-                            <div className="flex items-center gap-2 font-semibold text-slate-900">
-                                <UserRound size={18} className="text-indigo-600" />
-                                내 프로필
-                            </div>
-                            <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
-                                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                                    <div className="text-sm text-slate-500">이름</div>
-                                    <div className="mt-2 text-lg font-semibold text-slate-950">{member.name}</div>
-                                </div>
-                                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                                    <div className="text-sm text-slate-500">직책</div>
-                                    <div className="mt-2 text-lg font-semibold text-slate-950">{member.roleName ?? roleLabels[profile?.appRole ?? 'member']}</div>
-                                </div>
-                                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                                    <div className="text-sm text-slate-500">소속 팀</div>
-                                    <div className="mt-2 text-lg font-semibold text-slate-950">{memberTeamLabel}</div>
-                                </div>
-                                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                                    <div className="text-sm text-slate-500">가입일</div>
-                                    <div className="mt-2 text-lg font-semibold text-slate-950">{formatDate(member.joinedAt)}</div>
-                                </div>
-                            </div>
-                        </section>
-
-                        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-                            <div className="flex items-center gap-2 font-semibold text-slate-900">
-                                <ShieldCheck size={18} className="text-indigo-600" />
-                                계정 상태
-                            </div>
-                            <div className="mt-5 space-y-4">
-                                <div className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                                    <span className="text-sm text-slate-500">회원 상태</span>
-                                    <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${statusClass}`}>
-                                        {memberStatusLabels[status]}
-                                    </span>
-                                </div>
-                                <div className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                                    <span className="text-sm text-slate-500">계정 상태</span>
-                                    <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${accountStatus.className}`}>
-                                        {accountStatus.label}
-                                    </span>
-                                </div>
-                                <div className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                                    <span className="text-sm text-slate-500">로그인 이메일</span>
-                                    <span className="text-sm font-medium text-slate-900">{profile?.email ?? '-'}</span>
-                                </div>
-                                <div className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                                    <span className="text-sm text-slate-500">최근 활동</span>
-                                    <span className="text-sm font-medium text-slate-900">
-                                        {latestLog ? formatDateTime(latestLog.timestamp) : '아직 없음'}
-                                    </span>
-                                </div>
-                            </div>
-                        </section>
-                    </div>
+                    <MemberAccountSection
+                        member={member}
+                        roleLabel={member.roleName ?? roleLabels[profile?.appRole ?? 'member']}
+                        memberTeamLabel={memberTeamLabel}
+                        joinedAtLabel={formatDate(member.joinedAt)}
+                        latestActivityLabel={latestLog ? formatDateTime(latestLog.timestamp) : '아직 없음'}
+                        statusLabel={memberStatusLabels[status]}
+                        statusClass={statusClass}
+                        accountStatus={accountStatus}
+                        loginEmail={profile?.email ?? '-'}
+                    />
                 )}
             </div>
 

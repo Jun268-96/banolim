@@ -10,7 +10,7 @@ import {
     getActivityGroups,
     getCategories,
     updateActivityGroup,
-} from '../../lib/db';
+} from '../../lib/api/activities/manage';
 import { SettingsDialog } from '../settings/SettingsDialog';
 
 const EmptyState: React.FC<{ message: string }> = ({ message }) => (
