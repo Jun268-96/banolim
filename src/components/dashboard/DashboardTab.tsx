@@ -16,11 +16,9 @@ import {
 import { useAuth } from '../auth/auth-context';
 import { AddMemberDialog } from './dialogs/AddMemberDialog';
 import { AddTeamDialog } from './dialogs/AddTeamDialog';
-import { AccessQueueDialog } from './dialogs/AccessQueueDialog';
 import { BulkImportDialog } from './dialogs/BulkImportDialog';
 import { EditTeamDialog } from './dialogs/EditTeamDialog';
 import { HiddenMemberDeleteDialog } from './dialogs/HiddenMemberDeleteDialog';
-import { OnboardingGuideDialog } from './dialogs/OnboardingGuideDialog';
 import { ProvisionedAccountDialog } from './dialogs/ProvisionedAccountDialog';
 import { TeamAssignmentDialog } from './dialogs/TeamAssignmentDialog';
 import { TeamDeleteDialog } from './dialogs/TeamDeleteDialog';
@@ -186,29 +184,6 @@ const parseMemberCsv = (rawText: string): { rows: BulkImportRow[]; errors: strin
     return { rows, errors };
 };
 
-const getAccessPrepTags = (member: Member) => {
-    const tags: Array<{ label: string; className: string }> = [];
-
-    if (!member.loginEmail) {
-        tags.push({ label: '이메일 미등록', className: 'border-sky-200 bg-sky-50 text-sky-700' });
-    }
-    if (member.loginEmail && !member.authUserId) {
-        tags.push({ label: '계정 미발급', className: 'border-amber-200 bg-amber-50 text-amber-700' });
-    }
-    if (member.passwordResetRequired) {
-        tags.push({ label: '첫 로그인 대기', className: 'border-indigo-200 bg-indigo-50 text-indigo-700' });
-    }
-    if (member.status === 'dormant') {
-        tags.push({ label: '보류', className: 'border-violet-200 bg-violet-50 text-violet-700' });
-    }
-    if (member.status === 'inactive') {
-        tags.push({ label: '반려/비활성', className: 'border-slate-200 bg-slate-100 text-slate-600' });
-    }
-
-    return tags;
-};
-
-const isAccessReady = (member: Member) => Boolean(member.loginEmail) && Boolean(member.authUserId) && member.status === 'active';
 
 const getMemberAccountFilterKey = (member: Member): Exclude<MemberAccountFilter, 'all'> => {
     if (!member.loginEmail) {
@@ -308,9 +283,7 @@ export const DashboardTab: React.FC = () => {
         isExistingAccount: boolean;
         inviteSent: boolean;
     } | null>(null);
-    const [isGuideDialogOpen, setIsGuideDialogOpen] = useState(false);
     const [isBulkImportDialogOpen, setIsBulkImportDialogOpen] = useState(false);
-    const [isQueueDialogOpen, setIsQueueDialogOpen] = useState(false);
     const [isAddMemberDialogOpen, setIsAddMemberDialogOpen] = useState(false);
     const [isAddTeamDialogOpen, setIsAddTeamDialogOpen] = useState(false);
     const [isTeamAssignmentDialogOpen, setIsTeamAssignmentDialogOpen] = useState(false);
@@ -333,24 +306,6 @@ export const DashboardTab: React.FC = () => {
         refreshData,
     } = useDashboardResources(permissions.canManageMembers);
 
-    const approvalQueue = useMemo(
-        () =>
-            members
-                .filter((member) => !isAccessReady(member))
-                .sort((a, b) => {
-                    const accessRank = (member: Member) => {
-                        if (!member.loginEmail) return 0;
-                        if (!member.authUserId) return 1;
-                        if (member.status === 'dormant') return 2;
-                        if (member.status === 'inactive') return 3;
-                        return 4;
-                    };
-                    const rankDiff = accessRank(a) - accessRank(b);
-                    if (rankDiff !== 0) return rankDiff;
-                    return (a.joinedAt ?? '').localeCompare(b.joinedAt ?? '');
-                }),
-        [members],
-    );
 
     const roleById = useMemo(() => new Map(roles.map((role) => [role.id, role])), [roles]);
     const roleByName = useMemo(() => new Map(roles.map((role) => [role.name.trim().toLowerCase(), role])), [roles]);
@@ -427,15 +382,6 @@ export const DashboardTab: React.FC = () => {
         });
     }, [members, roleById, searchQueryNormalized, selectedRoleFilter, selectedTeamFilter, selectedStatusFilter, selectedAccountFilter, sortMode]);
 
-    const accessPreparation = useMemo(
-        () => ({
-            total: members.filter((member) => !isAccessReady(member)).length,
-            missingEmail: members.filter((member) => !member.loginEmail).length,
-            missingAccount: members.filter((member) => member.loginEmail && !member.authUserId).length,
-            dormantOrInactive: members.filter((member) => member.status === 'dormant' || member.status === 'inactive').length,
-        }),
-        [members],
-    );
 
     const roleFilterOptions = useMemo(
         () =>
@@ -915,13 +861,10 @@ export const DashboardTab: React.FC = () => {
             <DashboardHeaderSection
                 displayMode={displayMode}
                 canManageMembers={permissions.canManageMembers}
-                approvalQueueCount={approvalQueue.length}
                 onChangeDisplayMode={setDisplayMode}
                 onOpenRoleSettings={() => setIsRoleSettingsDialogOpen(true)}
                 onOpenAddMember={() => setIsAddMemberDialogOpen(true)}
-                onOpenGuide={() => setIsGuideDialogOpen(true)}
                 onOpenBulkImport={() => setIsBulkImportDialogOpen(true)}
-                onOpenAccessQueue={() => setIsQueueDialogOpen(true)}
             />
 
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
@@ -1053,11 +996,6 @@ export const DashboardTab: React.FC = () => {
                 onChangeMemberLoginEmail={setNewMemberLoginEmail}
             />
 
-            <OnboardingGuideDialog
-                isOpen={isGuideDialogOpen}
-                onClose={() => setIsGuideDialogOpen(false)}
-            />
-
             <BulkImportDialog
                 isOpen={isBulkImportDialogOpen}
                 csvText={bulkCsvText}
@@ -1178,26 +1116,6 @@ export const DashboardTab: React.FC = () => {
                 }}
             />
 
-            <AccessQueueDialog
-                isOpen={isQueueDialogOpen}
-                approvalQueue={approvalQueue}
-                accessPreparation={accessPreparation}
-                savingMemberId={savingMemberId}
-                provisioningMemberId={provisioningMemberId}
-                onClose={() => setIsQueueDialogOpen(false)}
-                onProvisionMemberAccount={(member) => {
-                    void handleProvisionMemberAccount(member);
-                }}
-                onMarkDormant={(memberId) => {
-                    void handleMemberUpdate(memberId, { status: 'dormant' });
-                }}
-                onMarkInactive={(memberId) => {
-                    void handleMemberUpdate(memberId, { status: 'inactive' });
-                }}
-                getAccessPrepTags={getAccessPrepTags}
-                getMemberTeamLabels={getMemberTeamLabels}
-                formatDate={formatDate}
-            />
         </div>
     );
 };

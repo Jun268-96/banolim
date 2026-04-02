@@ -1,30 +1,24 @@
 import React from 'react';
-import { CircleHelp, Network, ShieldAlert, TableProperties, Upload, UserPlus, Users } from 'lucide-react';
+import { Network, ShieldAlert, TableProperties, Upload, UserPlus, Users } from 'lucide-react';
 
 type MemberDisplayMode = 'table' | 'teams' | 'organization';
 
 interface DashboardHeaderSectionProps {
   displayMode: MemberDisplayMode;
   canManageMembers: boolean;
-  approvalQueueCount: number;
   onChangeDisplayMode: (mode: MemberDisplayMode) => void;
   onOpenRoleSettings: () => void;
   onOpenAddMember: () => void;
-  onOpenGuide: () => void;
   onOpenBulkImport: () => void;
-  onOpenAccessQueue: () => void;
 }
 
 export const DashboardHeaderSection: React.FC<DashboardHeaderSectionProps> = ({
   displayMode,
   canManageMembers,
-  approvalQueueCount,
   onChangeDisplayMode,
   onOpenRoleSettings,
   onOpenAddMember,
-  onOpenGuide,
   onOpenBulkImport,
-  onOpenAccessQueue,
 }) => (
   <header className="space-y-4">
     <div className="flex flex-col gap-4 2xl:flex-row 2xl:items-start 2xl:justify-between">
@@ -86,28 +80,11 @@ export const DashboardHeaderSection: React.FC<DashboardHeaderSectionProps> = ({
         </button>
         <button
           type="button"
-          onClick={onOpenGuide}
-          className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50"
-        >
-          <CircleHelp size={16} className="text-indigo-600" />
-          관리자 온보딩 가이드
-        </button>
-        <button
-          type="button"
           onClick={onOpenBulkImport}
           className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50"
         >
           <Upload size={16} className="text-indigo-600" />
           CSV 대량 등록
-        </button>
-        <button
-          type="button"
-          onClick={onOpenAccessQueue}
-          className="inline-flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm font-semibold text-amber-800 transition-colors hover:bg-amber-100"
-        >
-          <ShieldAlert size={16} />
-          접근 준비 큐
-          <span className="rounded-full bg-white px-2 py-0.5 text-xs text-amber-700">{approvalQueueCount}</span>
         </button>
       </div>
     )}
