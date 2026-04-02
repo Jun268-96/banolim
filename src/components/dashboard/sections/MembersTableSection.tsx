@@ -411,7 +411,6 @@ export const MembersTableSection: React.FC<MembersTableSectionProps> = ({
           </div>
         )}
       </div>
-    </div>
     <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-3 text-xs font-medium text-slate-500 sm:px-6">
       <span>표 영역 안에서 좌우로 이동할 수 있습니다.</span>
       {canManageMembers && (
