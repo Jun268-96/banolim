@@ -150,22 +150,67 @@ export const MembersTableSection: React.FC<MembersTableSectionProps> = ({
   return (
   <div className="max-w-full">
     <div className="border-b border-slate-100 px-5 py-3 sm:px-6">
-      <button
-        type="button"
-        onClick={() => setIsSearchOpen((prev) => !prev)}
-        className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition-colors ${
-          isSearchOpen
-            ? 'bg-slate-900 text-white'
-            : 'border border-slate-200 bg-white text-slate-600 shadow-sm hover:bg-slate-50'
-        }`}
-      >
-        <Search size={15} />
-        검색 · 정렬
-        {hasActiveSearch && !isSearchOpen && (
-          <span className="h-2 w-2 rounded-full bg-indigo-500" />
-        )}
-        {isSearchOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-      </button>
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setIsSearchOpen((prev) => !prev)}
+          className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition-colors ${
+            isSearchOpen
+              ? 'bg-slate-900 text-white'
+              : 'border border-slate-200 bg-white text-slate-600 shadow-sm hover:bg-slate-50'
+          }`}
+        >
+          <Search size={15} />
+          검색 · 정렬
+          {hasActiveSearch && !isSearchOpen && (
+            <span className="h-2 w-2 rounded-full bg-indigo-500" />
+          )}
+          {isSearchOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+        </button>
+        <div className="h-4 w-px bg-slate-200" />
+        <button
+          type="button"
+          onClick={onResetFilters}
+          className={`rounded-full px-3 py-2 text-sm font-semibold transition-colors ${
+            selectedRoleFilter === 'all' && selectedTeamFilter === 'all' && selectedStatusFilter === 'all' && selectedAccountFilter === 'all'
+              ? 'bg-indigo-600 text-white'
+              : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+          }`}
+        >
+          전체 {filteredMembers.length}
+        </button>
+        {([
+          {
+            id: 'team' as const,
+            label: `팀별${selectedTeamFilter !== 'all' ? `: ${teams.find((team) => team.id === selectedTeamFilter)?.name ?? '전체'}` : ''}`,
+          },
+          {
+            id: 'role' as const,
+            label: `직책별${selectedRoleFilter !== 'all' ? `: ${roles.find((role) => role.id === selectedRoleFilter)?.name ?? '전체'}` : ''}`,
+          },
+          {
+            id: 'status' as const,
+            label: `상태별${selectedStatusFilter !== 'all' ? `: ${memberStatusLabels[selectedStatusFilter]}` : ''}`,
+          },
+          {
+            id: 'account' as const,
+            label: `계정상태${selectedAccountFilter !== 'all' ? `: ${memberAccountFilterLabels[selectedAccountFilter]}` : ''}`,
+          },
+        ]).map((option) => (
+          <button
+            key={option.id}
+            type="button"
+            onClick={() => onChangeOpenFilterPanel((current) => (current === option.id ? null : option.id))}
+            className={`rounded-full px-3 py-2 text-sm font-semibold transition-colors ${
+              openFilterPanel === option.id
+                ? 'bg-slate-900 text-white'
+                : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+            }`}
+          >
+            {option.label} ▾
+          </button>
+        ))}
+      </div>
     </div>
 
     {isSearchOpen && (
@@ -213,52 +258,8 @@ export const MembersTableSection: React.FC<MembersTableSectionProps> = ({
       </div>
     )}
 
-    <div className="border-b border-slate-100 px-5 py-4 sm:px-6">
-      <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={onResetFilters}
-            className={`rounded-full px-3 py-1.5 text-sm font-semibold transition-colors ${
-              selectedRoleFilter === 'all' && selectedTeamFilter === 'all' && selectedStatusFilter === 'all' && selectedAccountFilter === 'all'
-                ? 'bg-indigo-600 text-white'
-                : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-            }`}
-          >
-            전체 {filteredMembers.length}
-          </button>
-          {([
-            {
-              id: 'team' as const,
-              label: `팀별${selectedTeamFilter !== 'all' ? `: ${teams.find((team) => team.id === selectedTeamFilter)?.name ?? '전체'}` : ''}`,
-            },
-            {
-              id: 'role' as const,
-              label: `직책별${selectedRoleFilter !== 'all' ? `: ${roles.find((role) => role.id === selectedRoleFilter)?.name ?? '전체'}` : ''}`,
-            },
-            {
-              id: 'status' as const,
-              label: `상태별${selectedStatusFilter !== 'all' ? `: ${memberStatusLabels[selectedStatusFilter]}` : ''}`,
-            },
-            {
-              id: 'account' as const,
-              label: `계정상태${selectedAccountFilter !== 'all' ? `: ${memberAccountFilterLabels[selectedAccountFilter]}` : ''}`,
-            },
-          ]).map((option) => (
-            <button
-              key={option.id}
-              type="button"
-              onClick={() => onChangeOpenFilterPanel((current) => (current === option.id ? null : option.id))}
-              className={`rounded-full px-3 py-1.5 text-sm font-semibold transition-colors ${
-                openFilterPanel === option.id
-                  ? 'bg-slate-900 text-white'
-                  : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-              }`}
-            >
-              {option.label} ▾
-            </button>
-          ))}
-        </div>
-
+    {openFilterPanel !== null && (
+    <div className="border-b border-slate-100 px-5 py-3 sm:px-6">
         {openFilterPanel === 'team' && (
           <div className="rounded-[20px] border border-slate-200 bg-white p-3">
             <div className="flex flex-wrap gap-2">
@@ -410,7 +411,8 @@ export const MembersTableSection: React.FC<MembersTableSectionProps> = ({
             </div>
           </div>
         )}
-      </div>
+    </div>
+    )}
     <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-3 text-xs font-medium text-slate-500 sm:px-6">
       <span>표 영역 안에서 좌우로 이동할 수 있습니다.</span>
       {canManageMembers && (
