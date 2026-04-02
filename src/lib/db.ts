@@ -104,11 +104,6 @@ const createActivityGroupCode = (name: string) => {
     const base = asciiSlug || 'group';
     return `${base}-${Math.random().toString(36).slice(2, 6)}`;
 };
-const createTemporaryPassword = () => {
-    const base = Math.random().toString(36).slice(2, 8);
-    const suffix = Math.random().toString(36).slice(2, 6).toUpperCase();
-    return `Ban!${base}${suffix}`;
-};
 const normalizeLoginEmail = (value?: string | null) => {
     const normalized = value?.trim().toLowerCase() ?? '';
     return normalized.length > 0 ? normalized : null;
