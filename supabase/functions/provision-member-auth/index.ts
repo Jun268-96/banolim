@@ -12,13 +12,9 @@ const corsHeaders = {
     'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-const createTemporaryPassword = () => {
-    const randomPart = crypto.randomUUID().replace(/-/g, '').slice(0, 10);
-    return `Ban!${randomPart}A1`;
-};
-
 const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
 const supabaseServiceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
+const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
 
 Deno.serve(async (request) => {
     if (request.method === 'OPTIONS') {
@@ -59,7 +55,7 @@ Deno.serve(async (request) => {
             });
         }
 
-        const { memberId } = await request.json();
+        const { memberId, redirectTo } = await request.json();
         if (typeof memberId !== 'string' || memberId.length === 0) {
             return new Response(JSON.stringify({ error: 'memberId가 필요합니다.' }), {
                 status: 400,
@@ -88,12 +84,13 @@ Deno.serve(async (request) => {
         }
 
         const normalizedEmail = member.login_email.trim().toLowerCase();
-        const temporaryPassword = createTemporaryPassword();
+        const inviteRedirectTo = typeof redirectTo === 'string' && redirectTo.length > 0 ? redirectTo : undefined;
 
         let authUserId = member.auth_user_id;
         let isExistingAccount = false;
 
         if (!authUserId) {
+            // auth_user_id가 없어도 auth.users에 이미 존재할 수 있으므로 확인
             const { data: listUsersData, error: listUsersError } = await adminClient.auth.admin.listUsers({
                 page: 1,
                 perPage: 1000,
@@ -112,34 +109,31 @@ Deno.serve(async (request) => {
             isExistingAccount = true;
         }
 
-        if (authUserId) {
-            const { error: updateUserError } = await adminClient.auth.admin.updateUserById(authUserId, {
-                email: normalizedEmail,
-                password: temporaryPassword,
-                email_confirm: true,
-                user_metadata: {
-                    full_name: member.name,
-                },
+        if (isExistingAccount && authUserId) {
+            // 기존 계정: 비밀번호 재설정 이메일 발송
+            const regularClient = createClient(supabaseUrl, supabaseAnonKey);
+            const { error: resetError } = await regularClient.auth.resetPasswordForEmail(normalizedEmail, {
+                redirectTo: inviteRedirectTo,
             });
 
-            if (updateUserError) {
-                throw updateUserError;
+            if (resetError) {
+                throw resetError;
             }
         } else {
-            const { data: createdUserData, error: createUserError } = await adminClient.auth.admin.createUser({
-                email: normalizedEmail,
-                password: temporaryPassword,
-                email_confirm: true,
-                user_metadata: {
-                    full_name: member.name,
+            // 신규 계정: 초대 이메일 발송
+            const { data: inviteData, error: inviteError } = await adminClient.auth.admin.inviteUserByEmail(
+                normalizedEmail,
+                {
+                    redirectTo: inviteRedirectTo,
+                    data: { full_name: member.name },
                 },
-            });
+            );
 
-            if (createUserError || !createdUserData.user) {
-                throw createUserError ?? new Error('계정을 생성하지 못했습니다.');
+            if (inviteError || !inviteData.user) {
+                throw inviteError ?? new Error('초대 이메일을 발송하지 못했습니다.');
             }
 
-            authUserId = createdUserData.user.id;
+            authUserId = inviteData.user.id;
         }
 
         const { error: updateMemberError } = await adminClient
@@ -155,13 +149,14 @@ Deno.serve(async (request) => {
         if (updateMemberError) {
             throw updateMemberError;
         }
+
         return new Response(
             JSON.stringify({
                 memberId: member.id,
                 memberName: member.name,
                 email: normalizedEmail,
                 authUserId,
-                temporaryPassword,
+                inviteSent: true,
                 isExistingAccount,
             }),
             {

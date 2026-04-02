@@ -41,6 +41,32 @@ export const Layout: React.FC<LayoutProps> = ({ activeTab, setActiveTab, childre
         clearLatestDataFallbackState();
     };
 
+    const taskLabels: Record<string, string> = {
+        getMembers: '회원 목록 조회',
+        updateMember: '회원 정보 수정',
+        addMember: '회원 추가',
+        deleteMember: '회원 삭제',
+        hardDeleteMember: '회원 영구 삭제',
+        getLogs: '활동 내역 조회',
+        addLog: '활동 기록 추가',
+        updateRole: '직책 수정',
+        addRole: '직책 추가',
+        deleteRole: '직책 삭제',
+        getCategories: '활동 규칙 조회',
+        addCategory: '활동 규칙 추가',
+        updateCategory: '활동 규칙 수정',
+        deleteCategory: '활동 규칙 삭제',
+        getSeasons: '시즌 조회',
+        addSeason: '시즌 추가',
+        updateSeason: '시즌 수정',
+        getAttendanceSessions: '출석 세션 조회',
+        createAttendanceSession: '출석 세션 생성',
+        updateCorrectionRequestStatus: '정정 요청 처리',
+        getCorrectionRequests: '정정 요청 조회',
+        getMemberBadges: '배지 조회',
+        resetActivityDataCurrentSeason: '시즌 데이터 초기화',
+    };
+
     return (
         <div className="min-h-screen bg-slate-50 font-sans text-slate-900 lg:grid lg:grid-cols-[5.5rem_minmax(0,1fr)] xl:grid-cols-[16rem_minmax(0,1fr)]">
             <Sidebar
@@ -55,9 +81,9 @@ export const Layout: React.FC<LayoutProps> = ({ activeTab, setActiveTab, childre
                         <div className="mb-4 flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 shadow-sm">
                             <TriangleAlert size={18} className="mt-0.5 shrink-0 text-amber-600" />
                             <div className="min-w-0 flex-1">
-                                <div className="font-semibold">일부 실데이터 조회가 실패했습니다.</div>
+                                <div className="font-semibold">작업을 완료하지 못했습니다.</div>
                                 <div className="mt-1 text-amber-800">
-                                    작업: {visibleFallbackState.task} · 원인: {visibleFallbackState.message}
+                                    {taskLabels[visibleFallbackState.task] ?? visibleFallbackState.task} · {visibleFallbackState.message}
                                 </div>
                             </div>
                             <button

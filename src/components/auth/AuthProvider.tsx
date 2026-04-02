@@ -166,7 +166,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         let isMounted = true;
 
-        const isRecoveryHash = typeof window !== 'undefined' && window.location.hash.includes('type=recovery');
+        const isRecoveryHash = typeof window !== 'undefined' && (
+            window.location.hash.includes('type=recovery') ||
+            window.location.hash.includes('type=invite')
+        );
         if (isRecoveryHash) {
             setRequiresPasswordSetup(true);
         }

@@ -968,9 +968,9 @@ export const isRegisteredLoginEmail = async (email: string): Promise<boolean> =>
 
 export const provisionMemberPasswordAuth = async (memberId: string): Promise<{
     email: string;
-    temporaryPassword: string;
     memberName: string;
     isExistingAccount: boolean;
+    inviteSent: boolean;
 }> => {
     const member = localState.members.find((entry) => entry.id === memberId) ?? null;
 
@@ -979,7 +979,6 @@ export const provisionMemberPasswordAuth = async (memberId: string): Promise<{
             throw new Error('로그인 이메일이 등록된 멤버만 계정을 발급할 수 있습니다.');
         }
 
-        const temporaryPassword = createTemporaryPassword();
         const provisionedAt = new Date().toISOString();
 
         localState.members = localState.members.map((entry) =>
@@ -996,9 +995,9 @@ export const provisionMemberPasswordAuth = async (memberId: string): Promise<{
 
         return {
             email: member.loginEmail,
-            temporaryPassword,
             memberName: member.name,
             isExistingAccount: Boolean(member.authUserId),
+            inviteSent: false,
         };
     }
 
@@ -1015,6 +1014,8 @@ export const provisionMemberPasswordAuth = async (memberId: string): Promise<{
         throw new Error('Supabase 함수 엔드포인트 설정이 비어 있습니다.');
     }
 
+    const redirectTo = typeof window !== 'undefined' ? window.location.origin : undefined;
+
     const response = await fetch(`${supabaseUrl}/functions/v1/provision-member-auth`, {
         method: 'POST',
         headers: {
@@ -1022,7 +1023,7 @@ export const provisionMemberPasswordAuth = async (memberId: string): Promise<{
             apikey: supabaseAnonKey,
             Authorization: `Bearer ${session.access_token}`,
         },
-        body: JSON.stringify({ memberId }),
+        body: JSON.stringify({ memberId, redirectTo }),
     });
 
     const payload = await response
@@ -1042,9 +1043,9 @@ export const provisionMemberPasswordAuth = async (memberId: string): Promise<{
 
     return {
         email: String(data?.email ?? ''),
-        temporaryPassword: String(data?.temporaryPassword ?? ''),
         memberName: String(data?.memberName ?? ''),
         isExistingAccount: Boolean(data?.isExistingAccount),
+        inviteSent: Boolean(data?.inviteSent),
     };
 };
 

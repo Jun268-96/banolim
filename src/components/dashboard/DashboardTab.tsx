@@ -305,8 +305,8 @@ export const DashboardTab: React.FC = () => {
     const [provisionedAccount, setProvisionedAccount] = useState<{
         memberName: string;
         email: string;
-        temporaryPassword: string;
         isExistingAccount: boolean;
+        inviteSent: boolean;
     } | null>(null);
     const [isGuideDialogOpen, setIsGuideDialogOpen] = useState(false);
     const [isBulkImportDialogOpen, setIsBulkImportDialogOpen] = useState(false);
