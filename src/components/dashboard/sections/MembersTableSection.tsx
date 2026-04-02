@@ -1,5 +1,5 @@
-import React from 'react';
-import { ArrowUpDown, KeyRound, Search, Trash2 } from 'lucide-react';
+import React, { useState } from 'react';
+import { ArrowUpDown, ChevronDown, ChevronUp, KeyRound, Search, Trash2 } from 'lucide-react';
 import type { Member, MemberStatus, RoleSummary, TeamSummary } from '../../../types';
 
 type MemberSortMode = 'name-asc' | 'name-desc' | 'joined-desc' | 'role-order';
@@ -143,10 +143,33 @@ export const MembersTableSection: React.FC<MembersTableSectionProps> = ({
   onUpdateMember,
   onProvisionMemberAccount,
   onDeleteMember,
-}) => (
+}) => {
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const hasActiveSearch = searchQuery.trim().length > 0;
+
+  return (
   <div className="max-w-full">
-    <div className="border-b border-slate-100 px-5 py-4 sm:px-6">
-      <div className="space-y-3 rounded-[24px] border border-slate-200 bg-slate-50 p-4">
+    <div className="border-b border-slate-100 px-5 py-3 sm:px-6">
+      <button
+        type="button"
+        onClick={() => setIsSearchOpen((prev) => !prev)}
+        className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition-colors ${
+          isSearchOpen
+            ? 'bg-slate-900 text-white'
+            : 'border border-slate-200 bg-white text-slate-600 shadow-sm hover:bg-slate-50'
+        }`}
+      >
+        <Search size={15} />
+        검색 · 정렬
+        {hasActiveSearch && !isSearchOpen && (
+          <span className="h-2 w-2 rounded-full bg-indigo-500" />
+        )}
+        {isSearchOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+      </button>
+    </div>
+
+    {isSearchOpen && (
+      <div className="border-b border-slate-100 px-5 py-4 sm:px-6">
         <div className="grid gap-3 xl:grid-cols-[minmax(0,1.2fr)_220px_120px]">
           <label className="relative block">
             <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -187,8 +210,11 @@ export const MembersTableSection: React.FC<MembersTableSectionProps> = ({
             초기화
           </button>
         </div>
+      </div>
+    )}
 
-        <div className="flex flex-wrap gap-2">
+    <div className="border-b border-slate-100 px-5 py-4 sm:px-6">
+      <div className="flex flex-wrap gap-2">
           <button
             type="button"
             onClick={onResetFilters}
@@ -574,4 +600,5 @@ export const MembersTableSection: React.FC<MembersTableSectionProps> = ({
       </table>
     </div>
   </div>
-);
+  );
+};

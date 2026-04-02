@@ -910,6 +910,7 @@ export const DashboardTab: React.FC = () => {
                         onChangeOpenFilterPanel={setOpenFilterPanel}
                         onResetFilters={() => {
                             setSearchQuery('');
+                            setSortMode('role-order');
                             setSelectedRoleFilter('all');
                             setSelectedTeamFilter('all');
                             setSelectedStatusFilter('all');
