@@ -37,7 +37,7 @@ export const SeasonCreateDialog: React.FC<SeasonCreateDialogProps> = ({
     isOpen={isOpen}
     onClose={onClose}
     title="새 시즌 추가"
-    description="시즌은 통계, 출석 세션, 리캡 저장본의 기준 기간으로 사용됩니다."
+    description="시즌은 통계와 출석 세션의 기준 기간으로 사용됩니다."
     size="lg"
   >
     <form onSubmit={onSubmit} className="space-y-5">

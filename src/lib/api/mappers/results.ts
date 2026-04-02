@@ -34,7 +34,6 @@ export const parseSeasonDataResetResult = (value: unknown): SeasonDataResetResul
   activityRecordCount: getNumberField(value, 'activityRecordCount'),
   pointLedgerCount: getNumberField(value, 'pointLedgerCount'),
   correctionRequestCount: getOptionalNumberField(value, 'correctionRequestCount'),
-  recapSnapshotCount: getNumberField(value, 'recapSnapshotCount'),
   affectedMemberCount: getNumberField(value, 'affectedMemberCount'),
   badgeRefreshCount: getNumberField(value, 'badgeRefreshCount'),
   attendanceSessionCount: getOptionalNumberField(value, 'attendanceSessionCount'),
@@ -51,7 +50,6 @@ export const parseHardDeleteMemberResult = (value: unknown): HardDeleteMemberRes
     deletedCounts: {
       memberBadges: getNumberField(deletedCounts, 'memberBadges'),
       memberTeamLinks: getNumberField(deletedCounts, 'memberTeamLinks'),
-      recapSnapshots: getNumberField(deletedCounts, 'recapSnapshots'),
       userProfiles: getNumberField(deletedCounts, 'userProfiles'),
       attendanceSessionMembers: getNumberField(deletedCounts, 'attendanceSessionMembers'),
       attendanceCheckins: getNumberField(deletedCounts, 'attendanceCheckins'),

@@ -44,7 +44,6 @@ describe('destructive result parsers', () => {
             activityRecordCount: 10,
             pointLedgerCount: 12,
             correctionRequestCount: 3,
-            recapSnapshotCount: 1,
             affectedMemberCount: 7,
             badgeRefreshCount: 5,
             attendanceSessionCount: 2,
@@ -55,7 +54,6 @@ describe('destructive result parsers', () => {
             activityRecordCount: 10,
             pointLedgerCount: 12,
             correctionRequestCount: 3,
-            recapSnapshotCount: 1,
             affectedMemberCount: 7,
             badgeRefreshCount: 5,
             attendanceSessionCount: 2,
@@ -71,7 +69,6 @@ describe('destructive result parsers', () => {
             deletedCounts: {
                 memberBadges: 1,
                 memberTeamLinks: 2,
-                recapSnapshots: 0,
                 userProfiles: 1,
                 attendanceSessionMembers: 0,
                 attendanceCheckins: 0,
@@ -83,7 +80,6 @@ describe('destructive result parsers', () => {
             deletedCounts: {
                 memberBadges: 1,
                 memberTeamLinks: 2,
-                recapSnapshots: 0,
                 userProfiles: 1,
                 attendanceSessionMembers: 0,
                 attendanceCheckins: 0,
@@ -118,7 +114,6 @@ describe('destructive result parsers', () => {
             deletedCounts: {
                 memberBadges: 1,
                 memberTeamLinks: 0,
-                recapSnapshots: 0,
                 userProfiles: 0,
                 attendanceSessionMembers: 0,
                 attendanceCheckins: 0,

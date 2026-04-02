@@ -39,9 +39,9 @@ const initialState: ActivitiesResourcesState = {
 };
 
 const loadActivitiesResources = async (): Promise<ActivitiesResourcesState> => {
+    const members = await getMembers();
     const [
         season,
-        members,
         categories,
         logs,
         attendanceSessions,
@@ -49,9 +49,8 @@ const loadActivitiesResources = async (): Promise<ActivitiesResourcesState> => {
         correctionRequests,
     ] = await Promise.all([
         getCurrentSeason(),
-        getMembers(),
         getCategories(),
-        getLogs(),
+        getLogs(members),
         getAttendanceSessions(),
         getAuditLogs(),
         getCorrectionRequests(),

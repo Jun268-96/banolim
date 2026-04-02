@@ -15,10 +15,6 @@ import type {
     HardDeleteMemberResult,
     Member,
     MemberBadge,
-    RecapSnapshot,
-    RecapSnapshotDraft,
-    RecapSnapshotPeriod,
-    RecapSnapshotScope,
     RoleSummary,
     ScheduleEventItem,
     SeasonSummary,
@@ -77,7 +73,6 @@ type PointLedgerRow = Database['public']['Tables']['point_ledgers']['Row'];
 type AuditLogRow = Database['public']['Tables']['audit_logs']['Row'];
 type CorrectionRequestRow = Database['public']['Tables']['correction_requests']['Row'];
 type SiteBannerRow = Database['public']['Tables']['site_banners']['Row'];
-type RecapSnapshotRow = Database['public']['Tables']['recap_snapshots']['Row'];
 type AttendanceSessionRow = Database['public']['Tables']['attendance_sessions']['Row'];
 type AttendanceSessionMemberRow = Database['public']['Tables']['attendance_session_members']['Row'];
 type MemberScoreSummaryRow = Database['public']['Views']['member_score_summary']['Row'];
@@ -478,73 +473,6 @@ const parseJsonObject = (value: Json): Record<string, unknown> | null => {
     }
 
     return value as Record<string, unknown>;
-};
-
-const isRecapSnapshotScope = (value: unknown): value is RecapSnapshotScope =>
-    value === 'member' || value === 'overall';
-
-const isRecapSnapshotPeriod = (value: unknown): value is RecapSnapshotPeriod =>
-    value === 'month' || value === 'season';
-
-const mapRecapSnapshot = (
-    row: Pick<
-        RecapSnapshotRow,
-        'id' | 'snapshot_scope' | 'period_type' | 'title' | 'subtitle' | 'summary' | 'badge_label' | 'note' | 'starts_at' | 'ends_at' | 'member_id' | 'member_name' | 'season_id' | 'payload' | 'created_at'
-    >,
-    creatorName?: string | null,
-): RecapSnapshot | null => {
-    const payload = parseJsonObject(row.payload);
-    if (!payload || !isRecapSnapshotScope(row.snapshot_scope) || !isRecapSnapshotPeriod(row.period_type)) {
-        return null;
-    }
-
-    const theme = payload.theme === 'overall' ? 'overall' : 'member';
-    const mascotKey = payload.mascotKey === 'didi' ? 'didi' : 'bandi';
-    const stats = Array.isArray(payload.stats)
-        ? payload.stats
-            .map((item) => (item && typeof item === 'object' && !Array.isArray(item)
-                ? {
-                    label: typeof item.label === 'string' ? item.label : '',
-                    value: typeof item.value === 'string' ? item.value : '',
-                }
-                : null))
-            .filter((item): item is { label: string; value: string } => Boolean(item && item.label && item.value))
-        : [];
-    const highlights = Array.isArray(payload.highlights)
-        ? payload.highlights
-            .map((item) => (item && typeof item === 'object' && !Array.isArray(item)
-                ? {
-                    label: typeof item.label === 'string' ? item.label : '',
-                    value: typeof item.value === 'string' ? item.value : '',
-                    description: typeof item.description === 'string' ? item.description : '',
-                }
-                : null))
-            .filter((item): item is { label: string; value: string; description: string } => Boolean(item && item.label && item.value))
-        : [];
-
-    return {
-        id: row.id,
-        scope: row.snapshot_scope,
-        periodType: row.period_type,
-        title: row.title,
-        subtitle: row.subtitle,
-        summary: row.summary,
-        badgeLabel: row.badge_label,
-        note: row.note,
-        startsAt: row.starts_at,
-        endsAt: row.ends_at,
-        memberId: row.member_id,
-        memberName: row.member_name,
-        seasonId: row.season_id,
-        payload: {
-            theme,
-            mascotKey,
-            stats,
-            highlights,
-        },
-        createdAt: row.created_at,
-        createdByName: creatorName ?? null,
-    };
 };
 
 const mapAttendanceSessionMember = (
@@ -1333,7 +1261,7 @@ export const getCategories = async (): Promise<Category[]> => {
     }
 };
 
-export const getLogs = async (): Promise<ActivityLog[]> => {
+export const getLogs = async (cachedMembers?: Member[]): Promise<ActivityLog[]> => {
     if (!isSupabaseConfigured) {
         return enrichLocalLogs();
     }
@@ -1346,7 +1274,7 @@ export const getLogs = async (): Promise<ActivityLog[]> => {
                 .select('id, record_id, member_id, point_rule_id, delta, reason, created_at, reversal_of')
                 .order('created_at', { ascending: false }),
             client.from('activity_records').select('id, note, evidence_url, occurred_at, status'),
-            getMembers(),
+            cachedMembers ?? getMembers(),
             getCategories(),
         ]);
 
@@ -1739,148 +1667,6 @@ export const deleteBadge = async (id: string): Promise<void> => {
     const { error: refreshError } = await client.rpc('refresh_all_member_badges');
     if (refreshError) {
         throw refreshError;
-    }
-};
-
-export const getRecapSnapshots = async (options?: {
-    scope?: RecapSnapshotScope;
-    memberId?: string | null;
-    periodType?: RecapSnapshotPeriod;
-    limit?: number;
-}): Promise<RecapSnapshot[]> => {
-    const scope = options?.scope ?? null;
-    const memberId = options?.memberId ?? null;
-    const periodType = options?.periodType ?? null;
-    const limit = options?.limit ?? 8;
-
-    if (!isSupabaseConfigured) {
-        return [...localState.recapSnapshots]
-            .filter((snapshot) => (!scope || snapshot.scope === scope) && (!memberId || snapshot.memberId === memberId) && (!periodType || snapshot.periodType === periodType))
-            .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-            .slice(0, limit);
-    }
-
-    try {
-        const client = getSupabaseClient();
-        let query = client
-            .from('recap_snapshots')
-            .select('id, snapshot_scope, period_type, title, subtitle, summary, badge_label, note, starts_at, ends_at, member_id, member_name, season_id, payload, created_by, created_at')
-            .order('created_at', { ascending: false })
-            .limit(limit);
-
-        if (scope) {
-            query = query.eq('snapshot_scope', scope);
-        }
-
-        if (memberId) {
-            query = query.eq('member_id', memberId);
-        }
-
-        if (periodType) {
-            query = query.eq('period_type', periodType);
-        }
-
-        const [snapshotResult, memberResult] = await Promise.all([
-            query,
-            client.from('members').select('id, name'),
-        ]);
-
-        if (snapshotResult.error) throw snapshotResult.error;
-        if (memberResult.error) throw memberResult.error;
-
-        const creatorMap = new Map(((memberResult.data ?? []) as Pick<MemberRow, 'id' | 'name'>[]).map((member) => [member.id, member.name]));
-
-        return ((snapshotResult.data ?? []) as Array<
-            Pick<
-                RecapSnapshotRow,
-                'id' | 'snapshot_scope' | 'period_type' | 'title' | 'subtitle' | 'summary' | 'badge_label' | 'note' | 'starts_at' | 'ends_at' | 'member_id' | 'member_name' | 'season_id' | 'payload' | 'created_by' | 'created_at'
-            >
-        >)
-            .map((row) => mapRecapSnapshot(row, row.created_by ? creatorMap.get(row.created_by) ?? null : null))
-            .filter((snapshot): snapshot is RecapSnapshot => Boolean(snapshot));
-    } catch (error) {
-        if (isMissingSupabaseRelationError(error, ['recap_snapshots'])) {
-            return [];
-        }
-
-        return fallback(
-            'getRecapSnapshots',
-            () =>
-                [...localState.recapSnapshots]
-                    .filter((snapshot) => (!scope || snapshot.scope === scope) && (!memberId || snapshot.memberId === memberId) && (!periodType || snapshot.periodType === periodType))
-                    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-                    .slice(0, limit),
-            error,
-        );
-    }
-};
-
-export const createRecapSnapshots = async (drafts: RecapSnapshotDraft[]): Promise<RecapSnapshot[]> => {
-    if (drafts.length === 0) {
-        return [];
-    }
-
-    if (!isSupabaseConfigured) {
-        const createdAt = new Date().toISOString();
-        const snapshots = drafts.map((draft) => ({
-            ...draft,
-            id: createLocalId('recap'),
-            createdAt,
-            createdByName: '로컬 운영자',
-        }));
-        localState.recapSnapshots = [...snapshots, ...localState.recapSnapshots].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-        return snapshots;
-    }
-
-    try {
-        const client = getSupabaseClient();
-        const insertPayload: Database['public']['Tables']['recap_snapshots']['Insert'][] = drafts.map((draft) => ({
-            snapshot_scope: draft.scope,
-            period_type: draft.periodType,
-            title: draft.title,
-            subtitle: draft.subtitle,
-            summary: draft.summary,
-            badge_label: draft.badgeLabel,
-            note: draft.note,
-            starts_at: draft.startsAt,
-            ends_at: draft.endsAt,
-            member_id: draft.memberId ?? null,
-            member_name: draft.memberName ?? null,
-            season_id: draft.seasonId ?? null,
-            payload: draft.payload as unknown as Json,
-        }));
-
-        const { data, error } = await client
-            .from('recap_snapshots')
-            .insert(insertPayload)
-            .select('id, snapshot_scope, period_type, title, subtitle, summary, badge_label, note, starts_at, ends_at, member_id, member_name, season_id, payload, created_at');
-
-        if (error) {
-            throw error;
-        }
-
-        return ((data ?? []) as Array<
-            Pick<
-                RecapSnapshotRow,
-                'id' | 'snapshot_scope' | 'period_type' | 'title' | 'subtitle' | 'summary' | 'badge_label' | 'note' | 'starts_at' | 'ends_at' | 'member_id' | 'member_name' | 'season_id' | 'payload' | 'created_at'
-            >
-        >)
-            .map((row) => mapRecapSnapshot(row))
-            .filter((snapshot): snapshot is RecapSnapshot => Boolean(snapshot));
-    } catch (error) {
-        if (isMissingSupabaseRelationError(error, ['recap_snapshots'])) {
-            throw new Error('리캡 저장본 테이블이 아직 적용되지 않았습니다. Supabase에서 recap_snapshots migration을 먼저 실행해 주세요.');
-        }
-
-        const createdAt = new Date().toISOString();
-        const snapshots = drafts.map((draft) => ({
-            ...draft,
-            id: createLocalId('recap'),
-            createdAt,
-            createdByName: '로컬 운영자',
-        }));
-        localState.recapSnapshots = [...snapshots, ...localState.recapSnapshots].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-        return fallback('createRecapSnapshots', () => snapshots, error);
     }
 };
 
@@ -3546,9 +3332,6 @@ export const resetActivityDataCurrentSeason = async (): Promise<SeasonDataResetR
             throw new Error('현재 진행 중인 시즌이 없습니다.');
         }
 
-        const recapSnapshotCount = localState.recapSnapshots.filter((snapshot) => snapshot.seasonId === season.id).length;
-        localState.recapSnapshots = localState.recapSnapshots.filter((snapshot) => snapshot.seasonId !== season.id);
-
         const removed = removeLocalActivityRecords((log) => isTimestampInSeason(log.timestamp, season));
         const badgeRefreshCount = refreshLocalMemberBadgesForMembers(removed.memberIds);
         const result: SeasonDataResetResult = {
@@ -3557,7 +3340,6 @@ export const resetActivityDataCurrentSeason = async (): Promise<SeasonDataResetR
             activityRecordCount: removed.activityRecordCount,
             pointLedgerCount: removed.pointLedgerCount,
             correctionRequestCount: removed.correctionRequestCount,
-            recapSnapshotCount,
             affectedMemberCount: removed.memberIds.length,
             badgeRefreshCount,
         };
@@ -3576,7 +3358,6 @@ export const resetActivityDataCurrentSeason = async (): Promise<SeasonDataResetR
                 activityRecordCount: removed.activityRecordCount,
                 pointLedgerCount: removed.pointLedgerCount,
                 correctionRequestCount: removed.correctionRequestCount,
-                recapSnapshotCount,
                 affectedMemberCount: removed.memberIds.length,
                 badgeRefreshCount,
             },
@@ -3605,9 +3386,6 @@ export const resetAttendanceDataCurrentSeason = async (): Promise<SeasonDataRese
         const sessionIds = new Set(localState.attendanceSessions.filter((session) => session.seasonId === season.id).map((session) => session.id));
         const attendanceSessionCount = sessionIds.size;
         const attendanceSessionMemberCount = localState.attendanceSessionMembers.filter((entry) => sessionIds.has(entry.sessionId)).length;
-        const recapSnapshotCount = localState.recapSnapshots.filter((snapshot) => snapshot.seasonId === season.id).length;
-
-        localState.recapSnapshots = localState.recapSnapshots.filter((snapshot) => snapshot.seasonId !== season.id);
         localState.attendanceSessions = localState.attendanceSessions.filter((session) => !sessionIds.has(session.id));
         localState.attendanceSessionMembers = localState.attendanceSessionMembers.filter((entry) => !sessionIds.has(entry.sessionId));
 
@@ -3620,7 +3398,6 @@ export const resetAttendanceDataCurrentSeason = async (): Promise<SeasonDataRese
             seasonName: season.name,
             activityRecordCount: removed.activityRecordCount,
             pointLedgerCount: removed.pointLedgerCount,
-            recapSnapshotCount,
             affectedMemberCount: removed.memberIds.length,
             badgeRefreshCount,
             attendanceSessionCount,
@@ -3642,7 +3419,6 @@ export const resetAttendanceDataCurrentSeason = async (): Promise<SeasonDataRese
                 attendanceSessionMemberCount,
                 activityRecordCount: removed.activityRecordCount,
                 pointLedgerCount: removed.pointLedgerCount,
-                recapSnapshotCount,
                 affectedMemberCount: removed.memberIds.length,
                 badgeRefreshCount,
             },
@@ -3668,9 +3444,6 @@ export const resetManualActivityDataCurrentSeason = async (): Promise<SeasonData
             throw new Error('현재 진행 중인 시즌이 없습니다.');
         }
 
-        const recapSnapshotCount = localState.recapSnapshots.filter((snapshot) => snapshot.seasonId === season.id).length;
-        localState.recapSnapshots = localState.recapSnapshots.filter((snapshot) => snapshot.seasonId !== season.id);
-
         const removed = removeLocalActivityRecords((log, category) =>
             isTimestampInSeason(log.timestamp, season) && category?.groupName !== 'attendance',
         );
@@ -3681,7 +3454,6 @@ export const resetManualActivityDataCurrentSeason = async (): Promise<SeasonData
             activityRecordCount: removed.activityRecordCount,
             pointLedgerCount: removed.pointLedgerCount,
             correctionRequestCount: removed.correctionRequestCount,
-            recapSnapshotCount,
             affectedMemberCount: removed.memberIds.length,
             badgeRefreshCount,
         };
@@ -3700,7 +3472,6 @@ export const resetManualActivityDataCurrentSeason = async (): Promise<SeasonData
                 activityRecordCount: removed.activityRecordCount,
                 pointLedgerCount: removed.pointLedgerCount,
                 correctionRequestCount: removed.correctionRequestCount,
-                recapSnapshotCount,
                 affectedMemberCount: removed.memberIds.length,
                 badgeRefreshCount,
             },
@@ -3790,7 +3561,6 @@ export const hardDeleteHiddenMember = async (memberId: string): Promise<HardDele
 
         const memberBadgeCount = localState.memberBadges.filter((badge) => badge.memberId === memberId).length;
         const memberTeamLinkCount = localState.memberTeamLinks.filter((link) => link.memberId === memberId).length;
-        const recapSnapshotCount = localState.recapSnapshots.filter((snapshot) => snapshot.memberId === memberId).length;
         const attendanceSessionMemberCount = localState.attendanceSessionMembers.filter((entry) => entry.memberId === memberId).length;
         const deletedAuthUser = Boolean(member.authUserId);
 
@@ -3801,7 +3571,6 @@ export const hardDeleteHiddenMember = async (memberId: string): Promise<HardDele
         }
 
         localState.memberTeamLinks = localState.memberTeamLinks.filter((link) => link.memberId !== memberId);
-        localState.recapSnapshots = localState.recapSnapshots.filter((snapshot) => snapshot.memberId !== memberId);
         localState.attendanceSessionMembers = localState.attendanceSessionMembers.filter((entry) => entry.memberId !== memberId);
 
         for (let index = localState.correctionRequests.length - 1; index >= 0; index -= 1) {
@@ -3827,7 +3596,6 @@ export const hardDeleteHiddenMember = async (memberId: string): Promise<HardDele
                 relatedDeletes: {
                     memberBadges: memberBadgeCount,
                     memberTeamLinks: memberTeamLinkCount,
-                    recapSnapshots: recapSnapshotCount,
                     userProfiles: 0,
                     attendanceSessionMembers: attendanceSessionMemberCount,
                     attendanceCheckins: 0,
@@ -3842,7 +3610,6 @@ export const hardDeleteHiddenMember = async (memberId: string): Promise<HardDele
             deletedCounts: {
                 memberBadges: memberBadgeCount,
                 memberTeamLinks: memberTeamLinkCount,
-                recapSnapshots: recapSnapshotCount,
                 userProfiles: 0,
                 attendanceSessionMembers: attendanceSessionMemberCount,
                 attendanceCheckins: 0,

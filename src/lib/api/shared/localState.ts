@@ -10,7 +10,6 @@ import type {
     CorrectionRequest,
     Member,
     MemberBadge,
-    RecapSnapshot,
     RoleSummary,
     ScheduleEventItem,
     SeasonSummary,
@@ -42,7 +41,6 @@ type LocalState = {
     announcements: AnnouncementItem[];
     scheduleEvents: ScheduleEventItem[];
     siteBanners: SiteBanner[];
-    recapSnapshots: RecapSnapshot[];
     attendanceSessions: AttendanceSession[];
     attendanceSessionMembers: AttendanceSessionMember[];
 };
@@ -433,7 +431,6 @@ export const localState: LocalState = {
         },
     ],
     siteBanners: [],
-    recapSnapshots: [],
     attendanceSessions: [],
     attendanceSessionMembers: [],
 };

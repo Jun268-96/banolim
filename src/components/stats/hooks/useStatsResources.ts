@@ -3,7 +3,6 @@ import type {
     ActivityLog,
     Member,
     MemberBadge,
-    RecapSnapshot,
     SeasonSummary,
 } from '../../../types';
 import {
@@ -11,7 +10,6 @@ import {
     getLogs,
     getMemberBadges,
     getMembers,
-    getRecapSnapshots,
     getSeasons,
 } from '../../../lib/api/stats/overview';
 
@@ -21,7 +19,6 @@ type StatsResourcesState = {
     memberBadges: MemberBadge[];
     seasons: SeasonSummary[];
     currentSeason: SeasonSummary | null;
-    recapSnapshots: RecapSnapshot[];
 };
 
 const initialState: StatsResourcesState = {
@@ -30,24 +27,15 @@ const initialState: StatsResourcesState = {
     memberBadges: [],
     seasons: [],
     currentSeason: null,
-    recapSnapshots: [],
 };
 
 const loadStatsResources = async (): Promise<StatsResourcesState> => {
-    const [
-        members,
-        logs,
-        currentSeason,
-        memberBadges,
-        seasons,
-        recapSnapshots,
-    ] = await Promise.all([
-        getMembers(),
-        getLogs(),
+    const members = await getMembers();
+    const [logs, currentSeason, memberBadges, seasons] = await Promise.all([
+        getLogs(members),
         getCurrentSeason(),
         getMemberBadges(),
         getSeasons(),
-        getRecapSnapshots({ scope: 'overall', limit: 6 }),
     ]);
 
     return {
@@ -56,7 +44,6 @@ const loadStatsResources = async (): Promise<StatsResourcesState> => {
         memberBadges,
         seasons,
         currentSeason,
-        recapSnapshots,
     };
 };
 
@@ -69,15 +56,6 @@ export const useStatsResources = () => {
         const nextResources = await loadStatsResources();
         setResources(nextResources);
         setIsLoading(false);
-    }, []);
-
-    const refreshSnapshots = useCallback(async () => {
-        const nextSnapshots = await getRecapSnapshots({ scope: 'overall', limit: 6 });
-        setResources((current) => ({
-            ...current,
-            recapSnapshots: nextSnapshots,
-        }));
-        return nextSnapshots;
     }, []);
 
     useEffect(() => {
@@ -104,6 +82,5 @@ export const useStatsResources = () => {
         ...resources,
         isLoading,
         refreshData,
-        refreshSnapshots,
     };
 };

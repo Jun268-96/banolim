@@ -1,9 +1,7 @@
 import {
-  createRecapSnapshots,
   getLogs,
   getMemberBadges,
   getMembers,
-  getRecapSnapshots,
 } from '../../db';
 import {
   getCurrentSeason,
@@ -11,11 +9,9 @@ import {
 } from '../shared/publicData';
 
 export {
-  createRecapSnapshots,
   getCurrentSeason,
   getLogs,
   getMemberBadges,
   getMembers,
-  getRecapSnapshots,
   getSeasons,
 };

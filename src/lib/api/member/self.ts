@@ -3,7 +3,6 @@ import {
   getMyActivityLogs,
   getMyMemberBadges,
   getMyMemberOverview,
-  getRecapSnapshots,
   submitCorrectionRequest,
 } from '../../db';
 import {
@@ -21,7 +20,6 @@ export {
   getMyActivityLogs,
   getMyMemberBadges,
   getMyMemberOverview,
-  getRecapSnapshots,
   getScheduleEvents,
   submitCorrectionRequest,
 };

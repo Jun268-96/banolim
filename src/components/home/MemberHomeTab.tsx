@@ -4,7 +4,6 @@ import type {
     ActivityLog,
     CorrectionRequest,
     CorrectionRequestStatus,
-    RecapSnapshot,
     MemberStatus,
 } from '../../types';
 import { submitCorrectionRequest } from '../../lib/api/member/self';
@@ -20,13 +19,9 @@ import { MemberAccountSection } from './sections/MemberAccountSection';
 import { MemberActivitySection } from './sections/MemberActivitySection';
 import { MemberBadgeSection } from './sections/MemberBadgeSection';
 import { MemberHomeOverviewSection } from './sections/MemberHomeOverviewSection';
-import { MemberRecapSection } from './sections/MemberRecapSection';
-import { MemberRecapViewer } from './MemberRecapViewer';
-import { RecapSnapshotViewer } from '../recap/RecapSnapshotViewer';
 
 type TimelineRange = '30d' | '90d' | 'all';
-type MemberRecapPeriod = 'month' | 'season';
-type MemberHomeSection = 'home' | 'activity' | 'recap' | 'badges' | 'account';
+type MemberHomeSection = 'home' | 'activity' | 'badges' | 'account';
 
 const memberStatusLabels: Record<MemberStatus, string> = {
     active: '활동 중',
@@ -88,9 +83,7 @@ export const MemberHomeTab: React.FC = () => {
     const { profile } = useAuth();
     const [activeSection, setActiveSection] = useState<MemberHomeSection>('home');
     const [selectedRequestLog, setSelectedRequestLog] = useState<ActivityLog | null>(null);
-    const [selectedSnapshot, setSelectedSnapshot] = useState<RecapSnapshot | null>(null);
     const [timelineRange, setTimelineRange] = useState<TimelineRange>('90d');
-    const [selectedRecapPeriod, setSelectedRecapPeriod] = useState<MemberRecapPeriod | null>(null);
     const [requestReason, setRequestReason] = useState('');
     const [isSubmittingRequest, setIsSubmittingRequest] = useState(false);
     const [requestError, setRequestError] = useState<string | null>(null);
@@ -100,7 +93,6 @@ export const MemberHomeTab: React.FC = () => {
         logs,
         badgeCatalog,
         memberBadges,
-        recapSnapshots,
         announcements,
         scheduleEvents,
         correctionRequests,
@@ -343,151 +335,120 @@ export const MemberHomeTab: React.FC = () => {
     const memberSectionTabs: Array<{ id: MemberHomeSection; label: string }> = [
         { id: 'home', label: '내 홈' },
         { id: 'activity', label: '내 활동' },
-        { id: 'recap', label: '리캡' },
         { id: 'badges', label: '배지' },
         { id: 'account', label: '계정' },
     ];
 
     return (
-        <>
-            <div className="space-y-6 animate-in fade-in duration-500">
-                <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
-                    <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
-                        <div>
-                            <div className="inline-flex items-center gap-2 rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-sm font-medium text-indigo-700">
-                                <Sparkles size={15} />
-                                일반 회원 공간
-                            </div>
-                            <h2 className="mt-4 text-2xl font-bold tracking-tight text-slate-950 sm:text-3xl">{member.name}님의 활동 공간</h2>
-                            <p className="mt-2 text-sm leading-6 text-slate-500 sm:text-base">
-                                자주 보는 정보는 탭으로 나눠 두었습니다. 공지 확인, 활동 기록, 리캡, 배지, 계정 상태를 목적별로 볼 수 있습니다.
-                            </p>
+        <div className="space-y-6 animate-in fade-in duration-500">
+            <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+                <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+                    <div>
+                        <div className="inline-flex items-center gap-2 rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-sm font-medium text-indigo-700">
+                            <Sparkles size={15} />
+                            일반 회원 공간
                         </div>
-                        <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-                            현재 시즌 · {season?.name ?? '시즌 없음'}
-                        </div>
+                        <h2 className="mt-4 text-2xl font-bold tracking-tight text-slate-950 sm:text-3xl">{member.name}님의 활동 공간</h2>
+                        <p className="mt-2 text-sm leading-6 text-slate-500 sm:text-base">
+                            자주 보는 정보는 탭으로 나눠 두었습니다. 공지 확인, 활동 기록, 배지, 계정 상태를 목적별로 볼 수 있습니다.
+                        </p>
                     </div>
-
-                    <div className="mt-5 flex flex-wrap gap-2">
-                        {memberSectionTabs.map((tab) => (
-                            <button
-                                key={tab.id}
-                                type="button"
-                                onClick={() => setActiveSection(tab.id)}
-                                className={`rounded-2xl px-4 py-2 text-sm font-semibold transition-colors ${
-                                    activeSection === tab.id
-                                        ? 'bg-slate-950 text-white shadow-sm'
-                                        : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-                                }`}
-                            >
-                                {tab.label}
-                            </button>
-                        ))}
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                        현재 시즌 · {season?.name ?? '시즌 없음'}
                     </div>
-                </section>
+                </div>
 
-                {activeSection === 'home' && (
-                    <MemberHomeOverviewSection
-                        announcements={announcements}
-                        scheduleEvents={scheduleEvents}
-                        seasonName={season?.name ?? '시즌 기준 없음'}
-                        seasonScore={seasonScore}
-                        seasonLogCount={seasonLogCount}
-                        memberBadgeCount={memberBadges.length}
-                        homeRecentLogs={homeRecentLogs}
-                        recentSnapshot={recentSnapshot}
-                        growthDescription={growthDescription}
-                        formatDateTime={formatDateTime}
-                        onOpenActivity={() => setActiveSection('activity')}
-                    />
-                )}
+                <div className="mt-5 flex flex-wrap gap-2">
+                    {memberSectionTabs.map((tab) => (
+                        <button
+                            key={tab.id}
+                            type="button"
+                            onClick={() => setActiveSection(tab.id)}
+                            className={`rounded-2xl px-4 py-2 text-sm font-semibold transition-colors ${
+                                activeSection === tab.id
+                                    ? 'bg-slate-950 text-white shadow-sm'
+                                    : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                            }`}
+                        >
+                            {tab.label}
+                        </button>
+                    ))}
+                </div>
+            </section>
 
-                {activeSection === 'activity' && (
-                    <MemberActivitySection
-                        timelineRange={timelineRange}
-                        timelineRangeOptions={timelineRangeOptions}
-                        timelineGroups={timelineGroups}
-                        timelineLogsCount={timelineLogs.length}
-                        correctionRequests={correctionRequests}
-                        openCorrectionRequestsByRecordId={openCorrectionRequestsByRecordId}
-                        correctionRequestStatusLabels={correctionRequestStatusLabels}
-                        correctionRequestStatusClasses={correctionRequestStatusClasses}
-                        selectedRequestLog={selectedRequestLog}
-                        requestReason={requestReason}
-                        requestError={requestError}
-                        isSubmittingRequest={isSubmittingRequest}
-                        onChangeTimelineRange={setTimelineRange}
-                        onSelectRequestLog={(log) => {
-                            setSelectedRequestLog(log);
-                            setRequestReason(`${log.categoryName ?? '활동'} 기록에 대한 정정 요청입니다. `);
-                            setRequestError(null);
-                        }}
-                        onChangeRequestReason={setRequestReason}
-                        onSubmitCorrectionRequest={handleSubmitCorrectionRequest}
-                        onCloseRequestForm={() => {
-                            setSelectedRequestLog(null);
-                            setRequestReason('');
-                            setRequestError(null);
-                        }}
-                        formatDayLabel={formatDayLabel}
-                        formatDateTime={formatDateTime}
-                    />
-                )}
+            {activeSection === 'home' && (
+                <MemberHomeOverviewSection
+                    announcements={announcements}
+                    scheduleEvents={scheduleEvents}
+                    seasonName={season?.name ?? '시즌 기준 없음'}
+                    seasonScore={seasonScore}
+                    seasonLogCount={seasonLogCount}
+                    memberBadgeCount={memberBadges.length}
+                    homeRecentLogs={homeRecentLogs}
+                    recentSnapshot={recentSnapshot}
+                    growthDescription={growthDescription}
+                    formatDateTime={formatDateTime}
+                    onOpenActivity={() => setActiveSection('activity')}
+                />
+            )}
 
-                {activeSection === 'recap' && (
-                    <MemberRecapSection
-                        recapSnapshots={recapSnapshots}
-                        formatDate={formatDate}
-                        onOpenRecapPeriod={setSelectedRecapPeriod}
-                        onSelectSnapshot={setSelectedSnapshot}
-                    />
-                )}
+            {activeSection === 'activity' && (
+                <MemberActivitySection
+                    timelineRange={timelineRange}
+                    timelineRangeOptions={timelineRangeOptions}
+                    timelineGroups={timelineGroups}
+                    timelineLogsCount={timelineLogs.length}
+                    correctionRequests={correctionRequests}
+                    openCorrectionRequestsByRecordId={openCorrectionRequestsByRecordId}
+                    correctionRequestStatusLabels={correctionRequestStatusLabels}
+                    correctionRequestStatusClasses={correctionRequestStatusClasses}
+                    selectedRequestLog={selectedRequestLog}
+                    requestReason={requestReason}
+                    requestError={requestError}
+                    isSubmittingRequest={isSubmittingRequest}
+                    onChangeTimelineRange={setTimelineRange}
+                    onSelectRequestLog={(log) => {
+                        setSelectedRequestLog(log);
+                        setRequestReason(`${log.categoryName ?? '활동'} 기록에 대한 정정 요청입니다. `);
+                        setRequestError(null);
+                    }}
+                    onChangeRequestReason={setRequestReason}
+                    onSubmitCorrectionRequest={handleSubmitCorrectionRequest}
+                    onCloseRequestForm={() => {
+                        setSelectedRequestLog(null);
+                        setRequestReason('');
+                        setRequestError(null);
+                    }}
+                    formatDayLabel={formatDayLabel}
+                    formatDateTime={formatDateTime}
+                />
+            )}
 
-                {activeSection === 'badges' && (
-                    <MemberBadgeSection
-                        badgeCards={badgeCards}
-                        memberBadges={memberBadges}
-                        badgeChallengeCopy={badgeChallengeCopy}
-                        badgeToneClasses={badgeToneClasses}
-                        bandiMascotUrl={bandiMascotUrl}
-                        didiMascotUrl={didiMascotUrl}
-                        banollimSchoolLogoUrl={banollimSchoolLogoUrl}
-                    />
-                )}
-
-                {activeSection === 'account' && (
-                    <MemberAccountSection
-                        member={member}
-                        roleLabel={member.roleName ?? roleLabels[profile?.appRole ?? 'member']}
-                        memberTeamLabel={memberTeamLabel}
-                        joinedAtLabel={formatDate(member.joinedAt)}
-                        latestActivityLabel={latestLog ? formatDateTime(latestLog.timestamp) : '아직 없음'}
-                        statusLabel={memberStatusLabels[status]}
-                        statusClass={statusClass}
-                        accountStatus={accountStatus}
-                        loginEmail={profile?.email ?? '-'}
-                    />
-                )}
-            </div>
-
-            {selectedRecapPeriod && (
-                <MemberRecapViewer
-                    key={selectedRecapPeriod}
-                    member={member}
-                    season={season}
-                    logs={effectiveLogs}
+            {activeSection === 'badges' && (
+                <MemberBadgeSection
+                    badgeCards={badgeCards}
                     memberBadges={memberBadges}
-                    period={selectedRecapPeriod}
-                    onClose={() => setSelectedRecapPeriod(null)}
+                    badgeChallengeCopy={badgeChallengeCopy}
+                    badgeToneClasses={badgeToneClasses}
+                    bandiMascotUrl={bandiMascotUrl}
+                    didiMascotUrl={didiMascotUrl}
+                    banollimSchoolLogoUrl={banollimSchoolLogoUrl}
                 />
             )}
 
-            {selectedSnapshot && (
-                <RecapSnapshotViewer
-                    snapshot={selectedSnapshot}
-                    onClose={() => setSelectedSnapshot(null)}
+            {activeSection === 'account' && (
+                <MemberAccountSection
+                    member={member}
+                    roleLabel={member.roleName ?? roleLabels[profile?.appRole ?? 'member']}
+                    memberTeamLabel={memberTeamLabel}
+                    joinedAtLabel={formatDate(member.joinedAt)}
+                    latestActivityLabel={latestLog ? formatDateTime(latestLog.timestamp) : '아직 없음'}
+                    statusLabel={memberStatusLabels[status]}
+                    statusClass={statusClass}
+                    accountStatus={accountStatus}
+                    loginEmail={profile?.email ?? '-'}
                 />
             )}
-        </>
+        </div>
     );
 };

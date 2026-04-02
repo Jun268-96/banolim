@@ -2,41 +2,24 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
     BarChart3,
     CalendarRange,
-    PlayCircle,
 } from 'lucide-react';
 import { Chart as ChartJS, ArcElement, Tooltip, Legend, CategoryScale, LinearScale, BarElement, Title } from 'chart.js';
-import type { RecapSnapshot, RecapSnapshotPeriod } from '../../types';
-import { createRecapSnapshots } from '../../lib/api/stats/overview';
 import { filterEffectiveActivityLogs, filterLogsWithinRange } from '../../lib/domain/activityLogs';
-import { buildMemberRecapSnapshotDraft, buildOverallRecapSnapshotDraft, buildRecapScope } from '../../lib/recapSnapshots';
 import { buildCategoryStats, buildMemberStats, buildTeamStats, isWithinRange, toSeasonRange } from '../../lib/domain/stats';
 import { useStatsResources } from './hooks/useStatsResources';
-import { RecapViewer } from './RecapViewer';
-import { StatsArchivesSection } from './sections/StatsArchivesSection';
 import { StatsCompareSection } from './sections/StatsCompareSection';
-import { StatsRecapSection } from './sections/StatsRecapSection';
-import { RecapSnapshotViewer } from '../recap/RecapSnapshotViewer';
 
 ChartJS.register(ArcElement, Tooltip, Legend, CategoryScale, LinearScale, BarElement, Title);
 
-type StatsViewTab = 'recap' | 'compare' | 'archives';
-
 export const StatsTab: React.FC = () => {
     const [selectedSeasonId, setSelectedSeasonId] = useState<string | null>(null);
-    const [selectedSnapshot, setSelectedSnapshot] = useState<RecapSnapshot | null>(null);
-    const [isGeneratingRecap, setIsGeneratingRecap] = useState(false);
-    const [recapError, setRecapError] = useState<string | null>(null);
-    const [showRecap, setShowRecap] = useState(false);
-    const [activeView, setActiveView] = useState<StatsViewTab>('recap');
     const {
         members,
         logs,
         memberBadges,
         seasons,
         currentSeason,
-        recapSnapshots,
         isLoading,
-        refreshSnapshots,
     } = useStatsResources();
 
     useEffect(() => {
@@ -58,17 +41,6 @@ export const StatsTab: React.FC = () => {
         const selectedIndex = seasons.findIndex((season) => season.id === selectedSeason.id);
         return selectedIndex >= 0 ? seasons[selectedIndex + 1] ?? null : null;
     }, [seasons, selectedSeason]);
-
-    const eligibleSnapshotMembers = useMemo(() => {
-        const scope = buildRecapScope('season', selectedSeason ?? currentSeason);
-        const activeVisibleMembers = members.filter((member) => member.status === 'active' && (member.isVisible ?? true));
-        const effectiveLogs = filterEffectiveActivityLogs(logs);
-        const loggedMemberIds = new Set(
-            filterLogsWithinRange(effectiveLogs, scope.start, scope.end).map((log) => log.memberId),
-        );
-
-        return activeVisibleMembers.filter((member) => loggedMemberIds.has(member.id));
-    }, [currentSeason, logs, members, selectedSeason]);
 
     const stats = useMemo(() => {
         const effectiveLogs = filterEffectiveActivityLogs(logs);
@@ -167,42 +139,6 @@ export const StatsTab: React.FC = () => {
         };
     }, [logs, memberBadges, members, previousSeason, selectedSeason]);
 
-    const handleGenerateRecapSnapshots = async (periodType: RecapSnapshotPeriod) => {
-        setIsGeneratingRecap(true);
-        setRecapError(null);
-
-        try {
-            const effectiveLogs = stats.effectiveLogs;
-            const overallDraft = buildOverallRecapSnapshotDraft({
-                members,
-                season: periodType === 'season' ? selectedSeason : currentSeason,
-                logs: effectiveLogs,
-                memberBadges,
-                periodType,
-            });
-
-            const memberDrafts = eligibleSnapshotMembers
-                .map((member) => buildMemberRecapSnapshotDraft({
-                    member,
-                    season: periodType === 'season' ? selectedSeason : currentSeason,
-                    logs: effectiveLogs.filter((log) => log.memberId === member.id),
-                    memberBadges: memberBadges.filter((badge) => badge.memberId === member.id),
-                    periodType,
-                }))
-                .filter((draft) => {
-                    const totalStat = draft.payload.stats.find((stat) => stat.label === '활동 수');
-                    return totalStat ? totalStat.value !== '0건' : true;
-                });
-
-            await createRecapSnapshots([overallDraft, ...memberDrafts]);
-            await refreshSnapshots();
-        } catch (error) {
-            setRecapError(error instanceof Error ? error.message : '리캡 저장본을 생성하지 못했습니다.');
-        } finally {
-            setIsGeneratingRecap(false);
-        }
-    };
-
     if (isLoading) {
         return (
             <div className="flex h-64 items-center justify-center">
@@ -262,146 +198,68 @@ export const StatsTab: React.FC = () => {
         ],
     };
 
-    const recentSnapshots = recapSnapshots.slice(0, 3);
-    const latestSnapshotDateLabel = recapSnapshots[0]
-        ? new Date(recapSnapshots[0].createdAt).toLocaleDateString('ko-KR')
-        : '없음';
-
     return (
-        <>
-            <div className="space-y-6 animate-in fade-in duration-500">
-                <header className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-                    <div>
-                        <h2 className="flex items-center gap-2 text-2xl font-bold text-slate-900">
-                            <BarChart3 className="text-indigo-600" />
-                            통계 및 리캡
-                        </h2>
-                        <p className="mt-1 text-slate-500">
-                            선택한 시즌을 기준으로 팀 흐름과 전시즌 대비 변화량을 함께 읽어봅니다.
-                        </p>
-                    </div>
+        <div className="space-y-6 animate-in fade-in duration-500">
+            <header className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                <div>
+                    <h2 className="flex items-center gap-2 text-2xl font-bold text-slate-900">
+                        <BarChart3 className="text-indigo-600" />
+                        통계
+                    </h2>
+                    <p className="mt-1 text-slate-500">
+                        선택한 시즌을 기준으로 팀 흐름과 전시즌 대비 변화량을 함께 읽어봅니다.
+                    </p>
+                </div>
 
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-                        <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-600 shadow-sm">
-                            <CalendarRange size={18} className="text-indigo-600" />
-                            <span>비교 시즌</span>
-                            <select
-                                value={selectedSeason?.id ?? ''}
-                                onChange={(event) => setSelectedSeasonId(event.target.value)}
-                                className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-900 outline-none transition-colors focus:border-indigo-300"
-                            >
-                                {seasons.map((season) => (
-                                    <option key={season.id} value={season.id}>
-                                        {season.name}
-                                    </option>
-                                ))}
-                            </select>
-                        </label>
-
-                        <button
-                            onClick={() => setShowRecap(true)}
-                            className="flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-sky-600 to-indigo-600 px-6 py-3 font-bold text-white shadow-md shadow-indigo-200 transition-all active:scale-95"
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                    <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-600 shadow-sm">
+                        <CalendarRange size={18} className="text-indigo-600" />
+                        <span>비교 시즌</span>
+                        <select
+                            value={selectedSeason?.id ?? ''}
+                            onChange={(event) => setSelectedSeasonId(event.target.value)}
+                            className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-900 outline-none transition-colors focus:border-indigo-300"
                         >
-                            <PlayCircle size={20} />
-                            리캡 열기
-                        </button>
-                    </div>
-                </header>
+                            {seasons.map((season) => (
+                                <option key={season.id} value={season.id}>
+                                    {season.name}
+                                </option>
+                            ))}
+                        </select>
+                    </label>
+                </div>
+            </header>
 
-                <section className="rounded-[28px] border border-slate-200 bg-white p-2 shadow-sm">
-                    <div className="flex flex-wrap gap-2">
-                        {([
-                            { key: 'recap', label: '리캡' },
-                            { key: 'compare', label: '비교 통계' },
-                            { key: 'archives', label: '저장본' },
-                        ] satisfies Array<{ key: StatsViewTab; label: string }>).map((tab) => (
-                            <button
-                                key={tab.key}
-                                type="button"
-                                onClick={() => setActiveView(tab.key)}
-                                className={`rounded-2xl px-4 py-3 text-sm font-semibold transition-colors ${
-                                    activeView === tab.key
-                                        ? 'bg-indigo-600 text-white shadow-sm'
-                                        : 'text-slate-600 hover:bg-slate-100'
-                                }`}
-                            >
-                                {tab.label}
-                            </button>
-                        ))}
-                    </div>
-                </section>
-
-                {activeView === 'recap' && (
-                    <StatsRecapSection
-                        selectedSeasonName={selectedSeason?.name ?? null}
-                        eligibleSnapshotMemberCount={eligibleSnapshotMembers.length}
-                        latestSnapshotDateLabel={latestSnapshotDateLabel}
-                        isGeneratingRecap={isGeneratingRecap}
-                        recapError={recapError}
-                        onGenerateRecap={handleGenerateRecapSnapshots}
-                        recentSnapshots={recentSnapshots}
-                        onOpenArchives={() => setActiveView('archives')}
-                        onSelectSnapshot={setSelectedSnapshot}
-                    />
-                )}
-
-                {activeView === 'compare' && (
-                    <StatsCompareSection
-                        doughnutData={doughnutData}
-                        teamBarData={teamBarData}
-                        ruleBarData={ruleBarData}
-                        stats={{
-                            topContributor: stats.topContributor
-                                ? {
-                                    name: stats.topContributor.name,
-                                    totalPoints: stats.topContributor.totalPoints,
-                                    activityCount: stats.topContributor.activityCount,
-                                }
-                                : null,
-                            topTeam: stats.topTeam
-                                ? {
-                                    team: stats.topTeam.team,
-                                    totalPoints: stats.topTeam.totalPoints,
-                                    participantCount: stats.topTeam.participantCount,
-                                }
-                                : null,
-                            topRule: stats.topRule
-                                ? {
-                                    name: stats.topRule.name,
-                                    count: stats.topRule.count,
-                                    delta: stats.topRule.delta,
-                                }
-                                : null,
-                            selectedActiveDays: stats.selectedActiveDays,
-                            previousActiveDays: stats.previousActiveDays,
-                        }}
-                    />
-                )}
-
-                {activeView === 'archives' && (
-                    <StatsArchivesSection
-                        recapSnapshots={recapSnapshots}
-                        onSelectSnapshot={setSelectedSnapshot}
-                    />
-                )}
-            </div>
-
-            {showRecap && (
-                <RecapViewer
-                    members={members}
-                    logs={stats.effectiveLogs}
-                    memberBadges={memberBadges}
-                    season={selectedSeason}
-                    onClose={() => setShowRecap(false)}
-                />
-            )}
-
-            {selectedSnapshot && (
-                <RecapSnapshotViewer
-                    snapshot={selectedSnapshot}
-                    onClose={() => setSelectedSnapshot(null)}
-                />
-            )}
-        </>
+            <StatsCompareSection
+                doughnutData={doughnutData}
+                teamBarData={teamBarData}
+                ruleBarData={ruleBarData}
+                stats={{
+                    topContributor: stats.topContributor
+                        ? {
+                            name: stats.topContributor.name,
+                            totalPoints: stats.topContributor.totalPoints,
+                            activityCount: stats.topContributor.activityCount,
+                        }
+                        : null,
+                    topTeam: stats.topTeam
+                        ? {
+                            team: stats.topTeam.team,
+                            totalPoints: stats.topTeam.totalPoints,
+                            participantCount: stats.topTeam.participantCount,
+                        }
+                        : null,
+                    topRule: stats.topRule
+                        ? {
+                            name: stats.topRule.name,
+                            count: stats.topRule.count,
+                            delta: stats.topRule.delta,
+                        }
+                        : null,
+                    selectedActiveDays: stats.selectedActiveDays,
+                    previousActiveDays: stats.previousActiveDays,
+                }}
+            />
+        </div>
     );
 };

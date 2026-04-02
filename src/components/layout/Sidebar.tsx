@@ -24,7 +24,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpe
         { id: 'dashboard', label: '멤버', icon: Users, visible: permissions.canViewMembers },
         { id: 'activities', label: '활동', icon: ClipboardList, visible: permissions.canViewActivities },
         { id: 'settings', label: '설정', icon: Settings, visible: permissions.canManageSettings },
-        { id: 'stats', label: '통계 · 리캡', icon: BarChart3, visible: permissions.canViewStats },
+        { id: 'stats', label: '통계', icon: BarChart3, visible: permissions.canViewStats },
     ] as const;
 
     const visibleItems = navItems.filter((item) => item.visible);
