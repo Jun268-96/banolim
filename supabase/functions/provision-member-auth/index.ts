@@ -32,16 +32,18 @@ Deno.serve(async (request) => {
 
         const adminClient = createClient(supabaseUrl, supabaseServiceRoleKey);
 
+        // verify_jwt: true로 게이트웨이에서 이미 검증됨 — JWT payload에서 직접 user ID 추출
         const token = authorization.replace(/^Bearer\s+/i, '').trim();
-        const { data: authData, error: authError } = await adminClient.auth.getUser(token);
-        if (authError || !authData.user) {
-            return new Response(JSON.stringify({ error: '로그인 세션을 확인하지 못했습니다.' }), {
+        const payloadBase64 = token.split('.')[1];
+        const payload = JSON.parse(atob(payloadBase64)) as { sub?: string };
+        const callerUserId = payload.sub;
+
+        if (!callerUserId) {
+            return new Response(JSON.stringify({ error: '인증 정보를 확인하지 못했습니다.' }), {
                 status: 401,
                 headers: { ...corsHeaders, 'Content-Type': 'application/json' },
             });
         }
-
-        const callerUserId = authData.user.id;
         const { data: profile, error: profileError } = await adminClient
             .from('user_profiles')
             .select('id, app_role')
