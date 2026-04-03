@@ -123,7 +123,7 @@ export const HeaderBannerCarousel: React.FC = () => {
                         <button
                             type="button"
                             onClick={() => handleMove('prev')}
-                            className="absolute left-3 top-1/2 inline-flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full bg-slate-950/40 text-white opacity-0 transition-opacity hover:bg-slate-950/55 group-hover:opacity-100"
+                            className="absolute left-3 top-1/2 hidden h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full bg-slate-950/40 text-white transition-opacity hover:bg-slate-950/55 sm:inline-flex sm:opacity-0 sm:group-hover:opacity-100"
                             aria-label="이전 배너"
                         >
                             <ChevronLeft size={20} />
@@ -131,20 +131,22 @@ export const HeaderBannerCarousel: React.FC = () => {
                         <button
                             type="button"
                             onClick={() => handleMove('next')}
-                            className="absolute right-3 top-1/2 inline-flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full bg-slate-950/40 text-white opacity-0 transition-opacity hover:bg-slate-950/55 group-hover:opacity-100"
+                            className="absolute right-3 top-1/2 hidden h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full bg-slate-950/40 text-white transition-opacity hover:bg-slate-950/55 sm:inline-flex sm:opacity-0 sm:group-hover:opacity-100"
                             aria-label="다음 배너"
                         >
                             <ChevronRight size={20} />
                         </button>
-                        <div className="absolute bottom-3 left-1/2 flex -translate-x-1/2 items-center gap-2 rounded-full bg-slate-950/35 px-3 py-1.5 backdrop-blur-sm">
+                        <div className="absolute bottom-3 left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-full bg-slate-950/35 px-3 py-1.5 backdrop-blur-sm">
                             {activeBanners.map((banner, index) => (
                                 <button
                                     key={banner.id}
                                     type="button"
                                     onClick={() => setCurrentIndex(index)}
-                                    className={`h-2.5 rounded-full transition-all ${index === currentIndex ? 'w-6 bg-white' : 'w-2.5 bg-white/55 hover:bg-white/75'}`}
+                                    className="p-1.5 rounded-full"
                                     aria-label={`${index + 1}번 배너 보기`}
-                                />
+                                >
+                                    <span className={`block h-2.5 rounded-full transition-all ${index === currentIndex ? 'w-6 bg-white' : 'w-2.5 bg-white/55 hover:bg-white/75'}`} />
+                                </button>
                             ))}
                         </div>
                     </>

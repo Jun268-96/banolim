@@ -364,7 +364,7 @@ export const MemberHomeTab: React.FC = () => {
                             key={tab.id}
                             type="button"
                             onClick={() => setActiveSection(tab.id)}
-                            className={`rounded-2xl px-4 py-2 text-sm font-semibold transition-colors ${
+                            className={`rounded-2xl px-4 py-2.5 text-sm font-semibold transition-colors ${
                                 activeSection === tab.id
                                     ? 'bg-slate-950 text-white shadow-sm'
                                     : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'

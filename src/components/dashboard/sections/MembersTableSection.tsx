@@ -425,15 +425,15 @@ export const MembersTableSection: React.FC<MembersTableSectionProps> = ({
       <table className={`${canManageMembers ? 'min-w-[980px]' : 'min-w-[760px]'} min-w-full w-max border-collapse text-left`}>
         <thead>
           <tr className="border-b border-slate-200 bg-slate-50 text-sm font-semibold text-slate-600">
-            <th className="min-w-[76px] whitespace-nowrap px-6 py-4">레벨</th>
-            <th className="min-w-[84px] whitespace-nowrap px-6 py-4">이름</th>
+            <th className="min-w-[76px] whitespace-nowrap px-3 py-4 sm:px-6">레벨</th>
+            <th className="min-w-[84px] whitespace-nowrap px-3 py-4 sm:px-6">이름</th>
             {canManageMembers && (
-              <th className="min-w-[240px] whitespace-nowrap px-6 py-4">로그인 이메일</th>
+              <th className="min-w-[240px] whitespace-nowrap px-3 py-4 sm:px-6">로그인 이메일</th>
             )}
-            <th className="min-w-[148px] whitespace-nowrap px-6 py-4">직책</th>
-            <th className="min-w-[140px] whitespace-nowrap px-6 py-4">상태</th>
-            <th className="min-w-[132px] whitespace-nowrap px-6 py-4">가입일</th>
-            <th className={`min-w-[112px] whitespace-nowrap px-6 py-4 text-center ${canManageMembers ? 'sticky right-0 z-20 border-l border-slate-200 bg-slate-50 shadow-[-12px_0_24px_-20px_rgba(15,23,42,0.35)]' : ''}`}>
+            <th className="min-w-[148px] whitespace-nowrap px-3 py-4 sm:px-6">직책</th>
+            <th className="min-w-[140px] whitespace-nowrap px-3 py-4 sm:px-6">상태</th>
+            <th className="hidden min-w-[132px] whitespace-nowrap px-3 py-4 sm:table-cell sm:px-6">가입일</th>
+            <th className={`min-w-[112px] whitespace-nowrap px-3 py-4 text-center sm:px-6 ${canManageMembers ? 'sticky right-0 z-20 border-l border-slate-200 bg-slate-50 shadow-[-12px_0_24px_-20px_rgba(15,23,42,0.35)]' : ''}`}>
               {canManageMembers ? '관리' : '조회'}
             </th>
           </tr>
@@ -450,16 +450,16 @@ export const MembersTableSection: React.FC<MembersTableSectionProps> = ({
                 className={`group transition-colors ${historyMemberId === member.id ? 'bg-indigo-50/70' : 'hover:bg-slate-50/50'}`}
                 onClick={() => onSelectHistoryMember(member.id)}
               >
-                <td className="whitespace-nowrap px-6 py-4 align-middle">
+                <td className="whitespace-nowrap px-3 py-4 align-middle sm:px-6">
                   <span className={`inline-flex min-w-[56px] items-center justify-center rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] ${levelInfo.color}`}>
                     lv.{levelInfo.level}
                   </span>
                 </td>
-                <td className="whitespace-nowrap px-6 py-4 align-middle">
+                <td className="whitespace-nowrap px-3 py-4 align-middle sm:px-6">
                   <span className="font-medium text-slate-900">{member.name}</span>
                 </td>
                 {canManageMembers && (
-                  <td className="whitespace-nowrap px-6 py-4 align-middle">
+                  <td className="whitespace-nowrap px-3 py-4 align-middle sm:px-6">
                     {(() => {
                       const accountProvision = getAccountProvisionLabel(member);
 
@@ -504,7 +504,7 @@ export const MembersTableSection: React.FC<MembersTableSectionProps> = ({
                     })()}
                   </td>
                 )}
-                <td className="whitespace-nowrap px-6 py-4 align-middle">
+                <td className="whitespace-nowrap px-3 py-4 align-middle sm:px-6">
                   {canManageMembers ? (
                     <div onClick={(event) => event.stopPropagation()}>
                       <select
@@ -528,7 +528,7 @@ export const MembersTableSection: React.FC<MembersTableSectionProps> = ({
                     <div className="whitespace-nowrap text-slate-700">{member.roleName || '미지정'}</div>
                   )}
                 </td>
-                <td className="whitespace-nowrap px-6 py-4 align-middle">
+                <td className="whitespace-nowrap px-3 py-4 align-middle sm:px-6">
                   {canManageMembers ? (
                     <select
                       value={member.status ?? 'active'}
@@ -552,8 +552,8 @@ export const MembersTableSection: React.FC<MembersTableSectionProps> = ({
                     </span>
                   )}
                 </td>
-                <td className="whitespace-nowrap px-6 py-4 align-middle text-sm text-slate-600">{formatDate(member.joinedAt)}</td>
-                <td className={`whitespace-nowrap px-6 py-4 text-center align-middle ${canManageMembers ? 'sticky right-0 z-10 border-l border-slate-100 bg-white shadow-[-12px_0_24px_-20px_rgba(15,23,42,0.2)] group-hover:bg-slate-50/95' : ''}`}>
+                <td className="hidden whitespace-nowrap px-3 py-4 align-middle text-sm text-slate-600 sm:table-cell sm:px-6">{formatDate(member.joinedAt)}</td>
+                <td className={`whitespace-nowrap px-3 py-4 text-center align-middle sm:px-6 ${canManageMembers ? 'sticky right-0 z-10 border-l border-slate-100 bg-white shadow-[-12px_0_24px_-20px_rgba(15,23,42,0.2)] group-hover:bg-slate-50/95' : ''}`}>
                   {canManageMembers ? (
                     <div
                       className="flex items-center justify-center gap-1"

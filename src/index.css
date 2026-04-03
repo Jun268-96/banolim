@@ -5,4 +5,11 @@
     height: 100%;
     @apply bg-slate-50 text-slate-900;
   }
+
+  /* iOS Safari auto-zoom 방지: font-size < 16px인 input에 포커스 시 자동 확대되는 것을 막음 */
+  @media screen and (-webkit-min-device-pixel-ratio: 0) {
+    input, select, textarea {
+      font-size: 16px;
+    }
+  }
 }
