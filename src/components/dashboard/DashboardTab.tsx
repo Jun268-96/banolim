@@ -750,7 +750,9 @@ export const DashboardTab: React.FC = () => {
         try {
             const result = await provisionMemberPasswordAuth(member.id);
             setProvisionedAccount(result);
-            await refreshData();
+            void refreshData();
+        } catch (error) {
+            showActionError(error);
         } finally {
             setProvisioningMemberId(null);
         }

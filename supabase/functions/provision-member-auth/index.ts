@@ -92,17 +92,21 @@ Deno.serve(async (request) => {
         let isExistingAccount = false;
 
         if (!authUserId) {
-            // auth_user_id가 없어도 auth.users에 이미 존재할 수 있으므로 확인
-            const { data: listUsersData, error: listUsersError } = await adminClient.auth.admin.listUsers({
-                page: 1,
-                perPage: 1000,
+            // auth_user_id가 없어도 auth.users에 이미 존재할 수 있으므로 이메일로 직접 검색
+            const searchUrl = `${supabaseUrl}/auth/v1/admin/users?page=1&per_page=10&filter=${encodeURIComponent(normalizedEmail)}`;
+            const searchRes = await fetch(searchUrl, {
+                headers: {
+                    apikey: supabaseServiceRoleKey,
+                    Authorization: `Bearer ${supabaseServiceRoleKey}`,
+                },
             });
 
-            if (listUsersError) {
-                throw listUsersError;
+            if (!searchRes.ok) {
+                throw new Error('사용자 조회에 실패했습니다.');
             }
 
-            const existingUser = listUsersData.users.find((user) => user.email?.toLowerCase() === normalizedEmail);
+            const { users } = (await searchRes.json()) as { users: Array<{ id: string; email?: string }> };
+            const existingUser = users.find((u) => u.email?.toLowerCase() === normalizedEmail);
             if (existingUser) {
                 authUserId = existingUser.id;
                 isExistingAccount = true;

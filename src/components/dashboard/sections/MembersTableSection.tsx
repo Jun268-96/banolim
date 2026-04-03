@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ArrowUpDown, ChevronDown, ChevronUp, KeyRound, Search, Trash2 } from 'lucide-react';
+import { ArrowUpDown, ChevronDown, ChevronUp, KeyRound, Loader2, Search, Trash2 } from 'lucide-react';
 import type { Member, MemberStatus, RoleSummary, TeamSummary } from '../../../types';
 
 type MemberSortMode = 'name-asc' | 'name-desc' | 'joined-desc' | 'role-order';
@@ -566,12 +566,17 @@ export const MembersTableSection: React.FC<MembersTableSectionProps> = ({
                         className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:border-slate-100 disabled:text-slate-300"
                         title={member.authUserId ? '임시 비밀번호 재발급' : '계정 발급'}
                       >
-                        <KeyRound size={14} />
-                        {provisioningMemberId === member.id
-                          ? '발급 중'
-                          : member.authUserId
-                            ? '재발급'
-                            : '계정 발급'}
+                        {provisioningMemberId === member.id ? (
+                          <>
+                            <Loader2 size={14} className="animate-spin" />
+                            발급 중
+                          </>
+                        ) : (
+                          <>
+                            <KeyRound size={14} />
+                            {member.authUserId ? '재발급' : '계정 발급'}
+                          </>
+                        )}
                       </button>
                       <button
                         onClick={() => onDeleteMember(member.id)}
