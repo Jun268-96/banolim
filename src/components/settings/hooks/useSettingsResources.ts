@@ -113,11 +113,35 @@ export const useSettingsResources = () => {
     [resources.memberBadges],
   );
 
+  const removeAnnouncement = useCallback((id: string) => {
+    setResources((prev) => ({
+      ...prev,
+      announcements: prev.announcements.filter((a) => a.id !== id),
+    }));
+  }, []);
+
+  const removeScheduleEvent = useCallback((id: string) => {
+    setResources((prev) => ({
+      ...prev,
+      scheduleEvents: prev.scheduleEvents.filter((e) => e.id !== id),
+    }));
+  }, []);
+
+  const removeSiteBanner = useCallback((id: string) => {
+    setResources((prev) => ({
+      ...prev,
+      siteBanners: prev.siteBanners.filter((b) => b.id !== id),
+    }));
+  }, []);
+
   return {
     ...resources,
     isLoading,
     refreshData,
     activeSeason,
     badgeAwardCounts,
+    removeAnnouncement,
+    removeScheduleEvent,
+    removeSiteBanner,
   };
 };

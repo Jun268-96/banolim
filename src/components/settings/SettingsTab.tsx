@@ -142,6 +142,9 @@ export const SettingsTab: React.FC = () => {
         refreshData,
         activeSeason,
         badgeAwardCounts,
+        removeAnnouncement,
+        removeScheduleEvent,
+        removeSiteBanner,
     } = useSettingsResources();
     const badgePendingDelete = badges.find((badge) => badge.id === badgeIdPendingDelete) ?? null;
 
@@ -299,8 +302,8 @@ export const SettingsTab: React.FC = () => {
 
     const handleDeleteAnnouncement = async (id: string) => {
         if (!confirm('이 공지를 비활성화할까요?')) return;
+        removeAnnouncement(id);
         await deleteAnnouncement(id);
-        await refreshData();
     };
 
     const handleAddScheduleEvent = async (event: React.FormEvent) => {
@@ -328,8 +331,8 @@ export const SettingsTab: React.FC = () => {
 
     const handleDeleteScheduleEvent = async (id: string) => {
         if (!confirm('이 일정을 숨길까요?')) return;
+        removeScheduleEvent(id);
         await deleteScheduleEvent(id);
-        await refreshData();
     };
 
     const handleBannerFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -380,8 +383,8 @@ export const SettingsTab: React.FC = () => {
 
     const handleDeleteBanner = async (id: string) => {
         if (!confirm('이 배너를 숨길까요?')) return;
+        removeSiteBanner(id);
         await deleteSiteBanner(id);
-        await refreshData();
     };
 
     const handleSaveBadge = async () => {
