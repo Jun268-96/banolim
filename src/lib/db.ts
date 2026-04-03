@@ -60,6 +60,7 @@ const sendPushNotification = (title: string, body: string): void => {
         headers: {
             'Content-Type': 'application/json',
             apikey: supabaseAnonKey ?? '',
+            Authorization: `Bearer ${supabaseAnonKey ?? ''}`,
         },
         body: JSON.stringify({ title, body, url: '/' }),
     }).catch(() => {

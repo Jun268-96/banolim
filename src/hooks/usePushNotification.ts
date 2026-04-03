@@ -78,6 +78,8 @@ export function usePushNotification() {
                 setStatus('denied');
                 return;
             }
+            // 허용 즉시 배너를 숨김 — 구독 저장은 백그라운드에서 계속
+            setStatus('subscribed');
             const reg = await navigator.serviceWorker.ready;
             const sub = await reg.pushManager.subscribe({
                 userVisibleOnly: true,
@@ -93,7 +95,6 @@ export function usePushNotification() {
                     auth: json.keys?.auth ?? '',
                 });
             }
-            setStatus('subscribed');
         } catch {
             setStatus('denied');
         }
