@@ -145,6 +145,15 @@ export const SettingsTab: React.FC = () => {
         removeAnnouncement,
         removeScheduleEvent,
         removeSiteBanner,
+        removeBadge,
+        moveSiteBannerLocally,
+        appendAnnouncement,
+        appendScheduleEvent,
+        appendSiteBanner,
+        appendSeason,
+        appendBadge,
+        updateBadgeInState,
+        refreshMemberBadges,
     } = useSettingsResources();
     const badgePendingDelete = badges.find((badge) => badge.id === badgeIdPendingDelete) ?? null;
 
@@ -270,20 +279,20 @@ export const SettingsTab: React.FC = () => {
         event.preventDefault();
         if (!newSeasonName.trim() || !newSeasonStartDate || !newSeasonEndDate) return;
 
-        await addSeason(newSeasonName.trim(), newSeasonStartDate, newSeasonEndDate, newSeasonStatus);
+        const season = await addSeason(newSeasonName.trim(), newSeasonStartDate, newSeasonEndDate, newSeasonStatus);
         setNewSeasonName('');
         setNewSeasonStartDate('');
         setNewSeasonEndDate('');
         setNewSeasonStatus('planned');
         setActiveDialog(null);
-        await refreshData();
+        appendSeason(season);
     };
 
     const handleAddAnnouncement = async (event: React.FormEvent) => {
         event.preventDefault();
         if (!newAnnouncementTitle.trim() || !newAnnouncementBody.trim()) return;
 
-        await addAnnouncement({
+        const item = await addAnnouncement({
             title: newAnnouncementTitle,
             body: newAnnouncementBody,
             startAt: newAnnouncementStartAt || null,
@@ -297,20 +306,25 @@ export const SettingsTab: React.FC = () => {
         setNewAnnouncementEndAt('');
         setNewAnnouncementPinned(true);
         setActiveDialog(null);
-        await refreshData();
+        appendAnnouncement(item);
     };
 
     const handleDeleteAnnouncement = async (id: string) => {
         if (!confirm('이 공지를 비활성화할까요?')) return;
-        removeAnnouncement(id);
-        await deleteAnnouncement(id);
+        const rollback = removeAnnouncement(id);
+        try {
+            await deleteAnnouncement(id);
+        } catch (error) {
+            rollback();
+            alert(error instanceof Error ? error.message : '공지를 삭제하지 못했습니다.');
+        }
     };
 
     const handleAddScheduleEvent = async (event: React.FormEvent) => {
         event.preventDefault();
         if (!newScheduleTitle.trim() || !newScheduleStartAt) return;
 
-        await addScheduleEvent({
+        const item = await addScheduleEvent({
             title: newScheduleTitle,
             description: newScheduleDescription,
             location: newScheduleLocation,
@@ -326,13 +340,18 @@ export const SettingsTab: React.FC = () => {
         setNewScheduleEndAt('');
         setNewScheduleSeasonId('');
         setActiveDialog(null);
-        await refreshData();
+        appendScheduleEvent(item);
     };
 
     const handleDeleteScheduleEvent = async (id: string) => {
         if (!confirm('이 일정을 숨길까요?')) return;
-        removeScheduleEvent(id);
-        await deleteScheduleEvent(id);
+        const rollback = removeScheduleEvent(id);
+        try {
+            await deleteScheduleEvent(id);
+        } catch (error) {
+            rollback();
+            alert(error instanceof Error ? error.message : '일정을 삭제하지 못했습니다.');
+        }
     };
 
     const handleBannerFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -367,24 +386,34 @@ export const SettingsTab: React.FC = () => {
         const imageUrl = newBannerFileData ?? newBannerUrl.trim();
         if (!imageUrl) return;
 
-        await addSiteBanner({
+        const item = await addSiteBanner({
             title: newBannerTitle.trim() || null,
             imageUrl,
         });
 
         resetBannerDraft();
-        await refreshData();
+        appendSiteBanner(item);
     };
 
     const handleMoveBanner = async (id: string, direction: 'up' | 'down') => {
-        await moveSiteBanner(id, direction);
-        await refreshData();
+        const rollback = moveSiteBannerLocally(id, direction);
+        try {
+            await moveSiteBanner(id, direction);
+        } catch (error) {
+            rollback();
+            alert(error instanceof Error ? error.message : '배너 순서를 변경하지 못했습니다.');
+        }
     };
 
     const handleDeleteBanner = async (id: string) => {
         if (!confirm('이 배너를 숨길까요?')) return;
-        removeSiteBanner(id);
-        await deleteSiteBanner(id);
+        const rollback = removeSiteBanner(id);
+        try {
+            await deleteSiteBanner(id);
+        } catch (error) {
+            rollback();
+            alert(error instanceof Error ? error.message : '배너를 삭제하지 못했습니다.');
+        }
     };
 
     const handleSaveBadge = async () => {
@@ -392,12 +421,14 @@ export const SettingsTab: React.FC = () => {
 
         try {
             if (badgeDialogMode === 'edit' && editingBadgeId) {
-                await updateBadge(editingBadgeId, badgeDraft);
+                const updated = await updateBadge(editingBadgeId, badgeDraft);
+                updateBadgeInState(updated);
+                void refreshMemberBadges();
             } else {
-                await addBadge(badgeDraft);
+                const created = await addBadge(badgeDraft);
+                appendBadge(created);
             }
 
-            await refreshData();
             resetBadgeDialog();
         } catch (error) {
             alert(error instanceof Error ? error.message : '배지를 저장하지 못했습니다.');
@@ -412,12 +443,13 @@ export const SettingsTab: React.FC = () => {
         }
 
         setIsDeletingBadge(true);
+        const rollback = removeBadge(badgePendingDelete.id);
+        setBadgeIdPendingDelete(null);
 
         try {
             await deleteBadge(badgePendingDelete.id);
-            await refreshData();
-            setBadgeIdPendingDelete(null);
         } catch (error) {
+            rollback();
             alert(error instanceof Error ? error.message : '배지를 삭제하지 못했습니다.');
         } finally {
             setIsDeletingBadge(false);
