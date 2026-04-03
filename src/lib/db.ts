@@ -52,6 +52,20 @@ import {
     getLatestDataFallbackState,
 } from './api/shared/fallbackState';
 import { localState } from './api/shared/localState';
+
+const sendPushNotification = (title: string, body: string): void => {
+    if (!isSupabaseConfigured) return;
+    void fetch(`${supabaseUrl}/functions/v1/send-push-notification`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            apikey: supabaseAnonKey ?? '',
+        },
+        body: JSON.stringify({ title, body, url: '/' }),
+    }).catch(() => {
+        // 알림 전송 실패는 무시 (fire-and-forget)
+    });
+};
 import {
     computeBadgeMetrics,
     getBadgeCriteriaSummary,
@@ -2392,7 +2406,7 @@ export const addAnnouncement = async (input: {
             throw error;
         }
 
-        return {
+        const result = {
             id: data.id,
             title: data.title,
             body: data.body,
@@ -2402,6 +2416,8 @@ export const addAnnouncement = async (input: {
             isActive: data.is_active,
             createdAt: data.created_at,
         };
+        sendPushNotification('새 공지', data.title);
+        return result;
     } catch (error) {
         const item: AnnouncementItem = {
             id: createLocalId('notice'),
@@ -2876,7 +2892,7 @@ export const addScheduleEvent = async (input: {
             throw error;
         }
 
-        return {
+        const result = {
             id: data.id,
             title: data.title,
             description: data.description,
@@ -2887,6 +2903,9 @@ export const addScheduleEvent = async (input: {
             isActive: data.is_active,
             createdAt: data.created_at,
         };
+        const dateLabel = new Intl.DateTimeFormat('ko-KR', { dateStyle: 'medium' }).format(new Date(data.start_at));
+        sendPushNotification('새 일정', `${data.title} — ${dateLabel}`);
+        return result;
     } catch (error) {
         const item: ScheduleEventItem = {
             id: createLocalId('schedule'),

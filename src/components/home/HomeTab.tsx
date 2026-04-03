@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Activity, Bell, CalendarClock, Sparkles, UserRound, Zap } from 'lucide-react';
+import { Activity, Bell, BellOff, CalendarClock, Sparkles, UserRound, X, Zap } from 'lucide-react';
+import { usePushNotification } from '../../hooks/usePushNotification';
 import type { ActivityLog, AnnouncementItem, ScheduleEventItem, SeasonSummary } from '../../types';
 import { getAnnouncements, getCurrentSeason, getLogs, getScheduleEvents } from '../../lib/api/home/public';
 import { filterEffectiveActivityLogs } from '../../lib/domain/activityLogs';
@@ -16,6 +17,7 @@ const formatDateTime = (value: string) =>
 
 export const HomeTab: React.FC<HomeTabProps> = ({ onNavigate }) => {
     const { permissions } = useAuth();
+    const { showBanner, subscribe, dismiss } = usePushNotification();
     const [season, setSeason] = useState<SeasonSummary | null>(null);
     const [logs, setLogs] = useState<ActivityLog[]>([]);
     const [announcements, setAnnouncements] = useState<AnnouncementItem[]>([]);
@@ -88,6 +90,28 @@ export const HomeTab: React.FC<HomeTabProps> = ({ onNavigate }) => {
 
     return (
         <div className="animate-in fade-in space-y-6 duration-500">
+            {showBanner && (
+                <div className="flex items-center gap-3 rounded-2xl border border-indigo-100 bg-indigo-50 px-4 py-3">
+                    <Bell size={16} className="shrink-0 text-indigo-500" />
+                    <span className="flex-1 text-sm text-indigo-900">새 공지·일정을 바로 받아보세요</span>
+                    <button
+                        type="button"
+                        onClick={() => void subscribe()}
+                        className="inline-flex items-center gap-1 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-indigo-700"
+                    >
+                        <BellOff size={12} />
+                        알림 켜기
+                    </button>
+                    <button
+                        type="button"
+                        onClick={dismiss}
+                        className="rounded-lg p-1 text-indigo-400 transition-colors hover:bg-indigo-100"
+                        aria-label="닫기"
+                    >
+                        <X size={14} />
+                    </button>
+                </div>
+            )}
             <section className="rounded-[28px] border border-slate-200 bg-gradient-to-br from-sky-50 via-white to-indigo-50 p-6 lg:p-8">
                 <div className="space-y-6">
                     <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
