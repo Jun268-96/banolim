@@ -5,11 +5,15 @@ import { isSupabaseConfigured } from '../lib/supabase';
 const VAPID_PUBLIC_KEY = import.meta.env.VITE_VAPID_PUBLIC_KEY as string | undefined;
 const DISMISSED_KEY = 'push_notification_dismissed';
 
-function urlBase64ToUint8Array(base64String: string): Uint8Array {
+function urlBase64ToUint8Array(base64String: string): ArrayBuffer {
     const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
     const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
     const rawData = atob(base64);
-    return Uint8Array.from([...rawData].map((char) => char.charCodeAt(0)));
+    const buffer = new Uint8Array(rawData.length);
+    for (let i = 0; i < rawData.length; i++) {
+        buffer[i] = rawData.charCodeAt(i);
+    }
+    return buffer.buffer;
 }
 
 async function getMemberId(): Promise<string | null> {
@@ -29,6 +33,12 @@ async function getCurrentSubscription(): Promise<PushSubscription | null> {
     if (!('serviceWorker' in navigator) || !('PushManager' in window)) return null;
     const reg = await navigator.serviceWorker.ready;
     return reg.pushManager.getSubscription();
+}
+
+// push_subscriptions 테이블은 자동생성 타입에 없으므로 any 클라이언트로 접근
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function getPushClient() {
+    return getSupabaseClient() as unknown as { from: (table: string) => any };
 }
 
 export type PushStatus = 'subscribed' | 'denied' | 'default' | 'unsupported';
@@ -76,8 +86,7 @@ export function usePushNotification() {
             const json = sub.toJSON();
             const memberId = await getMemberId();
             if (memberId && isSupabaseConfigured) {
-                const client = getSupabaseClient();
-                await client.from('push_subscriptions').upsert({
+                await getPushClient().from('push_subscriptions').upsert({
                     member_id: memberId,
                     endpoint: json.endpoint ?? '',
                     p256dh: json.keys?.p256dh ?? '',
@@ -95,8 +104,7 @@ export function usePushNotification() {
         if (!sub) return;
         await sub.unsubscribe();
         if (isSupabaseConfigured) {
-            const client = getSupabaseClient();
-            await client.from('push_subscriptions').delete().eq('endpoint', sub.endpoint);
+            await getPushClient().from('push_subscriptions').delete().eq('endpoint', sub.endpoint);
         }
         setStatus('default');
     };
