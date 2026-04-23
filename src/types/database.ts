@@ -1321,6 +1321,22 @@ export type Database = {
       }
     }
     Functions: {
+      admin_adjust_member_points: {
+        Args: {
+          p_delta: number
+          p_member_id: string
+          p_reason: string
+        }
+        Returns: string
+      }
+      admin_adjust_member_points_bulk: {
+        Args: {
+          p_delta: number
+          p_member_ids: string[]
+          p_reason: string
+        }
+        Returns: string[]
+      }
       award_member_badges: { Args: { p_member_id?: string }; Returns: number }
       badge_criteria_met: {
         Args: { p_criteria: Json; p_metrics: Json }

@@ -7,6 +7,7 @@ import {
     provisionMemberPasswordAuth,
     updateMember,
 } from '../../lib/api/admin/members';
+import { adjustMemberScore, adjustMemberScoreBulk } from '../../lib/api/admin/scores';
 import {
     addTeam,
     deleteTeam,
@@ -28,6 +29,7 @@ import { DashboardHeaderSection } from './sections/DashboardHeaderSection';
 import { HiddenMembersSection } from './sections/HiddenMembersSection';
 import { HistorySection } from './sections/HistorySection';
 import { MembersTableSection } from './sections/MembersTableSection';
+import { MemberScoreAdjustDialog } from './dialogs/MemberScoreAdjustDialog';
 import { OrganizationSection } from './sections/OrganizationSection';
 import { TeamsSection } from './sections/TeamsSection';
 
@@ -296,6 +298,8 @@ export const DashboardTab: React.FC = () => {
     const [editingTeamType, setEditingTeamType] = useState<TeamType>('core');
     const [teamIdPendingDelete, setTeamIdPendingDelete] = useState<string | null>(null);
     const [hiddenMemberIdPendingDelete, setHiddenMemberIdPendingDelete] = useState<string | null>(null);
+    const [selectedMemberIds, setSelectedMemberIds] = useState<Set<string>>(() => new Set());
+    const [scoreAdjustTargets, setScoreAdjustTargets] = useState<Member[] | null>(null);
     const {
         members,
         hiddenMembers,
@@ -758,6 +762,59 @@ export const DashboardTab: React.FC = () => {
         }
     };
 
+    const handleToggleMemberSelection = (memberId: string) => {
+        setSelectedMemberIds((prev) => {
+            const next = new Set(prev);
+            if (next.has(memberId)) {
+                next.delete(memberId);
+            } else {
+                next.add(memberId);
+            }
+            return next;
+        });
+    };
+
+    const handleToggleAllVisibleSelection = (memberIds: string[], nextSelected: boolean) => {
+        setSelectedMemberIds((prev) => {
+            const next = new Set(prev);
+            if (nextSelected) {
+                memberIds.forEach((id) => next.add(id));
+            } else {
+                memberIds.forEach((id) => next.delete(id));
+            }
+            return next;
+        });
+    };
+
+    const handleClearMemberSelection = () => {
+        setSelectedMemberIds(new Set());
+    };
+
+    const handleAdjustSingleMemberScore = (member: Member) => {
+        setScoreAdjustTargets([member]);
+    };
+
+    const handleAdjustSelectedMembersScore = () => {
+        if (selectedMemberIds.size === 0) return;
+        const targets = members.filter((member) => selectedMemberIds.has(member.id));
+        if (targets.length === 0) return;
+        setScoreAdjustTargets(targets);
+    };
+
+    const handleScoreAdjustSubmit = async (delta: number, reason: string) => {
+        const targets = scoreAdjustTargets;
+        if (!targets || targets.length === 0) {
+            throw new Error('대상 멤버가 없습니다.');
+        }
+        if (targets.length === 1) {
+            await adjustMemberScore(targets[0].id, delta, reason);
+        } else {
+            await adjustMemberScoreBulk(targets.map((member) => member.id), delta, reason);
+        }
+        setSelectedMemberIds(new Set());
+        await refreshData();
+    };
+
     const handleMemberCsvFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
         const file = event.target.files?.[0];
         if (!file) {
@@ -929,6 +986,12 @@ export const DashboardTab: React.FC = () => {
                         onDeleteMember={(memberId) => {
                             void handleDeleteMember(memberId);
                         }}
+                        selectedMemberIds={selectedMemberIds}
+                        onToggleMemberSelection={handleToggleMemberSelection}
+                        onToggleAllVisibleSelection={handleToggleAllVisibleSelection}
+                        onAdjustSingleMemberScore={handleAdjustSingleMemberScore}
+                        onAdjustSelectedMembersScore={handleAdjustSelectedMembersScore}
+                        onClearMemberSelection={handleClearMemberSelection}
                     />
                 )}
 
@@ -1021,6 +1084,13 @@ export const DashboardTab: React.FC = () => {
             <ProvisionedAccountDialog
                 provisionedAccount={provisionedAccount}
                 onClose={() => setProvisionedAccount(null)}
+            />
+
+            <MemberScoreAdjustDialog
+                isOpen={scoreAdjustTargets !== null && scoreAdjustTargets.length > 0}
+                targets={scoreAdjustTargets ?? []}
+                onClose={() => setScoreAdjustTargets(null)}
+                onSubmit={handleScoreAdjustSubmit}
             />
 
             <RoleSettingsDialog

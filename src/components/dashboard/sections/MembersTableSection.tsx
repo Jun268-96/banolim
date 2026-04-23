@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { ArrowUpDown, ChevronDown, ChevronUp, KeyRound, Loader2, Search, Trash2 } from 'lucide-react';
+import React, { useMemo, useState } from 'react';
+import { ArrowUpDown, CheckSquare, ChevronDown, ChevronUp, KeyRound, Loader2, Search, Sparkles, Square, Trash2 } from 'lucide-react';
 import type { Member, MemberStatus, RoleSummary, TeamSummary } from '../../../types';
 
 type MemberSortMode = 'name-asc' | 'name-desc' | 'joined-desc' | 'role-order';
@@ -63,6 +63,12 @@ interface MembersTableSectionProps {
   onUpdateMember: (memberId: string, updates: Partial<Pick<Member, 'loginEmail' | 'roleId' | 'status'>>) => void;
   onProvisionMemberAccount: (member: Member) => void;
   onDeleteMember: (memberId: string) => void;
+  selectedMemberIds: Set<string>;
+  onToggleMemberSelection: (memberId: string) => void;
+  onToggleAllVisibleSelection: (memberIds: string[], nextSelected: boolean) => void;
+  onAdjustSingleMemberScore: (member: Member) => void;
+  onAdjustSelectedMembersScore: () => void;
+  onClearMemberSelection: () => void;
 }
 
 const getLevelInfo = (score: number) => {
@@ -143,9 +149,27 @@ export const MembersTableSection: React.FC<MembersTableSectionProps> = ({
   onUpdateMember,
   onProvisionMemberAccount,
   onDeleteMember,
+  selectedMemberIds,
+  onToggleMemberSelection,
+  onToggleAllVisibleSelection,
+  onAdjustSingleMemberScore,
+  onAdjustSelectedMembersScore,
+  onClearMemberSelection,
 }) => {
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const hasActiveSearch = searchQuery.trim().length > 0;
+
+  const visibleMemberIds = useMemo(
+    () => filteredMembers.map((member) => member.id),
+    [filteredMembers],
+  );
+  const visibleSelectedCount = useMemo(
+    () => visibleMemberIds.filter((id) => selectedMemberIds.has(id)).length,
+    [visibleMemberIds, selectedMemberIds],
+  );
+  const allVisibleSelected = visibleMemberIds.length > 0 && visibleSelectedCount === visibleMemberIds.length;
+  const someVisibleSelected = visibleSelectedCount > 0 && !allVisibleSelected;
+  const totalSelectedCount = selectedMemberIds.size;
 
   return (
   <div className="max-w-full">
@@ -421,12 +445,63 @@ export const MembersTableSection: React.FC<MembersTableSectionProps> = ({
         </span>
       )}
     </div>
+    {canManageMembers && totalSelectedCount > 0 && (
+      <div className="sticky top-0 z-20 flex flex-wrap items-center justify-between gap-3 border-b border-indigo-100 bg-indigo-50/90 px-5 py-3 text-sm text-indigo-900 backdrop-blur sm:px-6">
+        <span className="font-semibold">
+          {totalSelectedCount}명 선택됨
+          {totalSelectedCount !== visibleSelectedCount && (
+            <span className="ml-2 text-xs font-normal text-indigo-700">
+              (현재 화면 {visibleSelectedCount}명)
+            </span>
+          )}
+        </span>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onClearMemberSelection}
+            className="rounded-full border border-indigo-200 bg-white px-3 py-1.5 text-xs font-semibold text-indigo-700 transition-colors hover:bg-indigo-100"
+          >
+            선택 해제
+          </button>
+          <button
+            type="button"
+            onClick={onAdjustSelectedMembersScore}
+            className="inline-flex items-center gap-1.5 rounded-full bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-indigo-700"
+          >
+            <Sparkles size={13} />
+            선택한 {totalSelectedCount}명 점수 조정
+          </button>
+        </div>
+      </div>
+    )}
     <div className="max-w-full overflow-x-auto overscroll-x-contain pb-3 [scrollbar-gutter:stable]">
-      <table className={`${canManageMembers ? 'min-w-[980px]' : 'min-w-[760px]'} min-w-full w-max border-collapse text-left`}>
+      <table className={`${canManageMembers ? 'min-w-[1100px]' : 'min-w-[760px]'} min-w-full w-max border-collapse text-left`}>
         <thead>
           <tr className="border-b border-slate-200 bg-slate-50 text-sm font-semibold text-slate-600">
+            {canManageMembers && (
+              <th className="w-10 whitespace-nowrap px-3 py-4 sm:px-6">
+                <button
+                  type="button"
+                  aria-label={allVisibleSelected ? '현재 화면 선택 해제' : '현재 화면 전체 선택'}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onToggleAllVisibleSelection(visibleMemberIds, !allVisibleSelected);
+                  }}
+                  className="inline-flex h-5 w-5 items-center justify-center text-slate-500 hover:text-indigo-600"
+                >
+                  {allVisibleSelected ? (
+                    <CheckSquare size={18} className="text-indigo-600" />
+                  ) : someVisibleSelected ? (
+                    <CheckSquare size={18} className="text-indigo-400" />
+                  ) : (
+                    <Square size={18} />
+                  )}
+                </button>
+              </th>
+            )}
             <th className="min-w-[76px] whitespace-nowrap px-3 py-4 sm:px-6">레벨</th>
             <th className="min-w-[84px] whitespace-nowrap px-3 py-4 sm:px-6">이름</th>
+            <th className="min-w-[136px] whitespace-nowrap px-3 py-4 sm:px-6">점수</th>
             {canManageMembers && (
               <th className="min-w-[240px] whitespace-nowrap px-3 py-4 sm:px-6">로그인 이메일</th>
             )}
@@ -443,13 +518,39 @@ export const MembersTableSection: React.FC<MembersTableSectionProps> = ({
             const levelInfo = getLevelInfo(member.score);
             const statusInfo = getStatusInfo(member);
             const isSavingRow = savingMemberId === member.id;
+            const isRowSelected = selectedMemberIds.has(member.id);
 
             return (
               <tr
                 key={member.id}
-                className={`group transition-colors ${historyMemberId === member.id ? 'bg-indigo-50/70' : 'hover:bg-slate-50/50'}`}
+                className={`group transition-colors ${
+                  isRowSelected
+                    ? 'bg-indigo-50/60'
+                    : historyMemberId === member.id
+                      ? 'bg-indigo-50/70'
+                      : 'hover:bg-slate-50/50'
+                }`}
                 onClick={() => onSelectHistoryMember(member.id)}
               >
+                {canManageMembers && (
+                  <td
+                    className="whitespace-nowrap px-3 py-4 align-middle sm:px-6"
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    <button
+                      type="button"
+                      aria-label={isRowSelected ? `${member.name} 선택 해제` : `${member.name} 선택`}
+                      onClick={() => onToggleMemberSelection(member.id)}
+                      className="inline-flex h-5 w-5 items-center justify-center text-slate-500 hover:text-indigo-600"
+                    >
+                      {isRowSelected ? (
+                        <CheckSquare size={18} className="text-indigo-600" />
+                      ) : (
+                        <Square size={18} />
+                      )}
+                    </button>
+                  </td>
+                )}
                 <td className="whitespace-nowrap px-3 py-4 align-middle sm:px-6">
                   <span className={`inline-flex min-w-[56px] items-center justify-center rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] ${levelInfo.color}`}>
                     lv.{levelInfo.level}
@@ -457,6 +558,27 @@ export const MembersTableSection: React.FC<MembersTableSectionProps> = ({
                 </td>
                 <td className="whitespace-nowrap px-3 py-4 align-middle sm:px-6">
                   <span className="font-medium text-slate-900">{member.name}</span>
+                </td>
+                <td
+                  className="whitespace-nowrap px-3 py-4 align-middle sm:px-6"
+                  onClick={(event) => {
+                    if (canManageMembers) event.stopPropagation();
+                  }}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-semibold text-slate-900 tabular-nums">{member.score}점</span>
+                    {canManageMembers && (
+                      <button
+                        type="button"
+                        onClick={() => onAdjustSingleMemberScore(member)}
+                        className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-600 transition-colors hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700"
+                        title={`${member.name} 점수 조정`}
+                      >
+                        <Sparkles size={11} />
+                        조정
+                      </button>
+                    )}
+                  </div>
                 </td>
                 {canManageMembers && (
                   <td className="whitespace-nowrap px-3 py-4 align-middle sm:px-6">
@@ -596,7 +718,7 @@ export const MembersTableSection: React.FC<MembersTableSectionProps> = ({
 
           {filteredMembers.length === 0 && (
             <tr>
-              <td colSpan={canManageMembers ? 7 : 6} className="py-12 text-center text-slate-500">
+              <td colSpan={canManageMembers ? 9 : 6} className="py-12 text-center text-slate-500">
                 검색 조건에 맞는 멤버가 없습니다.
               </td>
             </tr>
