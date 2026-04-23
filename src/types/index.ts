@@ -284,3 +284,39 @@ export interface CorrectionRequest {
     activityOccurredAt?: string | null;
     activityPointDelta?: number | null;
 }
+
+export interface CommunityPost {
+    id: string;
+    authorMemberId: string;
+    title: string;
+    body: string;
+    isPinned: boolean;
+    isHidden: boolean;
+    hiddenBy: string | null;
+    hiddenReason: string | null;
+    hiddenAt: string | null;
+    commentCount: number;
+    createdAt: string;
+    updatedAt: string;
+}
+
+export interface CommunityComment {
+    id: string;
+    postId: string;
+    authorMemberId: string;
+    body: string;
+    isHidden: boolean;
+    hiddenBy: string | null;
+    hiddenAt: string | null;
+    createdAt: string;
+    updatedAt: string;
+}
+
+export interface PostListFilters {
+    authorMemberId?: string;
+    includeHidden?: boolean;
+}
+
+export interface Cursor {
+    createdAt: string;
+}

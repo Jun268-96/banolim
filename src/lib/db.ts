@@ -721,10 +721,10 @@ export const createActivityEntryRecord = async (
     const { data, error } = await client.rpc('create_activity_entry', {
         p_member_id: memberId,
         p_point_rule_id: categoryId,
-        p_note: trimmedNote,
+        p_note: trimmedNote ?? undefined,
         p_reason: options?.reason ?? trimmedNote ?? '수동 활동 기록',
         p_occurred_at: occurredAt,
-        p_evidence_url: evidenceUrl,
+        p_evidence_url: evidenceUrl ?? undefined,
     });
 
     if (error) {
@@ -759,10 +759,10 @@ export const createBatchActivityEntryRecords = async (
     const { data, error } = await client.rpc('create_batch_activity_entries', {
         p_member_ids: memberIds,
         p_point_rule_id: categoryId,
-        p_note: trimmedNote,
+        p_note: trimmedNote ?? undefined,
         p_reason: options?.reason ?? trimmedNote ?? '수동 일괄 활동 기록',
         p_occurred_at: occurredAt,
-        p_evidence_url: evidenceUrl,
+        p_evidence_url: evidenceUrl ?? undefined,
     });
 
     if (error) {
@@ -783,7 +783,7 @@ export const reverseActivityEntryRecord = async (recordId: string, note?: string
     const client = getSupabaseClient();
     const { data, error } = await client.rpc('reverse_activity_entry', {
         p_record_id: recordId,
-        p_note: trimmedNote,
+        p_note: trimmedNote ?? undefined,
     });
 
     if (error) {
@@ -877,7 +877,9 @@ export const getMembers = async (options?: { includeLoginEmail?: boolean; includ
         const teamRows = (teamResult.data ?? []) as TeamRow[];
         const memberTeamLinkRows = (memberTeamLinkResult.data ?? []) as Pick<MemberTeamLinkRow, 'member_id' | 'team_id'>[];
 
-        const summaryMap = new Map<string, MemberScoreSummaryRow>(summaryRows.map((summary) => [summary.id, summary]));
+        const summaryMap = new Map<string, MemberScoreSummaryRow>(
+            summaryRows.flatMap((summary) => (summary.id ? [[summary.id, summary] as const] : [])),
+        );
         const roleMap = new Map<string, string>(roleRows.map((role) => [role.id, role.name]));
         const teamMap = new Map<string, string>(teamRows.map((team) => [team.id, team.name]));
         const memberTeamMap = new Map<string, string[]>();
@@ -1249,16 +1251,16 @@ export const getCategories = async (): Promise<Category[]> => {
         }
 
         return ((data ?? []) as PointRuleCatalogRow[]).map((category) => ({
-            id: category.id,
-            activityTypeId: category.activity_type_id,
-            categoryName: category.category_name,
-            groupName: category.group_name,
-            pointValue: category.point_value,
-            penaltyPoint: category.penalty_point,
+            id: category.id!,
+            activityTypeId: category.activity_type_id!,
+            categoryName: category.category_name!,
+            groupName: category.group_name!,
+            pointValue: category.point_value!,
+            penaltyPoint: category.penalty_point ?? undefined,
             conditionSummary: getConditionSummary(category.condition_json),
             conditionJson: parseJsonObject(category.condition_json),
-            isActive: category.is_active,
-            version: category.version,
+            isActive: category.is_active ?? undefined,
+            version: category.version!,
         }));
     } catch (error) {
         return fallback(
@@ -3963,16 +3965,16 @@ export const createCategoryVersion = async (
         }
 
         return {
-            id: insertedRule.id,
-            activityTypeId: insertedRule.activity_type_id,
-            categoryName: insertedRule.category_name,
-            groupName: insertedRule.group_name,
-            pointValue: insertedRule.point_value,
+            id: insertedRule.id!,
+            activityTypeId: insertedRule.activity_type_id!,
+            categoryName: insertedRule.category_name!,
+            groupName: insertedRule.group_name!,
+            pointValue: insertedRule.point_value!,
             penaltyPoint: 0,
             conditionSummary: getConditionSummary(insertedRule.condition_json),
             conditionJson: parseJsonObject(insertedRule.condition_json),
-            version: insertedRule.version,
-            isActive: insertedRule.is_active,
+            version: insertedRule.version!,
+            isActive: insertedRule.is_active ?? undefined,
         };
     } catch (error) {
         return fallback('createCategoryVersion', () => null, error);
@@ -4155,7 +4157,7 @@ export const updateCorrectionRequestStatus = async (
         const { error } = await client.rpc('update_correction_request_status', {
             p_request_id: requestId,
             p_status: status,
-            p_review_note: trimmedReviewNote,
+            p_review_note: trimmedReviewNote ?? undefined,
         });
 
         if (error) {
