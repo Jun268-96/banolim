@@ -1329,6 +1329,13 @@ export type Database = {
       can_access_member: { Args: { p_member_id: string }; Returns: boolean }
       can_manage_activities: { Args: never; Returns: boolean }
       can_manage_admin_tables: { Args: never; Returns: boolean }
+      community_list_member_names: {
+        Args: never
+        Returns: {
+          id: string
+          name: string
+        }[]
+      }
       community_moderate_comment: {
         Args: { p_comment_id: string; p_hide: boolean }
         Returns: undefined
