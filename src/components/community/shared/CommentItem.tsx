@@ -53,7 +53,7 @@ export const CommentItem: React.FC<CommentItemProps> = ({
 
     if (comment.isHidden && !canModerate) return null;
 
-    const displayName = authorName ?? comment.authorMemberId.slice(0, 4);
+    const displayName = authorName ?? '(알 수 없음)';
 
     return (
         <div className="relative flex gap-3">

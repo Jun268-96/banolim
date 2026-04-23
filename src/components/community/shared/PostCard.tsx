@@ -22,7 +22,7 @@ const formatRelativeTime = (iso: string): string => {
 
 export const PostCard: React.FC<PostCardProps> = ({ post, authorName, onClick }) => {
     const summary = post.body.length > 100 ? `${post.body.slice(0, 100)}…` : post.body;
-    const displayName = authorName ?? post.authorMemberId.slice(0, 4);
+    const displayName = authorName ?? '(알 수 없음)';
 
     return (
         <button

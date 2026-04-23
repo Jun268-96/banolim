@@ -189,7 +189,7 @@ export const PostDetailSection: React.FC<PostDetailSectionProps> = ({
                     </div>
                     <h2 className="text-xl font-bold text-slate-900">{post.title}</h2>
                     <div className="flex items-center gap-3 text-xs text-slate-400">
-                        <span>{memberNameMap[post.authorMemberId] ?? post.authorMemberId.slice(0, 4)}</span>
+                        <span>{memberNameMap[post.authorMemberId] ?? '(알 수 없음)'}</span>
                         <span>{formatRelativeTime(post.createdAt)}</span>
                         {post.updatedAt !== post.createdAt && <span>(수정됨)</span>}
                     </div>
