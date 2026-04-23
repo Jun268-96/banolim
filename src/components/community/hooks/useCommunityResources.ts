@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { CommunityPost, CommunityComment, Cursor, Member } from '../../../types';
-import { listPosts, listComments } from '../../../lib/api/community';
-import { getMembers } from '../../../lib/api/admin/members';
+import type { CommunityPost, CommunityComment, Cursor } from '../../../types';
+import { listPosts, listComments, listCommunityMembers } from '../../../lib/api/community';
+import type { CommunityMemberSummary } from '../../../lib/api/community';
 
 interface CommunityState {
     posts: CommunityPost[];
     commentsByPost: Record<string, CommunityComment[]>;
     nextCursor: Cursor | null;
-    members: Member[];
+    members: CommunityMemberSummary[];
 }
 
 interface Snapshot {
@@ -28,7 +28,7 @@ export const useCommunityResources = () => {
         setIsLoading(true);
         const [{ items, nextCursor }, members] = await Promise.all([
             listPosts(),
-            getMembers({ includeLoginEmail: false, includeHidden: false }),
+            listCommunityMembers(),
         ]);
         setState({ posts: items, commentsByPost: {}, nextCursor, members });
         setIsLoading(false);
@@ -39,7 +39,7 @@ export const useCommunityResources = () => {
         void (async () => {
             const [{ items, nextCursor }, members] = await Promise.all([
                 listPosts(),
-                getMembers({ includeLoginEmail: false, includeHidden: false }),
+                listCommunityMembers(),
             ]);
             if (!isMounted) return;
             setState({ posts: items, commentsByPost: {}, nextCursor, members });

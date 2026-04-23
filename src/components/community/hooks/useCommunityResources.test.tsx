@@ -8,18 +8,14 @@ import type { CommunityPost, CommunityComment } from '../../../types';
 vi.mock('../../../lib/api/community', () => ({
         listPosts: vi.fn(),
         listComments: vi.fn(),
+        listCommunityMembers: vi.fn(),
 }));
 
-vi.mock('../../../lib/api/admin/members', () => ({
-        getMembers: vi.fn(),
-}));
-
-import { listPosts, listComments } from '../../../lib/api/community';
-import { getMembers } from '../../../lib/api/admin/members';
+import { listPosts, listComments, listCommunityMembers } from '../../../lib/api/community';
 
 const mockListPosts = listPosts as ReturnType<typeof vi.fn>;
 const mockListComments = listComments as ReturnType<typeof vi.fn>;
-const mockGetMembers = getMembers as ReturnType<typeof vi.fn>;
+const mockListCommunityMembers = listCommunityMembers as ReturnType<typeof vi.fn>;
 
 const makePost = (id: string, overrides: Partial<CommunityPost> = {}): CommunityPost => ({
         id,
@@ -57,8 +53,8 @@ beforeEach(() => {
                 nextCursor: null,
         });
         mockListComments.mockResolvedValue([]);
-        mockGetMembers.mockResolvedValue([
-                { id: 'member-1', name: '테스트 회원', score: 0, isApproved: true },
+        mockListCommunityMembers.mockResolvedValue([
+                { id: 'member-1', name: '테스트 회원' },
         ]);
 });
 
