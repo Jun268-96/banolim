@@ -7,6 +7,9 @@ export interface AppPermissions {
     canManageMembers: boolean;
     canManageSettings: boolean;
     canViewStats: boolean;
+    canViewCommunity: boolean;
+    canPostToCommunity: boolean;
+    canModerateCommunity: boolean;
 }
 
 export const roleLabels: Record<AppRole, string> = {
@@ -30,4 +33,7 @@ export const buildPermissions = (role: AppRole): AppPermissions => ({
     canManageMembers: role === 'super_admin' || role === 'operator',
     canManageSettings: role === 'super_admin' || role === 'operator',
     canViewStats: role !== 'member',
+    canViewCommunity: true,
+    canPostToCommunity: true,
+    canModerateCommunity: role === 'super_admin' || role === 'operator',
 });
