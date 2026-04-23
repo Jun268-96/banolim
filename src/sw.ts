@@ -10,10 +10,12 @@ declare const self: ServiceWorkerGlobalScope;
 precacheAndRoute(self.__WB_MANIFEST);
 cleanupOutdatedCaches();
 
-// Supabase API runtime cache
+// Supabase REST 읽기만 런타임 캐시. /auth/v1/* (토큰·로그인), /functions/* (Edge),
+// /storage/* 는 오프라인 캐시 대상이 아니다 — 예전 사용자의 응답이 새 세션에 제공되는
+// 보안 리스크(ANALYSIS.md §2)를 피하고, 간헐 502 응답이 캐시 오염을 만드는 것도 막는다.
 registerRoute(
-  /^https:\/\/.*\.supabase\.co\/.*/i,
-  new NetworkFirst({ cacheName: 'supabase-api' }),
+  /^https:\/\/.*\.supabase\.co\/rest\/v1\/.*/i,
+  new NetworkFirst({ cacheName: 'supabase-rest' }),
 );
 
 // Activate immediately

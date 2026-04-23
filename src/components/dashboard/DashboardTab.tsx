@@ -308,9 +308,33 @@ export const DashboardTab: React.FC = () => {
         roles,
         teams,
         auditLogs,
+        errors: resourceErrors,
         isLoading,
         refreshData,
     } = useDashboardResources(permissions.canManageMembers);
+
+    const failedResourceLabels = useMemo(() => {
+        const labelMap: Record<string, string> = {
+            members: '멤버 목록',
+            roles: '역할',
+            teams: '팀',
+            auditLogs: '감사 로그',
+        };
+        return Object.keys(resourceErrors)
+            .map((key) => labelMap[key] ?? key)
+            .filter(Boolean);
+    }, [resourceErrors]);
+
+    const hasResourceErrors = failedResourceLabels.length > 0;
+    const [isRetryingResources, setIsRetryingResources] = useState(false);
+    const handleRetryResources = async () => {
+        setIsRetryingResources(true);
+        try {
+            await refreshData();
+        } finally {
+            setIsRetryingResources(false);
+        }
+    };
 
 
     const roleById = useMemo(() => new Map(roles.map((role) => [role.id, role])), [roles]);
@@ -927,6 +951,25 @@ export const DashboardTab: React.FC = () => {
                 onOpenAddMember={() => setIsAddMemberDialogOpen(true)}
                 onOpenBulkImport={() => setIsBulkImportDialogOpen(true)}
             />
+
+            {hasResourceErrors && (
+                <div
+                    role="alert"
+                    className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800"
+                >
+                    <span>
+                        일부 데이터를 불러오지 못했습니다: {failedResourceLabels.join(', ')}. 나머지 정보는 기존 값을 그대로 보여드립니다.
+                    </span>
+                    <button
+                        type="button"
+                        onClick={() => void handleRetryResources()}
+                        disabled={isRetryingResources}
+                        className="inline-flex items-center gap-1.5 rounded-xl border border-rose-300 bg-white px-3 py-1.5 text-xs font-semibold text-rose-700 transition-colors hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                        {isRetryingResources ? '다시 불러오는 중...' : '다시 시도'}
+                    </button>
+                </div>
+            )}
 
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
                 <div className="border-b border-slate-100 px-6 py-3 text-sm text-slate-500">
