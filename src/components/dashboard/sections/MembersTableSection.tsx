@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { ArrowUpDown, CheckSquare, ChevronDown, ChevronUp, KeyRound, Loader2, Search, Sparkles, Square, Trash2 } from 'lucide-react';
+import { ArrowUpDown, CheckSquare, ChevronDown, ChevronUp, Search, Settings2, Sparkles, Square } from 'lucide-react';
 import type { Member, MemberStatus, RoleSummary, TeamSummary } from '../../../types';
 
 type MemberSortMode = 'name-asc' | 'name-desc' | 'joined-desc' | 'role-order';
@@ -30,7 +30,6 @@ interface MembersTableSectionProps {
   openFilterPanel: MemberFilterPanel;
   historyMemberId: string | null;
   savingMemberId: string | null;
-  provisioningMemberId: string | null;
   roleFilterOptions: Array<FilterOption<string>>;
   teamFilterOptions: Array<FilterOption<string>>;
   statusFilterOptions: Array<FilterOption<MemberStatus>>;
@@ -48,9 +47,6 @@ interface MembersTableSectionProps {
       accountFilter: MemberAccountFilter;
     },
   ) => boolean;
-  normalizeLoginEmail: (value: string) => string | null;
-  formatDate: (value?: string | null) => string;
-  formatDateTime: (value?: string | null) => string;
   onChangeSearchQuery: (value: string) => void;
   onChangeSortMode: (value: MemberSortMode) => void;
   onChangeRoleFilter: (value: string) => void;
@@ -61,8 +57,7 @@ interface MembersTableSectionProps {
   onResetFilters: () => void;
   onSelectHistoryMember: (memberId: string) => void;
   onUpdateMember: (memberId: string, updates: Partial<Pick<Member, 'loginEmail' | 'roleId' | 'status'>>) => void;
-  onProvisionMemberAccount: (member: Member) => void;
-  onDeleteMember: (memberId: string) => void;
+  onOpenMemberAccount: (member: Member) => void;
   selectedMemberIds: Set<string>;
   onToggleMemberSelection: (memberId: string) => void;
   onToggleAllVisibleSelection: (memberIds: string[], nextSelected: boolean) => void;
@@ -92,22 +87,6 @@ const getStatusInfo = (member: Member) => {
   }
 };
 
-const getAccountProvisionLabel = (member: Member) => {
-  if (!member.loginEmail) {
-    return { label: '이메일 필요', className: 'bg-slate-100 text-slate-600 border-slate-200' };
-  }
-
-  if (!member.authUserId) {
-    return { label: '계정 미발급', className: 'bg-amber-50 text-amber-700 border-amber-200' };
-  }
-
-  if (member.passwordResetRequired) {
-    return { label: '첫 로그인 대기', className: 'bg-sky-50 text-sky-700 border-sky-200' };
-  }
-
-  return { label: '계정 활성', className: 'bg-emerald-50 text-emerald-700 border-emerald-200' };
-};
-
 export const MembersTableSection: React.FC<MembersTableSectionProps> = ({
   canManageMembers,
   members,
@@ -125,7 +104,6 @@ export const MembersTableSection: React.FC<MembersTableSectionProps> = ({
   openFilterPanel,
   historyMemberId,
   savingMemberId,
-  provisioningMemberId,
   roleFilterOptions,
   teamFilterOptions,
   statusFilterOptions,
@@ -134,9 +112,6 @@ export const MembersTableSection: React.FC<MembersTableSectionProps> = ({
   memberStatusLabels,
   memberAccountFilterLabels,
   matchesMemberFilters,
-  normalizeLoginEmail,
-  formatDate,
-  formatDateTime,
   onChangeSearchQuery,
   onChangeSortMode,
   onChangeRoleFilter,
@@ -147,8 +122,7 @@ export const MembersTableSection: React.FC<MembersTableSectionProps> = ({
   onResetFilters,
   onSelectHistoryMember,
   onUpdateMember,
-  onProvisionMemberAccount,
-  onDeleteMember,
+  onOpenMemberAccount,
   selectedMemberIds,
   onToggleMemberSelection,
   onToggleAllVisibleSelection,
@@ -475,7 +449,7 @@ export const MembersTableSection: React.FC<MembersTableSectionProps> = ({
       </div>
     )}
     <div className="max-w-full overflow-x-auto overscroll-x-contain pb-3 [scrollbar-gutter:stable]">
-      <table className={`${canManageMembers ? 'min-w-[1100px]' : 'min-w-[760px]'} min-w-full w-max border-collapse text-left`}>
+      <table className={`${canManageMembers ? 'min-w-[720px]' : 'min-w-[640px]'} min-w-full w-max border-collapse text-left`}>
         <thead>
           <tr className="border-b border-slate-200 bg-slate-50 text-sm font-semibold text-slate-600">
             {canManageMembers && (
@@ -499,16 +473,12 @@ export const MembersTableSection: React.FC<MembersTableSectionProps> = ({
                 </button>
               </th>
             )}
-            <th className="min-w-[76px] whitespace-nowrap px-3 py-4 sm:px-6">레벨</th>
+            <th className="min-w-[72px] whitespace-nowrap px-3 py-4 sm:px-6">레벨</th>
             <th className="min-w-[84px] whitespace-nowrap px-3 py-4 sm:px-6">이름</th>
-            <th className="min-w-[136px] whitespace-nowrap px-3 py-4 sm:px-6">점수</th>
-            {canManageMembers && (
-              <th className="min-w-[240px] whitespace-nowrap px-3 py-4 sm:px-6">로그인 이메일</th>
-            )}
-            <th className="min-w-[148px] whitespace-nowrap px-3 py-4 sm:px-6">직책</th>
-            <th className="min-w-[140px] whitespace-nowrap px-3 py-4 sm:px-6">상태</th>
-            <th className="hidden min-w-[132px] whitespace-nowrap px-3 py-4 sm:table-cell sm:px-6">가입일</th>
-            <th className={`min-w-[112px] whitespace-nowrap px-3 py-4 text-center sm:px-6 ${canManageMembers ? 'sticky right-0 z-20 border-l border-slate-200 bg-slate-50 shadow-[-12px_0_24px_-20px_rgba(15,23,42,0.35)]' : ''}`}>
+            <th className="min-w-[128px] whitespace-nowrap px-3 py-4 sm:px-6">점수</th>
+            <th className="min-w-[136px] whitespace-nowrap px-3 py-4 sm:px-6">직책</th>
+            <th className="min-w-[128px] whitespace-nowrap px-3 py-4 sm:px-6">상태</th>
+            <th className={`min-w-[96px] whitespace-nowrap px-3 py-4 text-center sm:px-6 ${canManageMembers ? 'sticky right-0 z-20 border-l border-slate-200 bg-slate-50 shadow-[-12px_0_24px_-20px_rgba(15,23,42,0.35)]' : ''}`}>
               {canManageMembers ? '관리' : '조회'}
             </th>
           </tr>
@@ -580,52 +550,6 @@ export const MembersTableSection: React.FC<MembersTableSectionProps> = ({
                     )}
                   </div>
                 </td>
-                {canManageMembers && (
-                  <td className="whitespace-nowrap px-3 py-4 align-middle sm:px-6">
-                    {(() => {
-                      const accountProvision = getAccountProvisionLabel(member);
-
-                      return (
-                        <>
-                          <input
-                            key={`${member.id}-${member.loginEmail ?? ''}`}
-                            type="email"
-                            defaultValue={member.loginEmail ?? ''}
-                            placeholder="example@school.kr"
-                            disabled={isSavingRow}
-                            onClick={(event) => event.stopPropagation()}
-                            onBlur={(event) => {
-                              const nextValue = normalizeLoginEmail(event.target.value);
-                              if ((member.loginEmail ?? null) === nextValue) {
-                                event.target.value = member.loginEmail ?? '';
-                                return;
-                              }
-                              event.target.value = nextValue ?? '';
-                              onUpdateMember(member.id, { loginEmail: nextValue });
-                            }}
-                            onKeyDown={(event) => {
-                              if (event.key === 'Enter') {
-                                event.preventDefault();
-                                event.currentTarget.blur();
-                              }
-                            }}
-                            className="min-w-[220px] rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                          />
-                          <div className="mt-2 flex items-center gap-2">
-                            <span className={`inline-flex rounded-full border px-2.5 py-1 text-[11px] font-semibold ${accountProvision.className}`}>
-                              {accountProvision.label}
-                            </span>
-                            {member.authProvisionedAt && (
-                              <span className="text-[11px] text-slate-500">
-                                발급 {formatDateTime(member.authProvisionedAt)}
-                              </span>
-                            )}
-                          </div>
-                        </>
-                      );
-                    })()}
-                  </td>
-                )}
                 <td className="whitespace-nowrap px-3 py-4 align-middle sm:px-6">
                   {canManageMembers ? (
                     <div onClick={(event) => event.stopPropagation()}>
@@ -674,38 +598,20 @@ export const MembersTableSection: React.FC<MembersTableSectionProps> = ({
                     </span>
                   )}
                 </td>
-                <td className="hidden whitespace-nowrap px-3 py-4 align-middle text-sm text-slate-600 sm:table-cell sm:px-6">{formatDate(member.joinedAt)}</td>
                 <td className={`whitespace-nowrap px-3 py-4 text-center align-middle sm:px-6 ${canManageMembers ? 'sticky right-0 z-10 border-l border-slate-100 bg-white shadow-[-12px_0_24px_-20px_rgba(15,23,42,0.2)] group-hover:bg-slate-50/95' : ''}`}>
                   {canManageMembers ? (
                     <div
-                      className="flex items-center justify-center gap-1"
+                      className="flex items-center justify-center"
                       onClick={(event) => event.stopPropagation()}
                     >
                       <button
                         type="button"
-                        disabled={!member.loginEmail || provisioningMemberId === member.id}
-                        onClick={() => onProvisionMemberAccount(member)}
-                        className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:border-slate-100 disabled:text-slate-300"
-                        title={member.authUserId ? '비밀번호 재설정 발송' : '계정 발급'}
+                        onClick={() => onOpenMemberAccount(member)}
+                        className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs font-semibold text-slate-700 transition-colors hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700"
+                        title={`${member.name} 계정·이메일 관리`}
                       >
-                        {provisioningMemberId === member.id ? (
-                          <>
-                            <Loader2 size={14} className="animate-spin" />
-                            발급 중
-                          </>
-                        ) : (
-                          <>
-                            <KeyRound size={14} />
-                            {member.authUserId ? '재발급' : '계정 발급'}
-                          </>
-                        )}
-                      </button>
-                      <button
-                        onClick={() => onDeleteMember(member.id)}
-                        className="rounded-lg p-2 text-slate-400 opacity-0 transition-colors hover:bg-rose-50 hover:text-rose-600 group-hover:opacity-100"
-                        title="멤버 숨기기"
-                      >
-                        <Trash2 size={16} />
+                        <Settings2 size={14} />
+                        관리
                       </button>
                     </div>
                   ) : (
@@ -718,7 +624,7 @@ export const MembersTableSection: React.FC<MembersTableSectionProps> = ({
 
           {filteredMembers.length === 0 && (
             <tr>
-              <td colSpan={canManageMembers ? 9 : 6} className="py-12 text-center text-slate-500">
+              <td colSpan={canManageMembers ? 7 : 5} className="py-12 text-center text-slate-500">
                 검색 조건에 맞는 멤버가 없습니다.
               </td>
             </tr>

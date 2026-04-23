@@ -29,6 +29,7 @@ import { DashboardHeaderSection } from './sections/DashboardHeaderSection';
 import { HiddenMembersSection } from './sections/HiddenMembersSection';
 import { HistorySection } from './sections/HistorySection';
 import { MembersTableSection } from './sections/MembersTableSection';
+import { MemberAccountDialog } from './dialogs/MemberAccountDialog';
 import { MemberScoreAdjustDialog } from './dialogs/MemberScoreAdjustDialog';
 import { OrganizationSection } from './sections/OrganizationSection';
 import { TeamsSection } from './sections/TeamsSection';
@@ -300,6 +301,7 @@ export const DashboardTab: React.FC = () => {
     const [hiddenMemberIdPendingDelete, setHiddenMemberIdPendingDelete] = useState<string | null>(null);
     const [selectedMemberIds, setSelectedMemberIds] = useState<Set<string>>(() => new Set());
     const [scoreAdjustTargets, setScoreAdjustTargets] = useState<Member[] | null>(null);
+    const [accountDialogMemberId, setAccountDialogMemberId] = useState<string | null>(null);
     const {
         members,
         hiddenMembers,
@@ -948,7 +950,6 @@ export const DashboardTab: React.FC = () => {
                         openFilterPanel={openFilterPanel}
                         historyMemberId={historyMemberId}
                         savingMemberId={savingMemberId}
-                        provisioningMemberId={provisioningMemberId}
                         roleFilterOptions={roleFilterOptions}
                         teamFilterOptions={teamFilterOptions}
                         statusFilterOptions={statusFilterOptions}
@@ -957,9 +958,6 @@ export const DashboardTab: React.FC = () => {
                         memberStatusLabels={memberStatusLabels}
                         memberAccountFilterLabels={memberAccountFilterLabels}
                         matchesMemberFilters={matchesMemberFilters}
-                        normalizeLoginEmail={normalizeLoginEmail}
-                        formatDate={formatDate}
-                        formatDateTime={formatDateTime}
                         onChangeSearchQuery={setSearchQuery}
                         onChangeSortMode={setSortMode}
                         onChangeRoleFilter={setSelectedRoleFilter}
@@ -980,11 +978,8 @@ export const DashboardTab: React.FC = () => {
                         onUpdateMember={(memberId, updates) => {
                             void handleMemberUpdate(memberId, updates);
                         }}
-                        onProvisionMemberAccount={(member) => {
-                            void handleProvisionMemberAccount(member);
-                        }}
-                        onDeleteMember={(memberId) => {
-                            void handleDeleteMember(memberId);
+                        onOpenMemberAccount={(member) => {
+                            setAccountDialogMemberId(member.id);
                         }}
                         selectedMemberIds={selectedMemberIds}
                         onToggleMemberSelection={handleToggleMemberSelection}
@@ -1091,6 +1086,26 @@ export const DashboardTab: React.FC = () => {
                 targets={scoreAdjustTargets ?? []}
                 onClose={() => setScoreAdjustTargets(null)}
                 onSubmit={handleScoreAdjustSubmit}
+            />
+
+            <MemberAccountDialog
+                isOpen={accountDialogMemberId !== null}
+                member={members.find((candidate) => candidate.id === accountDialogMemberId) ?? null}
+                isSaving={savingMemberId === accountDialogMemberId}
+                isProvisioning={provisioningMemberId === accountDialogMemberId}
+                onClose={() => setAccountDialogMemberId(null)}
+                normalizeLoginEmail={normalizeLoginEmail}
+                formatDate={formatDate}
+                formatDateTime={formatDateTime}
+                onUpdateLoginEmail={(memberId, loginEmail) => {
+                    void handleMemberUpdate(memberId, { loginEmail });
+                }}
+                onProvisionAccount={(member) => {
+                    void handleProvisionMemberAccount(member);
+                }}
+                onDelete={(memberId) => {
+                    void handleDeleteMember(memberId);
+                }}
             />
 
             <RoleSettingsDialog
