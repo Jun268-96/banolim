@@ -7,6 +7,16 @@ const bypassAuthValue = import.meta.env.VITE_BYPASS_AUTH?.trim().toLowerCase();
 const hasSupabaseCredentials = Boolean(supabaseUrl && supabaseAnonKey);
 
 export const isAuthBypassed = bypassAuthValue === 'true';
+
+// ANALYSIS.md P0: 프로덕션 빌드가 BYPASS 모드로 배포되는 것을 원천 차단.
+// BYPASS 모드는 로컬 mock 데이터 + 고정 super_admin 프로필이므로 프로덕션에 유출되면 사고.
+if (import.meta.env.PROD && isAuthBypassed) {
+    throw new Error(
+        '[반올림] VITE_BYPASS_AUTH=true 상태로 프로덕션 번들이 로드되었습니다. ' +
+        '배포 환경 변수에서 이 값을 false로 설정한 뒤 다시 빌드하세요.',
+    );
+}
+
 export const isSupabaseConfigured = hasSupabaseCredentials && !isAuthBypassed;
 
 export const supabase = isSupabaseConfigured
