@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   AnnouncementItem,
   Badge,
@@ -7,6 +7,7 @@ import type {
   SeasonSummary,
   SiteBanner,
 } from '../../../types';
+
 import {
   getAnnouncements,
   getBadges,
@@ -15,6 +16,14 @@ import {
   getSeasons,
   getSiteBanners,
 } from '../../../lib/api/admin/settings';
+
+interface Snapshot {
+  announcements?: AnnouncementItem[];
+  scheduleEvents?: ScheduleEventItem[];
+  siteBanners?: SiteBanner[];
+  badges?: Badge[];
+  memberBadges?: MemberBadge[];
+}
 
 interface SettingsResourcesState {
   seasons: SeasonSummary[];
@@ -43,6 +52,9 @@ const sortBadges = (items: Badge[]) =>
 export const useSettingsResources = () => {
   const [resources, setResources] = useState<SettingsResourcesState>(initialState);
   const [isLoading, setIsLoading] = useState(true);
+
+  // ★ snapshot은 setter 바깥 ref에 보관 → React StrictMode의 setter 2회 호출에도 안전
+  const rollbackRef = useRef<Map<string, Snapshot>>(new Map());
 
   const refreshData = useCallback(async () => {
     setIsLoading(true);
@@ -122,53 +134,81 @@ export const useSettingsResources = () => {
   // --- 낙관적 제거 (rollback 함수 반환) ---
 
   const removeAnnouncement = useCallback((id: string) => {
-    let snapshot: AnnouncementItem[] = [];
+    const token = `announcement:${id}:${Date.now()}:${Math.random()}`;
     setResources((prev) => {
-      snapshot = prev.announcements;
+      // 첫 저장만 유지 (StrictMode 2회 호출 시 덮어쓰기 방지)
+      if (!rollbackRef.current.has(token)) {
+        rollbackRef.current.set(token, { announcements: prev.announcements });
+      }
       return { ...prev, announcements: prev.announcements.filter((a) => a.id !== id) };
     });
-    return () => setResources((prev) => ({ ...prev, announcements: snapshot }));
+    return () => {
+      const snap = rollbackRef.current.get(token);
+      rollbackRef.current.delete(token);
+      if (!snap?.announcements) return;
+      setResources((prev) => ({ ...prev, announcements: snap.announcements! }));
+    };
   }, []);
 
   const removeScheduleEvent = useCallback((id: string) => {
-    let snapshot: ScheduleEventItem[] = [];
+    const token = `scheduleEvent:${id}:${Date.now()}:${Math.random()}`;
     setResources((prev) => {
-      snapshot = prev.scheduleEvents;
+      if (!rollbackRef.current.has(token)) {
+        rollbackRef.current.set(token, { scheduleEvents: prev.scheduleEvents });
+      }
       return { ...prev, scheduleEvents: prev.scheduleEvents.filter((e) => e.id !== id) };
     });
-    return () => setResources((prev) => ({ ...prev, scheduleEvents: snapshot }));
+    return () => {
+      const snap = rollbackRef.current.get(token);
+      rollbackRef.current.delete(token);
+      if (!snap?.scheduleEvents) return;
+      setResources((prev) => ({ ...prev, scheduleEvents: snap.scheduleEvents! }));
+    };
   }, []);
 
   const removeSiteBanner = useCallback((id: string) => {
-    let snapshot: SiteBanner[] = [];
+    const token = `siteBanner:${id}:${Date.now()}:${Math.random()}`;
     setResources((prev) => {
-      snapshot = prev.siteBanners;
+      if (!rollbackRef.current.has(token)) {
+        rollbackRef.current.set(token, { siteBanners: prev.siteBanners });
+      }
       return { ...prev, siteBanners: prev.siteBanners.filter((b) => b.id !== id) };
     });
-    return () => setResources((prev) => ({ ...prev, siteBanners: snapshot }));
+    return () => {
+      const snap = rollbackRef.current.get(token);
+      rollbackRef.current.delete(token);
+      if (!snap?.siteBanners) return;
+      setResources((prev) => ({ ...prev, siteBanners: snap.siteBanners! }));
+    };
   }, []);
 
   const removeBadge = useCallback((id: string) => {
-    let snapshotBadges: Badge[] = [];
-    let snapshotMemberBadges: MemberBadge[] = [];
+    const token = `badge:${id}:${Date.now()}:${Math.random()}`;
     setResources((prev) => {
-      snapshotBadges = prev.badges;
-      snapshotMemberBadges = prev.memberBadges;
+      if (!rollbackRef.current.has(token)) {
+        rollbackRef.current.set(token, { badges: prev.badges, memberBadges: prev.memberBadges });
+      }
       return {
         ...prev,
         badges: prev.badges.filter((b) => b.id !== id),
         memberBadges: prev.memberBadges.filter((mb) => mb.badgeId !== id),
       };
     });
-    return () =>
-      setResources((prev) => ({ ...prev, badges: snapshotBadges, memberBadges: snapshotMemberBadges }));
+    return () => {
+      const snap = rollbackRef.current.get(token);
+      rollbackRef.current.delete(token);
+      if (!snap?.badges || !snap?.memberBadges) return;
+      setResources((prev) => ({ ...prev, badges: snap.badges!, memberBadges: snap.memberBadges! }));
+    };
   }, []);
 
   // 배너 이동 낙관적 업데이트 (displayOrder swap, rollback 반환)
   const moveSiteBannerLocally = useCallback((id: string, direction: 'up' | 'down') => {
-    let snapshot: SiteBanner[] = [];
+    const token = `moveBanner:${id}:${Date.now()}:${Math.random()}`;
     setResources((prev) => {
-      snapshot = prev.siteBanners;
+      if (!rollbackRef.current.has(token)) {
+        rollbackRef.current.set(token, { siteBanners: prev.siteBanners });
+      }
       const sorted = sortBanners(prev.siteBanners);
       const ci = sorted.findIndex((b) => b.id === id);
       const ti = direction === 'up' ? ci - 1 : ci + 1;
@@ -177,7 +217,12 @@ export const useSettingsResources = () => {
       [next[ci].displayOrder, next[ti].displayOrder] = [next[ti].displayOrder, next[ci].displayOrder];
       return { ...prev, siteBanners: sortBanners(next) };
     });
-    return () => setResources((prev) => ({ ...prev, siteBanners: snapshot }));
+    return () => {
+      const snap = rollbackRef.current.get(token);
+      rollbackRef.current.delete(token);
+      if (!snap?.siteBanners) return;
+      setResources((prev) => ({ ...prev, siteBanners: snap.siteBanners! }));
+    };
   }, []);
 
   // --- Post-Confirm append (서버 반환값으로 즉시 state 추가) ---
