@@ -1,5 +1,5 @@
 import React from 'react';
-import { Settings, BarChart3, Users, ClipboardList, House, UserRound, X } from 'lucide-react';
+import { Settings, BarChart3, Users, ClipboardList, House, UserRound, X, MessageSquare } from 'lucide-react';
 import clsx from 'clsx';
 import { isAuthBypassed, isSupabaseConfigured } from '../../lib/supabase';
 import { useAuth } from '../auth/auth-context';
@@ -7,7 +7,7 @@ import { roleLabels } from '../../lib/permissions';
 
 const didiLogoUrl = new URL('../../../디디.png', import.meta.url).href;
 
-export type TabType = 'home' | 'dashboard' | 'activities' | 'settings' | 'stats';
+export type TabType = 'home' | 'dashboard' | 'activities' | 'settings' | 'community' | 'stats';
 
 interface SidebarProps {
     activeTab: TabType;
@@ -24,6 +24,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpe
         { id: 'dashboard', label: '멤버', icon: Users, visible: permissions.canViewMembers },
         { id: 'activities', label: '활동', icon: ClipboardList, visible: permissions.canViewActivities },
         { id: 'settings', label: '설정', icon: Settings, visible: permissions.canManageSettings },
+        { id: 'community', label: '커뮤니티', icon: MessageSquare, visible: permissions.canViewCommunity },
         { id: 'stats', label: '통계', icon: BarChart3, visible: permissions.canViewStats },
     ] as const;
 

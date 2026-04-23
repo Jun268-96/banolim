@@ -10,6 +10,7 @@ const StatsTab = lazy(() => import('./components/stats/StatsTab').then((module) 
 const ActivitiesTab = lazy(() => import('./components/activities/ActivitiesTab').then((module) => ({ default: module.ActivitiesTab })));
 const HomeTab = lazy(() => import('./components/home/HomeTab').then((module) => ({ default: module.HomeTab })));
 const MemberHomeTab = lazy(() => import('./components/home/MemberHomeTab').then((module) => ({ default: module.MemberHomeTab })));
+const CommunityTab = lazy(() => import('./components/community/CommunityTab').then((m) => ({ default: m.CommunityTab })));
 
 const AppTabFallback = () => (
   <div className="flex h-64 items-center justify-center">
@@ -38,6 +39,7 @@ function AppBody() {
       ...(permissions.canViewMembers ? ['dashboard' as const] : []),
       ...(permissions.canViewActivities ? ['activities' as const] : []),
       ...(permissions.canManageSettings ? ['settings' as const] : []),
+      ...(permissions.canViewCommunity ? ['community' as const] : []),
       ...(permissions.canViewStats ? ['stats' as const] : []),
     ],
     [permissions],
@@ -54,6 +56,7 @@ function AppBody() {
         {resolvedActiveTab === 'dashboard' && <DashboardTab />}
         {resolvedActiveTab === 'activities' && <ActivitiesTab />}
         {resolvedActiveTab === 'settings' && <SettingsTab />}
+        {resolvedActiveTab === 'community' && <CommunityTab />}
         {resolvedActiveTab === 'stats' && <StatsTab />}
       </Suspense>
     </Layout>
