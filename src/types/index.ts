@@ -95,6 +95,7 @@ export interface AttendanceSession {
     endsAt?: string | null;
     note?: string | null;
     isActive: boolean;
+    isHidden: boolean;
     createdAt: string;
     targetGroupType: AttendanceTargetGroup;
     targetTeamId?: string | null;

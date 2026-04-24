@@ -271,6 +271,7 @@ const rebuildLocalAttendanceSessions = () => {
                 ends_at: session.endsAt ?? null,
                 note: session.note ?? null,
                 is_active: session.isActive,
+                is_hidden: session.isHidden,
                 created_at: session.createdAt,
                 target_group_type: session.targetGroupType,
                 target_team_id: session.targetTeamId ?? null,
@@ -519,7 +520,7 @@ const buildAttendanceStatusCounts = (entries: AttendanceSessionMember[]) =>
 const mapAttendanceSession = (
     row: Pick<
         AttendanceSessionRow,
-        'id' | 'title' | 'session_code' | 'point_rule_id' | 'season_id' | 'starts_at' | 'ends_at' | 'note' | 'is_active' | 'created_at' | 'target_group_type' | 'target_team_id'
+        'id' | 'title' | 'session_code' | 'point_rule_id' | 'season_id' | 'starts_at' | 'ends_at' | 'note' | 'is_active' | 'is_hidden' | 'created_at' | 'target_group_type' | 'target_team_id'
     >,
     entries: AttendanceSessionMember[],
     teamMap: Map<string, string>,
@@ -534,6 +535,7 @@ const mapAttendanceSession = (
     endsAt: row.ends_at,
     note: row.note,
     isActive: row.is_active,
+    isHidden: row.is_hidden ?? false,
     createdAt: row.created_at,
     targetGroupType: (row.target_group_type as AttendanceTargetGroup) ?? 'all',
     targetTeamId: row.target_team_id ?? null,
@@ -2500,7 +2502,7 @@ export const getAttendanceSessions = async (): Promise<AttendanceSession[]> => {
         const [sessionResult, entryResult, memberResult, teamResult] = await Promise.all([
             client
                 .from('attendance_sessions')
-                .select('id, title, session_code, point_rule_id, season_id, starts_at, ends_at, note, is_active, created_at, target_group_type, target_team_id')
+                .select('id, title, session_code, point_rule_id, season_id, starts_at, ends_at, note, is_active, is_hidden, created_at, target_group_type, target_team_id')
                 .order('starts_at', { ascending: false }),
             client
                 .from('attendance_session_members')
@@ -2523,7 +2525,7 @@ export const getAttendanceSessions = async (): Promise<AttendanceSession[]> => {
 
         const sessions = (sessionResult.data ?? []) as Array<Pick<
             AttendanceSessionRow,
-            'id' | 'title' | 'session_code' | 'point_rule_id' | 'season_id' | 'starts_at' | 'ends_at' | 'note' | 'is_active' | 'created_at' | 'target_group_type' | 'target_team_id'
+            'id' | 'title' | 'session_code' | 'point_rule_id' | 'season_id' | 'starts_at' | 'ends_at' | 'note' | 'is_active' | 'is_hidden' | 'created_at' | 'target_group_type' | 'target_team_id'
         >>;
         const entryRows = (entryResult.data ?? []) as Array<Pick<
             AttendanceSessionMemberRow,
@@ -2620,6 +2622,7 @@ export const createAttendanceSession = async (input: {
             endsAt: null,
             note,
             isActive: true,
+            isHidden: false,
             createdAt,
             targetGroupType: input.targetGroupType,
             targetTeamId: input.targetTeamId ?? null,
@@ -2725,6 +2728,34 @@ export const closeAttendanceSession = async (id: string): Promise<void> => {
     await setAttendanceSessionActive(id, false);
 };
 
+export const setAttendanceSessionHidden = async (id: string, isHidden: boolean): Promise<void> => {
+    if (!isSupabaseConfigured) {
+        localState.attendanceSessions = localState.attendanceSessions.map((session) =>
+            session.id === id
+                ? { ...session, isHidden }
+                : session,
+        );
+        return;
+    }
+
+    try {
+        const client = getSupabaseClient();
+        const { error } = await client
+            .from('attendance_sessions')
+            .update({ is_hidden: isHidden })
+            .eq('id', id);
+        if (error) {
+            throw error;
+        }
+    } catch (error) {
+        if (isMissingSupabaseRelationError(error, ['attendance_sessions'])) {
+            throw new Error('관리자 출석 세션 기능이 아직 실DB에 적용되지 않았습니다. 최신 출석 migration을 먼저 반영해 주세요.');
+        }
+
+        throw error;
+    }
+};
+
 export const updateAttendanceSessionMemberStatus = async (input: {
     sessionId: string;
     memberId: string;
@@ -2780,6 +2811,7 @@ export const updateAttendanceSessionMemberStatus = async (input: {
                         ends_at: session.endsAt ?? null,
                         note: session.note ?? null,
                         is_active: session.isActive,
+                        is_hidden: session.isHidden,
                         created_at: session.createdAt,
                         target_group_type: session.targetGroupType,
                         target_team_id: session.targetTeamId ?? null,

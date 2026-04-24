@@ -261,6 +261,7 @@ export type Database = {
           ends_at: string | null
           id: string
           is_active: boolean
+          is_hidden: boolean
           note: string | null
           point_rule_id: string
           season_id: string | null
@@ -276,6 +277,7 @@ export type Database = {
           ends_at?: string | null
           id?: string
           is_active?: boolean
+          is_hidden?: boolean
           note?: string | null
           point_rule_id: string
           season_id?: string | null
@@ -291,6 +293,7 @@ export type Database = {
           ends_at?: string | null
           id?: string
           is_active?: boolean
+          is_hidden?: boolean
           note?: string | null
           point_rule_id?: string
           season_id?: string | null

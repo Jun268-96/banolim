@@ -1,9 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
     CalendarClock,
+    Eye,
+    EyeOff,
     Lock,
     LockOpen,
     PlusCircle,
+    Undo2,
 } from 'lucide-react';
 import type {
     AttendanceSession,
@@ -17,6 +20,7 @@ import type {
 import {
     createAttendanceSession,
     setAttendanceSessionActive,
+    setAttendanceSessionHidden,
     updateAttendanceSessionMemberStatus,
 } from '../../lib/api/activities/manage';
 import {
@@ -118,6 +122,8 @@ export const AttendanceSessionManager: React.FC<AttendanceSessionManagerProps> =
     const [sessionNote, setSessionNote] = useState('');
     const [isCreating, setIsCreating] = useState(false);
     const [togglingSessionId, setTogglingSessionId] = useState<string | null>(null);
+    const [hidingSessionId, setHidingSessionId] = useState<string | null>(null);
+    const [showHidden, setShowHidden] = useState(false);
     const [draftStatuses, setDraftStatuses] = useState<Record<string, AttendanceStatus>>({});
     const [isSavingStatuses, setIsSavingStatuses] = useState(false);
 
@@ -161,9 +167,19 @@ export const AttendanceSessionManager: React.FC<AttendanceSessionManagerProps> =
         [members, selectedTargetGroupType, selectedTargetTeamId],
     );
 
+    const visibleSessions = useMemo(
+        () => (showHidden ? sessions : sessions.filter((session) => !session.isHidden)),
+        [sessions, showHidden],
+    );
+
+    const hiddenSessionCount = useMemo(
+        () => sessions.filter((session) => session.isHidden).length,
+        [sessions],
+    );
+
     const selectedSession = useMemo(
-        () => sessions.find((session) => session.id === selectedSessionId) ?? sessions[0] ?? null,
-        [selectedSessionId, sessions],
+        () => visibleSessions.find((session) => session.id === selectedSessionId) ?? visibleSessions[0] ?? null,
+        [selectedSessionId, visibleSessions],
     );
 
     const sessionEntries = useMemo(
@@ -187,15 +203,15 @@ export const AttendanceSessionManager: React.FC<AttendanceSessionManagerProps> =
     );
 
     useEffect(() => {
-        if (!selectedSessionId && sessions[0]?.id) {
-            setSelectedSessionId(sessions[0].id);
+        if (!selectedSessionId && visibleSessions[0]?.id) {
+            setSelectedSessionId(visibleSessions[0].id);
             return;
         }
 
-        if (selectedSessionId && !sessions.some((session) => session.id === selectedSessionId)) {
-            setSelectedSessionId(sessions[0]?.id ?? '');
+        if (selectedSessionId && !visibleSessions.some((session) => session.id === selectedSessionId)) {
+            setSelectedSessionId(visibleSessions[0]?.id ?? '');
         }
-    }, [selectedSessionId, sessions]);
+    }, [selectedSessionId, visibleSessions]);
 
     const draftStatusCounts = useMemo(
         () => sessionEntries.reduce<Record<AttendanceStatus, number>>(
@@ -254,6 +270,20 @@ export const AttendanceSessionManager: React.FC<AttendanceSessionManagerProps> =
         }
     };
 
+    const handleToggleHidden = async (session: AttendanceSession) => {
+        if (session.isActive && !session.isHidden) {
+            // 진행 중 세션은 숨길 수 없도록 DB CHECK 로 가드되지만, UX 상 먼저 안내.
+            return;
+        }
+        setHidingSessionId(session.id);
+        try {
+            await setAttendanceSessionHidden(session.id, !session.isHidden);
+            await onRefresh();
+        } finally {
+            setHidingSessionId(null);
+        }
+    };
+
     const handleCycleMemberStatus = (entry: AttendanceSessionMember) => {
         if (!selectedSession || !selectedSession.isActive) {
             return;
@@ -308,29 +338,53 @@ export const AttendanceSessionManager: React.FC<AttendanceSessionManagerProps> =
                                 <CalendarClock size={18} className="text-indigo-600" />
                                 출석 세션 목록
                             </div>
-                            <p className="mt-1 text-sm text-slate-500">세션을 눌러 모달에서 출석 상태를 조정하고 한 번에 저장합니다.</p>
+                            <p className="mt-1 text-sm text-slate-500">세션을 눌러 모달에서 출석 상태를 조정하고 한 번에 저장합니다. 마감된 세션은 숨겨 목록에서 치울 수 있습니다.</p>
                         </div>
-                        <button
-                            type="button"
-                            onClick={() => setIsCreateDialogOpen(true)}
-                            className="inline-flex items-center justify-center gap-2 rounded-2xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-700"
-                        >
-                            <PlusCircle size={16} />
-                            출석 등록
-                        </button>
+                        <div className="flex flex-wrap items-center gap-2">
+                            {hiddenSessionCount > 0 && (
+                                <button
+                                    type="button"
+                                    onClick={() => setShowHidden((prev) => !prev)}
+                                    className={`inline-flex items-center gap-1.5 rounded-2xl border px-3 py-2 text-xs font-semibold transition-colors ${
+                                        showHidden
+                                            ? 'border-indigo-200 bg-indigo-50 text-indigo-700'
+                                            : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                                    }`}
+                                >
+                                    {showHidden ? <EyeOff size={13} /> : <Eye size={13} />}
+                                    {showHidden ? `숨긴 세션 숨기기 (${hiddenSessionCount})` : `숨긴 세션 보기 (${hiddenSessionCount})`}
+                                </button>
+                            )}
+                            <button
+                                type="button"
+                                onClick={() => setIsCreateDialogOpen(true)}
+                                className="inline-flex items-center justify-center gap-2 rounded-2xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-700"
+                            >
+                                <PlusCircle size={16} />
+                                출석 등록
+                            </button>
+                        </div>
                     </div>
                 </div>
                 <div className="divide-y divide-slate-100">
-                    {sessions.map((session) => {
+                    {visibleSessions.map((session) => {
                         const isSelected = selectedSession?.id === session.id;
                         const isToggling = togglingSessionId === session.id;
+                        const isHiding = hidingSessionId === session.id;
+                        const canHide = !session.isActive;
 
                         return (
                             <button
                                 key={session.id}
                                 type="button"
                                 onClick={() => handleOpenSessionDetail(session)}
-                                className={`flex w-full flex-col gap-3 px-6 py-5 text-left transition-colors hover:bg-slate-50 ${isSelected ? 'bg-indigo-50/70' : 'bg-white'}`}
+                                className={`flex w-full flex-col gap-3 px-6 py-5 text-left transition-colors hover:bg-slate-50 ${
+                                    isSelected
+                                        ? 'bg-indigo-50/70'
+                                        : session.isHidden
+                                            ? 'bg-slate-50/60'
+                                            : 'bg-white'
+                                }`}
                             >
                                 <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                                     <div className="space-y-1">
@@ -342,11 +396,17 @@ export const AttendanceSessionManager: React.FC<AttendanceSessionManagerProps> =
                                             }`}>
                                                 {session.isActive ? '운영 중' : '마감'}
                                             </span>
+                                            {session.isHidden && (
+                                                <span className="inline-flex items-center gap-1 rounded-full border border-slate-300 bg-slate-200 px-2.5 py-1 text-xs font-semibold text-slate-700">
+                                                    <EyeOff size={11} />
+                                                    숨김
+                                                </span>
+                                            )}
                                             <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700">
                                                 {session.targetGroupLabel}
                                             </span>
                                         </div>
-                                        <div className="text-lg font-bold text-slate-950">{session.title}</div>
+                                        <div className={`text-lg font-bold ${session.isHidden ? 'text-slate-500' : 'text-slate-950'}`}>{session.title}</div>
                                         <div className="text-sm text-slate-500">{formatDateTime(session.startsAt)}</div>
                                     </div>
 
@@ -371,15 +431,36 @@ export const AttendanceSessionManager: React.FC<AttendanceSessionManagerProps> =
                                             {session.isActive ? <Lock size={14} /> : <LockOpen size={14} />}
                                             {isToggling ? '변경 중...' : session.isActive ? '마감' : '마감 취소'}
                                         </button>
+                                        {canHide && (
+                                            <button
+                                                type="button"
+                                                onClick={(event) => {
+                                                    event.stopPropagation();
+                                                    void handleToggleHidden(session);
+                                                }}
+                                                disabled={isHiding}
+                                                className={`inline-flex items-center gap-1 rounded-xl border px-3 py-2 text-sm font-medium transition-colors disabled:opacity-50 ${
+                                                    session.isHidden
+                                                        ? 'border-indigo-200 bg-white text-indigo-700 hover:bg-indigo-50'
+                                                        : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                                                }`}
+                                                title={session.isHidden ? '목록에 다시 표시' : '목록에서 숨김'}
+                                            >
+                                                {session.isHidden ? <Undo2 size={14} /> : <EyeOff size={14} />}
+                                                {isHiding ? '변경 중...' : session.isHidden ? '복원' : '숨기기'}
+                                            </button>
+                                        )}
                                     </div>
                                 </div>
                             </button>
                         );
                     })}
 
-                    {sessions.length === 0 && (
+                    {visibleSessions.length === 0 && (
                         <div className="px-6 py-12 text-center text-sm text-slate-500">
-                            아직 등록된 출석 세션이 없습니다.
+                            {sessions.length === 0
+                                ? '아직 등록된 출석 세션이 없습니다.'
+                                : '표시할 출석 세션이 없습니다. 숨긴 세션만 있다면 위 토글로 볼 수 있습니다.'}
                         </div>
                     )}
                 </div>
