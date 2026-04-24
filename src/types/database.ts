@@ -1372,28 +1372,17 @@ export type Database = {
         }[]
       }
       complete_my_password_setup: { Args: never; Returns: undefined }
-      create_activity_entry:
-        | {
-            Args: {
-              p_member_id: string
-              p_note?: string
-              p_occurred_at?: string
-              p_point_rule_id: string
-              p_reason?: string
-            }
-            Returns: string
-          }
-        | {
-            Args: {
-              p_evidence_url?: string
-              p_member_id: string
-              p_note?: string
-              p_occurred_at?: string
-              p_point_rule_id: string
-              p_reason?: string
-            }
-            Returns: string
-          }
+      create_activity_entry: {
+        Args: {
+          p_evidence_url?: string
+          p_member_id: string
+          p_note?: string
+          p_occurred_at?: string
+          p_point_rule_id: string
+          p_reason?: string
+        }
+        Returns: string
+      }
       create_audit_log: {
         Args: {
           p_action: string
@@ -1403,28 +1392,17 @@ export type Database = {
         }
         Returns: string
       }
-      create_batch_activity_entries:
-        | {
-            Args: {
-              p_member_ids: string[]
-              p_note?: string
-              p_occurred_at?: string
-              p_point_rule_id: string
-              p_reason?: string
-            }
-            Returns: string[]
-          }
-        | {
-            Args: {
-              p_evidence_url?: string
-              p_member_ids: string[]
-              p_note?: string
-              p_occurred_at?: string
-              p_point_rule_id: string
-              p_reason?: string
-            }
-            Returns: string[]
-          }
+      create_batch_activity_entries: {
+        Args: {
+          p_evidence_url?: string
+          p_member_ids: string[]
+          p_note?: string
+          p_occurred_at?: string
+          p_point_rule_id: string
+          p_reason?: string
+        }
+        Returns: string[]
+      }
       create_point_rule_version: {
         Args: {
           p_base_point: number
