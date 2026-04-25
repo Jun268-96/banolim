@@ -146,6 +146,7 @@ export interface Member {
     authUserId?: string | null;
     authProvisionedAt?: string | null;
     passwordResetRequired?: boolean;
+    emailDeliveryFailed?: boolean;
 }
 
 export interface Category {

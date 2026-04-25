@@ -25,6 +25,13 @@ const getAccountProvisionInfo = (member: Member) => {
             className: 'bg-slate-100 text-slate-600 border-slate-200',
         };
     }
+    if (member.emailDeliveryFailed) {
+        return {
+            label: '메일 발송 실패',
+            description: '직전 발급에서 메일이 도착하지 않았습니다. 다시 [계정 발급]을 눌러 메일을 재발송하세요.',
+            className: 'bg-amber-50 text-amber-700 border-amber-200',
+        };
+    }
     if (!member.authUserId) {
         return {
             label: '계정 미발급',
@@ -76,7 +83,7 @@ export const MemberAccountDialog: React.FC<MemberAccountDialogProps> = ({
     const currentEmail = member.loginEmail ?? null;
     const saveDisabled = !hasEmailChange || isSaving || normalizedDraft === currentEmail;
     const provisionDisabled = !member.loginEmail || isProvisioning;
-    const provisionLabel = member.authUserId ? '비밀번호 재발급' : '계정 발급';
+    const provisionLabel = member.authUserId && !member.emailDeliveryFailed ? '비밀번호 재발급' : '계정 발급';
 
     const handleSaveEmail = () => {
         if (saveDisabled) return;
@@ -157,7 +164,7 @@ export const MemberAccountDialog: React.FC<MemberAccountDialogProps> = ({
                         onClick={() => onProvisionAccount(member)}
                         disabled={provisionDisabled}
                         className="inline-flex items-center gap-1.5 rounded-2xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
-                        title={member.authUserId ? '비밀번호 재설정 발송' : '계정 발급'}
+                        title={member.authUserId && !member.emailDeliveryFailed ? '비밀번호 재설정 발송' : '계정 발급'}
                     >
                         {isProvisioning ? (
                             <>

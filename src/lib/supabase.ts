@@ -24,6 +24,11 @@ export const supabase = isSupabaseConfigured
         auth: {
             autoRefreshToken: true,
             persistSession: true,
+            // PKCE는 verifier가 [재발급] 누른 그 기기 localStorage에만 있어, 카톡 등으로
+            // 다른 기기에 링크를 전달하면 코드 교환이 실패한다. invite/recovery 링크가 어떤
+            // 기기에서 열려도 동작하도록 implicit flow로 전환해 hash 토큰만으로 세션을 만든다.
+            flowType: 'implicit',
+            detectSessionInUrl: true,
         },
     })
     : null;

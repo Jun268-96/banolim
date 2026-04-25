@@ -193,7 +193,7 @@ const getMemberAccountFilterKey = (member: Member): Exclude<MemberAccountFilter,
         return 'needs-email';
     }
 
-    if (!member.authUserId) {
+    if (!member.authUserId || member.emailDeliveryFailed) {
         return 'needs-account';
     }
 
@@ -285,6 +285,7 @@ export const DashboardTab: React.FC = () => {
         email: string;
         isExistingAccount: boolean;
         inviteSent: boolean;
+        emailDeliveryFailed: boolean;
         actionLink?: string;
         linkExpiresInHours?: number;
     } | null>(null);

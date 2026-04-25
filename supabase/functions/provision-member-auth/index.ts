@@ -122,7 +122,12 @@ Deno.serve(async (request) => {
         if (isExistingAccount && authUserId) {
             // 기존 계정: 메일 발송 (resetPasswordForEmail) + 백업 링크 추출 (generateLink)
             // 핵심: resetPasswordForEmail이 메일을 자동 발송함. generateLink는 메일을 안 보내고 토큰만 만듦.
-            const regularClient = createClient(supabaseUrl, supabaseAnonKey);
+            // flowType: 'implicit' — PKCE를 끄지 않으면 메일 본문 링크가 ?code= 포맷이 되어
+            // 다른 기기(카톡 전달 등)에서 verifier 부재로 exchangeCodeForSession 실패함. hash
+            // 포맷으로 발급되도록 강제하여 어떤 기기에서 열어도 비번 설정 폼이 정상 노출되게 한다.
+            const regularClient = createClient(supabaseUrl, supabaseAnonKey, {
+                auth: { flowType: 'implicit' },
+            });
             const { error: resetError } = await regularClient.auth.resetPasswordForEmail(normalizedEmail, {
                 redirectTo: inviteRedirectTo,
             });
@@ -211,6 +216,7 @@ Deno.serve(async (request) => {
                 auth_provisioned_at: new Date().toISOString(),
                 password_reset_required: true,
                 is_approved: true,
+                email_delivery_failed: !mailSent,
             })
             .eq('id', member.id);
 
@@ -225,6 +231,7 @@ Deno.serve(async (request) => {
                 email: normalizedEmail,
                 authUserId,
                 inviteSent: mailSent,
+                emailDeliveryFailed: !mailSent,
                 isExistingAccount,
                 actionLink,
                 linkExpiresInHours,

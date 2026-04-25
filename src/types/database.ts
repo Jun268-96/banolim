@@ -761,6 +761,7 @@ export type Database = {
           auth_user_id: string | null
           avatar_key: string | null
           created_at: string
+          email_delivery_failed: boolean
           id: string
           is_approved: boolean
           is_visible: boolean
@@ -777,6 +778,7 @@ export type Database = {
           auth_user_id?: string | null
           avatar_key?: string | null
           created_at?: string
+          email_delivery_failed?: boolean
           id?: string
           is_approved?: boolean
           is_visible?: boolean
@@ -793,6 +795,7 @@ export type Database = {
           auth_user_id?: string | null
           avatar_key?: string | null
           created_at?: string
+          email_delivery_failed?: boolean
           id?: string
           is_approved?: boolean
           is_visible?: boolean

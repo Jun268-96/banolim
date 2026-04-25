@@ -818,10 +818,10 @@ export const getMembers = async (options?: { includeLoginEmail?: boolean; includ
         const memberQuery = includeLoginEmail
             ? client
                 .from('members')
-                .select('id, name, login_email, role_id, team_id, status, joined_at, is_approved, is_visible, auth_user_id, auth_provisioned_at, password_reset_required')
+                .select('id, name, login_email, role_id, team_id, status, joined_at, is_approved, is_visible, auth_user_id, auth_provisioned_at, password_reset_required, email_delivery_failed')
             : client
                 .from('members')
-                .select('id, name, role_id, team_id, status, joined_at, is_approved, is_visible, auth_user_id, auth_provisioned_at, password_reset_required');
+                .select('id, name, role_id, team_id, status, joined_at, is_approved, is_visible, auth_user_id, auth_provisioned_at, password_reset_required, email_delivery_failed');
 
         if (!includeHidden) {
             memberQuery.eq('is_visible', true);
@@ -871,7 +871,7 @@ export const getMembers = async (options?: { includeLoginEmail?: boolean; includ
 
         const summaryRows = (summaryResult.data ?? []) as MemberScoreSummaryRow[];
         const memberRows = (memberResult.data ?? []) as Array<
-            Pick<MemberRow, 'id' | 'name' | 'role_id' | 'team_id' | 'status' | 'joined_at' | 'is_approved' | 'is_visible' | 'auth_user_id' | 'auth_provisioned_at' | 'password_reset_required'> & {
+            Pick<MemberRow, 'id' | 'name' | 'role_id' | 'team_id' | 'status' | 'joined_at' | 'is_approved' | 'is_visible' | 'auth_user_id' | 'auth_provisioned_at' | 'password_reset_required' | 'email_delivery_failed'> & {
                 login_email?: string | null;
             }
         >;
@@ -907,6 +907,7 @@ export const getMembers = async (options?: { includeLoginEmail?: boolean; includ
                     authUserId: member.auth_user_id ?? null,
                     authProvisionedAt: member.auth_provisioned_at ?? null,
                     passwordResetRequired: member.password_reset_required ?? false,
+                    emailDeliveryFailed: member.email_delivery_failed ?? false,
                     isApproved: member.is_approved,
                     roleId: member.role_id,
                     roleName: member.role_id ? roleMap.get(member.role_id) ?? null : null,
@@ -985,6 +986,7 @@ export const provisionMemberPasswordAuth = async (memberId: string): Promise<{
     memberName: string;
     isExistingAccount: boolean;
     inviteSent: boolean;
+    emailDeliveryFailed: boolean;
     actionLink?: string;
     linkExpiresInHours?: number;
 }> => {
@@ -1014,6 +1016,7 @@ export const provisionMemberPasswordAuth = async (memberId: string): Promise<{
             memberName: member.name,
             isExistingAccount: Boolean(member.authUserId),
             inviteSent: false,
+            emailDeliveryFailed: false,
         };
     }
 
@@ -1062,6 +1065,7 @@ export const provisionMemberPasswordAuth = async (memberId: string): Promise<{
         memberName: String(data?.memberName ?? ''),
         isExistingAccount: Boolean(data?.isExistingAccount),
         inviteSent: Boolean(data?.inviteSent),
+        emailDeliveryFailed: Boolean(data?.emailDeliveryFailed),
         actionLink: typeof data?.actionLink === 'string' && data.actionLink.length > 0 ? data.actionLink : undefined,
         linkExpiresInHours:
             typeof data?.linkExpiresInHours === 'number' && Number.isFinite(data.linkExpiresInHours)

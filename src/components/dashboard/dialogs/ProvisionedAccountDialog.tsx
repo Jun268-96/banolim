@@ -7,6 +7,7 @@ interface ProvisionedAccount {
   email: string;
   isExistingAccount: boolean;
   inviteSent: boolean;
+  emailDeliveryFailed: boolean;
   actionLink?: string;
   linkExpiresInHours?: number;
 }
@@ -108,8 +109,13 @@ export const ProvisionedAccountDialog: React.FC<ProvisionedAccountDialogProps> =
                 : '✓ 새 계정을 만들고 초대 메일을 발송했습니다.'}
             </div>
           ) : (
-            <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm leading-7 text-rose-900">
-              ⚠ 메일 발송에 실패했습니다 (시간당 발송 한도 초과 또는 네트워크 오류). 잠시 후 다시 시도하거나, 아래 링크를 직접 회원에게 전달해 주세요.
+            <div className="space-y-2 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm leading-7 text-rose-900">
+              <div>
+                ⚠ 메일 발송에 실패했습니다 (시간당 발송 한도 초과 또는 네트워크 오류). 잠시 후 다시 시도하거나, 아래 링크를 직접 회원에게 전달해 주세요.
+              </div>
+              <div className="rounded-lg border border-rose-300 bg-white/70 px-3 py-2 text-xs font-semibold leading-6 text-rose-800">
+                ⏱ 이 다이얼로그를 <span className="underline">닫으면 같은 링크는 다시 조회할 수 없습니다.</span> 지금 복사해 카톡 등으로 회원에게 직접 전달하거나, 닫은 뒤 [계정 발급]을 다시 눌러 새 링크를 발급받으세요.
+              </div>
             </div>
           )}
 
