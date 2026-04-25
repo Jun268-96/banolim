@@ -96,25 +96,26 @@
 
 회원이 비밀번호를 설정하기 위해 사이트에 도달하는 경로:
 
-### 1. 메일 본문 링크 클릭 (implicit hash)
+### 1. 메일 본문 링크 클릭 (implicit hash) — **권장 경로**
 - supabase.ts `flowType: 'implicit'` + `detectSessionInUrl: true`
 - URL 형식: `https://vanollim.vercel.app/#access_token=...&type=recovery|invite`
 - AuthProvider가 hash 자동 감지 → 세션 생성 + `requiresPasswordSetup=true`
 - AuthScreen이 비번 설정 폼 자동 표시
-- **주의**: 메일 보안 스캐너에 토큰 소진되면 `#error=access_denied&error_code=otp_expired`로 떨어짐 → OTP 폼으로 자동 fallback
+- **주의**: 메일 보안 스캐너(M365 등)에 토큰 소진되면 `#error=access_denied&error_code=otp_expired`로 떨어짐 → OTP 폼으로 fallback. Gmail/네이버 개인 메일은 prefetch 안 해서 거의 영향 없음
 
-### 2. 다이얼로그 백업 링크 (admin.generateLink)
+### 2. 다이얼로그 백업 링크 (admin.generateLink) — **선제적 운영 가이드**
 - 운영진이 `ProvisionedAccountDialog`에서 actionLink를 카톡 등으로 직접 전달
 - admin 호출이라 항상 hash 포맷 → cross-device 안전
 - 메일이 안 도착하거나 메일 스캐너로 망가졌을 때 사용
+- **`@goedu.kr` / 학교·회사 메일(M365 의심) 회원은 발급 즉시 백업 링크 카톡 선제 전달 권장** — 메일 링크가 죽을 가능성 높음
 - **닫으면 같은 링크 재조회 불가** (보안 이유로 DB 미저장)
 
-### 3. OTP 6자리 입력
+### 3. OTP 6자리 입력 — **fallback 전용, 권장 X**
 - 메일 본문에 `{{ .Token }}` 6자리 코드도 포함됨
-- AuthScreen에서 `?type=recovery|invite` 또는 `#error=otp_expired` 감지 시 자동으로 OTP 입력 폼 노출
-- 또는 일반 로그인 폼 하단의 "메일 코드로 인증하기" 버튼으로 진입
-- 회원이 이메일 + 6자리 입력 → `supabase.auth.verifyOtp` POST → 세션 생성 → 비번 설정 폼
-- POST라 메일 스캐너 GET fetch 영향 없음
+- AuthScreen은 `#error=otp_expired` 감지 시에만 자동으로 OTP 입력 폼 노출 (정상 링크 hash는 가로채지 않음)
+- 또는 일반 로그인 폼 하단의 "메일 코드로 인증하기" 버튼으로 수동 진입
+- **현재 알 수 없는 문제로 verifyOtp가 403을 반환함**. URL token과 OTP가 같은 토큰을 공유하므로 스캐너 prefetch에도 함께 무효화됨. burst 후 디버깅 예정
+- OTP 폼에는 노란 안내 박스로 "안 되면 메일 링크 또는 운영진 카톡 백업 사용" 가이드 노출됨
 
 ---
 

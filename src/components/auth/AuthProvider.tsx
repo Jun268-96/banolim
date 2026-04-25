@@ -389,7 +389,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                     }
 
                     if (error.message?.toLowerCase().includes('expired') || error.message?.toLowerCase().includes('invalid')) {
-                        return { error: '코드가 만료되었거나 올바르지 않습니다. 운영진에게 새 코드를 요청해 주세요.' };
+                        return {
+                            error:
+                                '코드가 만료되었거나 작동하지 않습니다. 메일 본문의 바로 가기 링크를 사용해 보시거나, 안 되면 운영진에게 카톡 백업 링크를 요청해 주세요.',
+                        };
                     }
 
                     return { error: error.message || '인증에 실패했습니다. 잠시 후 다시 시도해 주세요.' };

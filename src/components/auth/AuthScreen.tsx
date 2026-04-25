@@ -4,34 +4,21 @@ import { useAuth } from './auth-context';
 
 type AuthMode = 'login' | 'forgot' | 'otp';
 
-const detectOtpHintFromUrl = (): { type: 'recovery' | 'invite'; reason: 'hint' | 'expired' | null; email?: string } => {
+const detectOtpHintFromUrl = (): { type: 'recovery' | 'invite'; reason: 'expired' | null; email?: string } => {
     if (typeof window === 'undefined') {
         return { type: 'recovery', reason: null };
     }
 
     const hash = window.location.hash;
-    const url = new URL(window.location.href);
-    const query = url.searchParams;
 
-    // 만료/오류 hash가 있으면 즉시 OTP 모드로 안내 (메일 스캐너에 토큰이 소진된 케이스)
+    // 만료/오류 hash가 있을 때만 OTP 모드로 안내 (메일 스캐너에 토큰이 소진된 케이스).
+    // 정상 링크(#access_token=...&type=recovery)는 AuthProvider가 세션을 만들어 비번 폼으로 직진시키므로
+    // 여기서 OTP 모드로 가로채면 안 된다.
     if (hash.includes('error=') && hash.includes('otp_expired')) {
         const hashTypeMatch = hash.match(/type=(recovery|invite)/);
         return {
             type: (hashTypeMatch?.[1] as 'recovery' | 'invite') ?? 'recovery',
             reason: 'expired',
-        };
-    }
-
-    const queryType = query.get('type');
-    if (queryType === 'recovery' || queryType === 'invite') {
-        return { type: queryType, reason: 'hint', email: query.get('email') ?? undefined };
-    }
-
-    if (hash.includes('type=recovery') || hash.includes('type=invite')) {
-        const hashTypeMatch = hash.match(/type=(recovery|invite)/);
-        return {
-            type: (hashTypeMatch?.[1] as 'recovery' | 'invite') ?? 'recovery',
-            reason: 'hint',
         };
     }
 
@@ -60,7 +47,7 @@ export const AuthScreen: React.FC = () => {
     const [otpEmail, setOtpEmail] = useState('');
     const [otpCode, setOtpCode] = useState('');
     const [otpType, setOtpType] = useState<'recovery' | 'invite'>('recovery');
-    const [otpHintReason, setOtpHintReason] = useState<'hint' | 'expired' | null>(null);
+    const [otpHintReason, setOtpHintReason] = useState<'expired' | null>(null);
     const [message, setMessage] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
@@ -314,6 +301,13 @@ export const AuthScreen: React.FC = () => {
                         </form>
                     ) : mode === 'otp' ? (
                         <form className="mt-8 space-y-4" onSubmit={handleVerifyOtp}>
+                            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                                <div className="font-semibold">코드가 작동하지 않으면</div>
+                                <div className="mt-1 leading-relaxed">
+                                    메일 본문의 <strong>바로 가기 링크</strong>를 클릭해 보시거나, 운영진에게
+                                    카톡으로 <strong>백업 링크</strong>를 요청해 주세요.
+                                </div>
+                            </div>
                             <label className="block space-y-1.5">
                                 <span className="text-xs font-medium text-slate-600">이메일</span>
                                 <div className="relative">
