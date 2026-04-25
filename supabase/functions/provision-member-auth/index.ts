@@ -14,7 +14,6 @@ const corsHeaders = {
 
 const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
 const supabaseServiceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
-const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
 
 Deno.serve(async (request) => {
     if (request.method === 'OPTIONS') {
@@ -115,31 +114,43 @@ Deno.serve(async (request) => {
             isExistingAccount = true;
         }
 
+        let actionLink = '';
+        let linkExpiresInHours = 24;
+
         if (isExistingAccount && authUserId) {
-            // 기존 계정: 비밀번호 재설정 이메일 발송
-            const regularClient = createClient(supabaseUrl, supabaseAnonKey);
-            const { error: resetError } = await regularClient.auth.resetPasswordForEmail(normalizedEmail, {
-                redirectTo: inviteRedirectTo,
+            // 기존 계정: 비밀번호 재설정 링크 생성 (Supabase가 메일도 자동 발송)
+            const { data: linkData, error: linkError } = await adminClient.auth.admin.generateLink({
+                type: 'recovery',
+                email: normalizedEmail,
+                options: {
+                    redirectTo: inviteRedirectTo,
+                },
             });
 
-            if (resetError) {
-                throw resetError;
+            if (linkError || !linkData?.properties?.action_link) {
+                throw linkError ?? new Error('비밀번호 재설정 링크를 생성하지 못했습니다.');
             }
+
+            actionLink = linkData.properties.action_link;
+            linkExpiresInHours = 1;
         } else {
-            // 신규 계정: 초대 이메일 발송
-            const { data: inviteData, error: inviteError } = await adminClient.auth.admin.inviteUserByEmail(
-                normalizedEmail,
-                {
+            // 신규 계정: 초대 링크 생성 (Supabase가 사용자 생성 + 메일도 자동 발송)
+            const { data: linkData, error: linkError } = await adminClient.auth.admin.generateLink({
+                type: 'invite',
+                email: normalizedEmail,
+                options: {
                     redirectTo: inviteRedirectTo,
                     data: { full_name: member.name },
                 },
-            );
+            });
 
-            if (inviteError || !inviteData.user) {
-                throw inviteError ?? new Error('초대 이메일을 발송하지 못했습니다.');
+            if (linkError || !linkData?.user || !linkData?.properties?.action_link) {
+                throw linkError ?? new Error('초대 링크를 생성하지 못했습니다.');
             }
 
-            authUserId = inviteData.user.id;
+            actionLink = linkData.properties.action_link;
+            authUserId = linkData.user.id;
+            linkExpiresInHours = 24;
         }
 
         const { error: updateMemberError } = await adminClient
@@ -164,6 +175,8 @@ Deno.serve(async (request) => {
                 authUserId,
                 inviteSent: true,
                 isExistingAccount,
+                actionLink,
+                linkExpiresInHours,
             }),
             {
                 status: 200,

@@ -285,6 +285,8 @@ export const DashboardTab: React.FC = () => {
         email: string;
         isExistingAccount: boolean;
         inviteSent: boolean;
+        actionLink?: string;
+        linkExpiresInHours?: number;
     } | null>(null);
     const [isBulkImportDialogOpen, setIsBulkImportDialogOpen] = useState(false);
     const [isAddMemberDialogOpen, setIsAddMemberDialogOpen] = useState(false);

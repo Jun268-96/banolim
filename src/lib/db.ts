@@ -985,6 +985,8 @@ export const provisionMemberPasswordAuth = async (memberId: string): Promise<{
     memberName: string;
     isExistingAccount: boolean;
     inviteSent: boolean;
+    actionLink?: string;
+    linkExpiresInHours?: number;
 }> => {
     const member = localState.members.find((entry) => entry.id === memberId) ?? null;
 
@@ -1060,6 +1062,11 @@ export const provisionMemberPasswordAuth = async (memberId: string): Promise<{
         memberName: String(data?.memberName ?? ''),
         isExistingAccount: Boolean(data?.isExistingAccount),
         inviteSent: Boolean(data?.inviteSent),
+        actionLink: typeof data?.actionLink === 'string' && data.actionLink.length > 0 ? data.actionLink : undefined,
+        linkExpiresInHours:
+            typeof data?.linkExpiresInHours === 'number' && Number.isFinite(data.linkExpiresInHours)
+                ? data.linkExpiresInHours
+                : undefined,
     };
 };
 
