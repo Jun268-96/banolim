@@ -166,12 +166,45 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         let isMounted = true;
 
-        const isRecoveryHash = typeof window !== 'undefined' && (
-            window.location.hash.includes('type=recovery') ||
-            window.location.hash.includes('type=invite')
-        );
-        if (isRecoveryHash) {
-            setRequiresPasswordSetup(true);
+        // 인증 링크 처리: invite/recovery 토큰이 hash 또는 query string으로 도착할 수 있음
+        // - 구식 implicit flow: #access_token=...&type=recovery|invite
+        // - 신식 PKCE flow: ?code=...&type=recovery|invite (code 교환 필요)
+        if (typeof window !== 'undefined') {
+            const hash = window.location.hash;
+            const url = new URL(window.location.href);
+            const query = url.searchParams;
+
+            const isRecoveryHash =
+                hash.includes('type=recovery') || hash.includes('type=invite');
+            const queryType = query.get('type');
+            const isRecoveryQuery =
+                queryType === 'recovery' ||
+                queryType === 'invite' ||
+                query.has('code');
+
+            if (isRecoveryHash || isRecoveryQuery) {
+                setRequiresPasswordSetup(true);
+            }
+
+            // PKCE flow: code 교환 후 URL에서 code 제거
+            if (query.has('code')) {
+                const code = query.get('code')!;
+                void client.auth.exchangeCodeForSession(code).then(({ error }) => {
+                    if (error) {
+                        console.error('[auth] exchangeCodeForSession failed', error);
+                        if (isMounted) {
+                            setAuthError('인증 링크가 만료되었거나 이미 사용되었습니다. 운영진에게 새 링크를 요청해 주세요.');
+                        }
+                    } else if (isMounted) {
+                        setRequiresPasswordSetup(true);
+                    }
+                }).finally(() => {
+                    if (typeof window !== 'undefined') {
+                        const cleanUrl = `${window.location.pathname}${window.location.hash}`;
+                        window.history.replaceState({}, '', cleanUrl);
+                    }
+                });
+            }
         }
 
         const resolveProfile = async (nextUser: User | null) => {

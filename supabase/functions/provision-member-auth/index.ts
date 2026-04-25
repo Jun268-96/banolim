@@ -14,6 +14,7 @@ const corsHeaders = {
 
 const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
 const supabaseServiceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
+const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
 
 Deno.serve(async (request) => {
     if (request.method === 'OPTIONS') {
@@ -116,40 +117,90 @@ Deno.serve(async (request) => {
 
         let actionLink = '';
         let linkExpiresInHours = 24;
+        let mailSent = false;
 
         if (isExistingAccount && authUserId) {
-            // 기존 계정: 비밀번호 재설정 링크 생성 (Supabase가 메일도 자동 발송)
-            const { data: linkData, error: linkError } = await adminClient.auth.admin.generateLink({
-                type: 'recovery',
-                email: normalizedEmail,
-                options: {
-                    redirectTo: inviteRedirectTo,
-                },
+            // 기존 계정: 메일 발송 (resetPasswordForEmail) + 백업 링크 추출 (generateLink)
+            // 핵심: resetPasswordForEmail이 메일을 자동 발송함. generateLink는 메일을 안 보내고 토큰만 만듦.
+            const regularClient = createClient(supabaseUrl, supabaseAnonKey);
+            const { error: resetError } = await regularClient.auth.resetPasswordForEmail(normalizedEmail, {
+                redirectTo: inviteRedirectTo,
             });
 
-            if (linkError || !linkData?.properties?.action_link) {
-                throw linkError ?? new Error('비밀번호 재설정 링크를 생성하지 못했습니다.');
+            if (!resetError) {
+                mailSent = true;
             }
 
-            actionLink = linkData.properties.action_link;
+            // 백업 링크: 메일 성공 여부와 무관하게 best-effort 추출. 메일 실패(rate limit 등) 시에도 링크가 있으면 운영진이 카톡으로 직접 전달 가능.
+            try {
+                const { data: linkData } = await adminClient.auth.admin.generateLink({
+                    type: 'recovery',
+                    email: normalizedEmail,
+                    options: { redirectTo: inviteRedirectTo },
+                });
+                if (linkData?.properties?.action_link) {
+                    actionLink = linkData.properties.action_link;
+                }
+            } catch {
+                // 무시 — 메일이 갔으면 그걸로 충분, 안 갔으면 사용자에게 다시 시도 안내
+            }
+
+            if (!mailSent && !actionLink) {
+                throw resetError ?? new Error('비밀번호 재설정에 실패했습니다.');
+            }
+
             linkExpiresInHours = 1;
         } else {
-            // 신규 계정: 초대 링크 생성 (Supabase가 사용자 생성 + 메일도 자동 발송)
-            const { data: linkData, error: linkError } = await adminClient.auth.admin.generateLink({
-                type: 'invite',
-                email: normalizedEmail,
-                options: {
-                    redirectTo: inviteRedirectTo,
-                    data: { full_name: member.name },
-                },
-            });
+            // 신규 계정: inviteUserByEmail로 메일 발송 + 사용자 생성. 실패 시 generateLink로 폴백(메일 없이 사용자 생성 + 링크).
+            try {
+                const { data: inviteData, error: inviteError } = await adminClient.auth.admin.inviteUserByEmail(
+                    normalizedEmail,
+                    {
+                        redirectTo: inviteRedirectTo,
+                        data: { full_name: member.name },
+                    },
+                );
 
-            if (linkError || !linkData?.user || !linkData?.properties?.action_link) {
-                throw linkError ?? new Error('초대 링크를 생성하지 못했습니다.');
+                if (inviteError || !inviteData?.user) {
+                    throw inviteError ?? new Error('초대 이메일 발송에 실패했습니다.');
+                }
+
+                authUserId = inviteData.user.id;
+                mailSent = true;
+
+                // 백업 링크: invite 후 사용자가 생성됐으므로 recovery 타입으로 별도 링크 추출
+                try {
+                    const { data: linkData } = await adminClient.auth.admin.generateLink({
+                        type: 'recovery',
+                        email: normalizedEmail,
+                        options: { redirectTo: inviteRedirectTo },
+                    });
+                    if (linkData?.properties?.action_link) {
+                        actionLink = linkData.properties.action_link;
+                    }
+                } catch {
+                    // 무시
+                }
+            } catch (inviteFailure) {
+                // 메일 발송이 throw로 실패한 경우 (rate limit, network 등) generateLink 폴백
+                const { data: linkData, error: linkError } = await adminClient.auth.admin.generateLink({
+                    type: 'invite',
+                    email: normalizedEmail,
+                    options: {
+                        redirectTo: inviteRedirectTo,
+                        data: { full_name: member.name },
+                    },
+                });
+
+                if (linkError || !linkData?.user || !linkData?.properties?.action_link) {
+                    throw inviteFailure;
+                }
+
+                actionLink = linkData.properties.action_link;
+                authUserId = linkData.user.id;
+                // mailSent는 false 유지 — 다이얼로그에서 운영진에게 링크 직접 전달 안내
             }
 
-            actionLink = linkData.properties.action_link;
-            authUserId = linkData.user.id;
             linkExpiresInHours = 24;
         }
 
@@ -173,7 +224,7 @@ Deno.serve(async (request) => {
                 memberName: member.name,
                 email: normalizedEmail,
                 authUserId,
-                inviteSent: true,
+                inviteSent: mailSent,
                 isExistingAccount,
                 actionLink,
                 linkExpiresInHours,

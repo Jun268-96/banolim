@@ -79,11 +79,15 @@ export const ProvisionedAccountDialog: React.FC<ProvisionedAccountDialogProps> =
         : `${Math.round(expiresHours * 60)}분 후 만료`
       : null;
 
+  const description = provisionedAccount?.inviteSent
+    ? '초대 링크가 회원 이메일로 발송됐습니다. 메일이 도착하지 않으면 아래 링크를 직접 전달하세요.'
+    : '메일 발송에 실패해 회원에게 초대 메일이 가지 않았습니다. 아래 링크를 카톡 등으로 직접 전달해 주세요.';
+
   return (
     <AppDialog
       isOpen={Boolean(provisionedAccount)}
       title="계정 발급 완료"
-      description="초대 링크가 회원 이메일로 발송됐습니다. 메일이 도착하지 않으면 아래 링크를 직접 전달하세요."
+      description={description}
       size="md"
       onClose={onClose}
     >
@@ -94,14 +98,20 @@ export const ProvisionedAccountDialog: React.FC<ProvisionedAccountDialogProps> =
             <div className="mt-1 font-semibold text-slate-900">{provisionedAccount.memberName}</div>
           </div>
           <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-            <div className="text-sm text-slate-500">발송된 이메일</div>
+            <div className="text-sm text-slate-500">대상 이메일</div>
             <div className="mt-1 font-semibold text-slate-900">{provisionedAccount.email}</div>
           </div>
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm leading-7 text-slate-600">
-            {provisionedAccount.isExistingAccount
-              ? '기존 계정으로 비밀번호 재설정 링크를 발송했습니다.'
-              : '새 계정을 만들고 초대 링크를 발송했습니다.'}
-          </div>
+          {provisionedAccount.inviteSent ? (
+            <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm leading-7 text-emerald-900">
+              {provisionedAccount.isExistingAccount
+                ? '✓ 기존 계정으로 비밀번호 재설정 메일을 발송했습니다.'
+                : '✓ 새 계정을 만들고 초대 메일을 발송했습니다.'}
+            </div>
+          ) : (
+            <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm leading-7 text-rose-900">
+              ⚠ 메일 발송에 실패했습니다 (시간당 발송 한도 초과 또는 네트워크 오류). 잠시 후 다시 시도하거나, 아래 링크를 직접 회원에게 전달해 주세요.
+            </div>
+          )}
 
           {provisionedAccount.actionLink && (
             <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
