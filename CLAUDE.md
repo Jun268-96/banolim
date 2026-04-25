@@ -136,16 +136,60 @@ Supabase Studio → Authentication → Email Templates
 ## 메일 보안 스캐너 이슈 (운영 노트)
 
 ### 현상
-네이버, Gmail, M365 Defender 등 주요 메일 시스템이 사용자 클릭 **전에** invite/recovery 링크를 자동 fetch함. 그 fetch가 Supabase 입장에선 "첫 클릭"으로 처리되어 1회용 토큰 소진 → 사람이 클릭하면 `otp_expired`.
+일부 메일 시스템(주로 기업/학교 M365 Defender)이 사용자 클릭 **전에** invite/recovery 링크를 자동 fetch함. 그 fetch가 Supabase 입장에선 "첫 클릭"으로 처리되어 1회용 토큰 소진 → 사람이 클릭하면 `otp_expired`.
 
-### 회피책 (이미 구현됨)
-- **OTP 6자리 입력**: POST라 GET-only 스캐너 영향 없음. 1차 권장.
-- **카톡 백업 링크**: admin.generateLink 응답을 다이얼로그에 노출 → 운영진이 카톡으로 직접 전달. 메일 시스템 안 거침.
+### 메일 도메인별 prefetch 매트릭스 (2026-04 운영 데이터 기준)
+| 도메인 | prefetch | 비고 |
+|---|---|---|
+| Gmail (개인) | 🟢 안 함 | 링크 정상 작동 |
+| 네이버 (개인) | 🟢 안 함 | 링크 정상 작동 |
+| 다음 (개인) | 🟡 약 | 거의 영향 없음 |
+| **`@goedu.kr`** | 🔴 매우 강함 | M365 Defender 추정. **링크 100% 죽음** |
+| 기업/학교 메일 (M365·Outlook 365) | 🔴 강함 | 선제적 카톡 백업 필요 |
+
+### 핵심 발견: OTP도 함께 죽음
+**`{{ .Token }}` (OTP)와 `{{ .ConfirmationURL }}` (링크)는 같은 backend confirmation_token을 공유**. 스캐너가 링크 GET 한 번 하면 OTP도 같이 무효화됨. POST 검증이라도 백엔드 토큰이 죽어있어 `verifyOtp`가 403 반환. **"POST면 안전" 가정은 틀렸음.**
+
+### 회피책
+- **카톡 백업 링크 (1차 권장)**: `admin.generateLink` 응답을 `ProvisionedAccountDialog`에 노출 → 운영진이 카톡으로 직접 전달. 메일 시스템 안 거침. 100% 작동.
+- **OTP 6자리 입력 (보조)**: 만료된 링크 hash 도달 시 fallback으로 노출되지만, 같은 토큰 소진 문제로 학교/M365 메일에서는 함께 실패. Gmail/네이버 회원은 어차피 링크가 작동하므로 OTP 폼까지 안 옴.
+- AuthScreen은 `#error=otp_expired` hash만 OTP 모드로 가로챔. 정상 링크 hash(`#access_token=...&type=recovery`)는 AuthProvider가 처리해 비번 폼으로 직진. 이전 race condition은 `fix(auth): route valid email links straight to password setup`(3f7edb7)에서 수정됨.
 
 ### 운영 가이드
-회원이 메일 링크 안 먹힌다고 하면:
-1. 메일에 6자리 코드 보이는지 확인 → 있으면 OTP 입력 모드로 안내
-2. 코드 없으면 운영진이 [계정 발급] 다시 → 백업 링크 카톡으로
+1. 발급 시 **회원 메일 도메인 확인**:
+   - Gmail/네이버/다음: 메일 발송만으로 OK
+   - **`@goedu.kr` / 학교·회사 메일**: 발급 즉시 ProvisionedAccountDialog의 백업 링크 카톡 직접 전달
+2. 회원이 "링크 안 먹혀요" 보고 시 → [재발급] 후 무조건 카톡 백업 동선
+3. 회원이 "OTP 입력해도 안 돼요" 보고 시 → 메일 본문 링크 시도 안내 → 안 되면 카톡 백업
+
+---
+
+## Custom SMTP 설정
+
+### 현재 상태 (2026-04~)
+| 항목 | 값 |
+|---|---|
+| Provider | Gmail SMTP (단발성, 한 달 임시) |
+| Sender | `반올림스쿨 <hhj96916@gmail.com>` |
+| Host / Port | `smtp.gmail.com` / 587 |
+| Auth | Gmail 계정 + 앱 비밀번호 (`myaccount.google.com/apppasswords`) |
+| 한도 | Gmail 일일 500건 / Supabase rate-limit 시간당 30건 설정 |
+
+### 도입 배경
+- Built-in SMTP 시간당 2건은 발급 burst(이틀 내 30명) 대응 불가
+- 도메인 없어 Resend/SES/SendGrid 등 transactional 서비스 사용 불가
+- Brevo도 2024-02부터 Gmail/Yahoo/MS 정책으로 개인 메일 sender 인증 사실상 막힘
+- Gmail SMTP가 도메인 없이 즉시 가능한 유일한 옵션
+- 단발성 burst라 "personal email for transactional" ToS 위반 리스크 무시 가능
+
+### 한 달 후 정리
+1. Burst 종료 시점에 운영 데이터(메일 도착률, OTP 사용률, 카톡 백업 빈도) 평가
+2. 장기 사용 결정되면: 도메인 구매(`vanollim.kr`/`.com`) → Resend 전환 → 무료 3,000/월
+3. 폐기 결정되면: Supabase Studio → SMTP 끄기 → built-in 복귀 + Gmail 앱 비밀번호 삭제
+
+### Supabase Auth 설정 주의사항
+- **OTP 길이는 반드시 6**. UI(`AuthScreen.tsx:143` `^\d{6}$`, line 338 `maxLength={6}`)가 6자리 전제로 작성됨. Studio의 Auth Providers → Email OTP Length를 8로 바꾸면 메일에 8자리 OTP가 와도 입력칸에 안 들어감
+- Custom SMTP rate limit: Authentication → Rate Limits → "Rate limit for sending emails"
 
 ---
 
