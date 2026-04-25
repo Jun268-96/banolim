@@ -1,6 +1,42 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { KeyRound, Mail, ShieldCheck, Sparkles } from 'lucide-react';
 import { useAuth } from './auth-context';
+
+type AuthMode = 'login' | 'forgot' | 'otp';
+
+const detectOtpHintFromUrl = (): { type: 'recovery' | 'invite'; reason: 'hint' | 'expired' | null; email?: string } => {
+    if (typeof window === 'undefined') {
+        return { type: 'recovery', reason: null };
+    }
+
+    const hash = window.location.hash;
+    const url = new URL(window.location.href);
+    const query = url.searchParams;
+
+    // 만료/오류 hash가 있으면 즉시 OTP 모드로 안내 (메일 스캐너에 토큰이 소진된 케이스)
+    if (hash.includes('error=') && hash.includes('otp_expired')) {
+        const hashTypeMatch = hash.match(/type=(recovery|invite)/);
+        return {
+            type: (hashTypeMatch?.[1] as 'recovery' | 'invite') ?? 'recovery',
+            reason: 'expired',
+        };
+    }
+
+    const queryType = query.get('type');
+    if (queryType === 'recovery' || queryType === 'invite') {
+        return { type: queryType, reason: 'hint', email: query.get('email') ?? undefined };
+    }
+
+    if (hash.includes('type=recovery') || hash.includes('type=invite')) {
+        const hashTypeMatch = hash.match(/type=(recovery|invite)/);
+        return {
+            type: (hashTypeMatch?.[1] as 'recovery' | 'invite') ?? 'recovery',
+            reason: 'hint',
+        };
+    }
+
+    return { type: 'recovery', reason: null };
+};
 
 export const AuthScreen: React.FC = () => {
     const {
@@ -13,13 +49,18 @@ export const AuthScreen: React.FC = () => {
         signInWithPassword,
         signOut,
         updatePassword,
+        verifyEmailOtp,
     } = useAuth();
-    const [mode, setMode] = useState<'login' | 'forgot'>('login');
+    const [mode, setMode] = useState<AuthMode>('login');
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [resetEmail, setResetEmail] = useState('');
     const [nextPassword, setNextPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
+    const [otpEmail, setOtpEmail] = useState('');
+    const [otpCode, setOtpCode] = useState('');
+    const [otpType, setOtpType] = useState<'recovery' | 'invite'>('recovery');
+    const [otpHintReason, setOtpHintReason] = useState<'hint' | 'expired' | null>(null);
     const [message, setMessage] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
@@ -27,6 +68,28 @@ export const AuthScreen: React.FC = () => {
     const hasSession = Boolean(session?.user);
     const requiresPasswordReset = Boolean(hasSession && (profile?.mustResetPassword || requiresPasswordSetup));
     const isBlockedState = Boolean(hasSession && authError && !requiresPasswordReset);
+
+    useEffect(() => {
+        if (hasSession) {
+            return;
+        }
+
+        const hint = detectOtpHintFromUrl();
+        if (hint.reason) {
+            setMode('otp');
+            setOtpType(hint.type);
+            setOtpHintReason(hint.reason);
+            if (hint.email) {
+                setOtpEmail(hint.email);
+            }
+
+            // 오류 hash는 URL에서 정리해 새로고침 시 헷갈리지 않게 한다.
+            if (hint.reason === 'expired' && typeof window !== 'undefined' && window.location.hash) {
+                const cleanUrl = `${window.location.pathname}${window.location.search}`;
+                window.history.replaceState({}, '', cleanUrl);
+            }
+        }
+    }, [hasSession]);
 
     const handleLogin = async (event: React.FormEvent) => {
         event.preventDefault();
@@ -61,6 +124,38 @@ export const AuthScreen: React.FC = () => {
             setError(result.error);
         } else {
             setMessage('비밀번호 재설정 메일을 보냈습니다. 메일의 링크로 들어와 새 비밀번호를 설정해 주세요.');
+        }
+
+        setIsSubmitting(false);
+    };
+
+    const handleVerifyOtp = async (event: React.FormEvent) => {
+        event.preventDefault();
+
+        const trimmedEmail = otpEmail.trim().toLowerCase();
+        const trimmedToken = otpCode.replace(/\s+/g, '');
+
+        if (!trimmedEmail) {
+            setError('이메일을 입력해 주세요.');
+            return;
+        }
+
+        if (!/^\d{6}$/.test(trimmedToken)) {
+            setError('메일에서 받은 6자리 숫자 코드를 입력해 주세요.');
+            return;
+        }
+
+        setIsSubmitting(true);
+        setMessage(null);
+        setError(null);
+
+        const result = await verifyEmailOtp(trimmedEmail, trimmedToken, otpType);
+
+        if (result.error) {
+            setError(result.error);
+        } else {
+            setMessage('인증되었습니다. 새 비밀번호를 설정해 주세요.');
+            setOtpCode('');
         }
 
         setIsSubmitting(false);
@@ -140,11 +235,19 @@ export const AuthScreen: React.FC = () => {
                         <ShieldCheck size={22} />
                     </div>
                     <h2 className="mt-5 text-2xl font-bold text-slate-950">
-                        {requiresPasswordReset ? '새 비밀번호 설정' : '이메일로 로그인'}
+                        {requiresPasswordReset
+                            ? '새 비밀번호 설정'
+                            : mode === 'otp'
+                            ? '메일 코드 인증'
+                            : '이메일로 로그인'}
                     </h2>
                     <p className="mt-2 text-slate-500">
                         {requiresPasswordReset
                             ? '운영진이 계정을 발급했습니다. 계속 사용하려면 새 비밀번호를 먼저 설정해 주세요.'
+                            : mode === 'otp'
+                            ? otpHintReason === 'expired'
+                                ? '메일 링크는 보안 검사 도중 한 번 사용된 상태입니다. 메일 본문의 6자리 코드를 입력해 주세요.'
+                                : '메일 본문에 안내된 6자리 코드를 입력하면 비밀번호를 설정할 수 있습니다.'
                             : '등록된 이메일과 비밀번호로 로그인합니다. 비밀번호를 잊었다면 재설정 메일을 요청할 수 있습니다.'}
                     </p>
 
@@ -207,6 +310,58 @@ export const AuthScreen: React.FC = () => {
                                 className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
                             >
                                 로그아웃
+                            </button>
+                        </form>
+                    ) : mode === 'otp' ? (
+                        <form className="mt-8 space-y-4" onSubmit={handleVerifyOtp}>
+                            <label className="block space-y-1.5">
+                                <span className="text-xs font-medium text-slate-600">이메일</span>
+                                <div className="relative">
+                                    <Mail size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                                    <input
+                                        type="email"
+                                        value={otpEmail}
+                                        onChange={(event) => setOtpEmail(event.target.value)}
+                                        placeholder="등록된 이메일 주소"
+                                        className="w-full rounded-2xl border border-slate-200 bg-white py-3 pl-10 pr-4 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                                    />
+                                </div>
+                            </label>
+                            <label className="block space-y-1.5">
+                                <span className="text-xs font-medium text-slate-600">메일에서 받은 6자리 코드</span>
+                                <div className="relative">
+                                    <ShieldCheck size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                                    <input
+                                        type="text"
+                                        inputMode="numeric"
+                                        autoComplete="one-time-code"
+                                        maxLength={6}
+                                        value={otpCode}
+                                        onChange={(event) => setOtpCode(event.target.value.replace(/[^0-9]/g, ''))}
+                                        placeholder="123456"
+                                        className="w-full rounded-2xl border border-slate-200 bg-white py-3 pl-10 pr-4 text-base font-mono tracking-widest outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                                    />
+                                </div>
+                            </label>
+                            <button
+                                type="submit"
+                                disabled={isSubmitting}
+                                className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-indigo-600 px-4 py-3 text-sm font-semibold text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-indigo-300"
+                            >
+                                <ShieldCheck size={16} />
+                                {isSubmitting ? '인증 중...' : '코드 확인하고 비밀번호 설정'}
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setMode('login');
+                                    setOtpHintReason(null);
+                                    setMessage(null);
+                                    setError(null);
+                                }}
+                                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
+                            >
+                                비밀번호로 로그인하기
                             </button>
                         </form>
                     ) : mode === 'forgot' ? (
@@ -291,6 +446,20 @@ export const AuthScreen: React.FC = () => {
                                 className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
                             >
                                 비밀번호를 잊었어요
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setMode('otp');
+                                    setOtpEmail(email);
+                                    setOtpType('recovery');
+                                    setOtpHintReason(null);
+                                    setMessage(null);
+                                    setError(null);
+                                }}
+                                className="w-full rounded-2xl border border-dashed border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-50"
+                            >
+                                메일 코드로 인증하기
                             </button>
                         </form>
                     )}

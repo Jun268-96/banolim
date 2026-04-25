@@ -362,6 +362,43 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
                 return error ? { error: getPasswordResetRequestErrorMessage(error) } : {};
             },
+            verifyEmailOtp: async (email, token, type) => {
+                if (!supabase) {
+                    return {};
+                }
+
+                setAuthError(null);
+
+                const normalizedEmail = email.trim().toLowerCase();
+                const normalizedToken = token.replace(/\s+/g, '');
+
+                const { error } = await supabase.auth.verifyOtp({
+                    email: normalizedEmail,
+                    token: normalizedToken,
+                    type,
+                });
+
+                if (error) {
+                    const status =
+                        typeof error === 'object' && error !== null && 'status' in error
+                            ? Number((error as { status?: number }).status)
+                            : null;
+
+                    if (status === 429) {
+                        return { error: '인증 시도가 너무 많습니다. 잠시 후 다시 시도해 주세요.' };
+                    }
+
+                    if (error.message?.toLowerCase().includes('expired') || error.message?.toLowerCase().includes('invalid')) {
+                        return { error: '코드가 만료되었거나 올바르지 않습니다. 운영진에게 새 코드를 요청해 주세요.' };
+                    }
+
+                    return { error: error.message || '인증에 실패했습니다. 잠시 후 다시 시도해 주세요.' };
+                }
+
+                setRequiresPasswordSetup(true);
+
+                return {};
+            },
             refreshProfile: async () => {
                 if (!supabase || !user) return;
 

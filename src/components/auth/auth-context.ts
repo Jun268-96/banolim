@@ -16,6 +16,11 @@ export interface AuthContextValue {
     signInWithPassword: (email: string, password: string) => Promise<{ error?: string }>;
     updatePassword: (password: string) => Promise<{ error?: string }>;
     requestPasswordReset: (email: string) => Promise<{ error?: string }>;
+    verifyEmailOtp: (
+        email: string,
+        token: string,
+        type: 'recovery' | 'invite' | 'email',
+    ) => Promise<{ error?: string }>;
     refreshProfile: () => Promise<void>;
     signOut: () => Promise<void>;
 }
