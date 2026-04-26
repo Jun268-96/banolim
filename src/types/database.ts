@@ -712,6 +712,50 @@ export type Database = {
           },
         ]
       }
+      member_consents: {
+        Row: {
+          agreed: boolean
+          agreed_at: string
+          consent_type: string
+          consent_version: number
+          created_at: string
+          id: string
+          member_id: string
+          updated_at: string
+          user_agent_at_consent: string | null
+        }
+        Insert: {
+          agreed: boolean
+          agreed_at?: string
+          consent_type: string
+          consent_version?: number
+          created_at?: string
+          id?: string
+          member_id: string
+          updated_at?: string
+          user_agent_at_consent?: string | null
+        }
+        Update: {
+          agreed?: boolean
+          agreed_at?: string
+          consent_type?: string
+          consent_version?: number
+          created_at?: string
+          id?: string
+          member_id?: string
+          updated_at?: string
+          user_agent_at_consent?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "member_consents_member_id_fkey"
+            columns: ["member_id"]
+            isOneToOne: false
+            referencedRelation: "members"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       member_team_links: {
         Row: {
           created_at: string
@@ -1426,6 +1470,15 @@ export type Database = {
         Returns: Json
       }
       get_member_team_ids: { Args: { p_member_id: string }; Returns: string[] }
+      get_my_consent_status: {
+        Args: never
+        Returns: {
+          agreed: boolean
+          agreed_at: string
+          consent_type: string
+          consent_version: number
+        }[]
+      }
       get_my_activity_logs: {
         Args: never
         Returns: {
@@ -1488,6 +1541,14 @@ export type Database = {
       recalculate_member_primary_team: {
         Args: { p_member_id: string }
         Returns: string
+      }
+      record_my_consent: {
+        Args: {
+          p_consent_type: string
+          p_consent_version: number
+          p_agreed: boolean
+        }
+        Returns: undefined
       }
       refresh_all_member_badges: { Args: never; Returns: number }
       refresh_member_badges_for_members: {

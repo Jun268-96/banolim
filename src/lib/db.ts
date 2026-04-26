@@ -1087,6 +1087,71 @@ export const completeMyPasswordSetup = async (): Promise<void> => {
     }
 };
 
+export type MemberConsentType =
+    | 'required_v1'
+    | 'push_token_v1'
+    | 'overseas_transfer_v1'
+    | 'marketing_v1';
+
+export interface MemberConsentRecord {
+    consentType: MemberConsentType | string;
+    consentVersion: number;
+    agreed: boolean;
+    agreedAt: string;
+}
+
+export const REQUIRED_CONSENT_TYPE: MemberConsentType = 'required_v1';
+export const REQUIRED_CONSENT_VERSION = 1;
+
+export const recordMyConsent = async (
+    consentType: MemberConsentType,
+    consentVersion: number,
+    agreed: boolean,
+): Promise<void> => {
+    if (!isSupabaseConfigured) {
+        return;
+    }
+
+    const client = getSupabaseClient();
+    const { error } = await client.rpc('record_my_consent', {
+        p_consent_type: consentType,
+        p_consent_version: consentVersion,
+        p_agreed: agreed,
+    });
+
+    if (error) {
+        throw error;
+    }
+};
+
+export const getMyConsentStatus = async (): Promise<MemberConsentRecord[]> => {
+    if (!isSupabaseConfigured) {
+        return [];
+    }
+
+    const client = getSupabaseClient();
+    const { data, error } = await client.rpc('get_my_consent_status');
+
+    if (error) {
+        throw error;
+    }
+
+    return (data ?? []).map((row) => ({
+        consentType: row.consent_type,
+        consentVersion: row.consent_version,
+        agreed: row.agreed,
+        agreedAt: row.agreed_at,
+    }));
+};
+
+export const hasCompletedRequiredConsent = (records: MemberConsentRecord[]): boolean =>
+    records.some(
+        (record) =>
+            record.consentType === REQUIRED_CONSENT_TYPE &&
+            record.consentVersion === REQUIRED_CONSENT_VERSION &&
+            record.agreed === true,
+    );
+
 export const getActivityGroups = async (): Promise<ActivityGroup[]> => {
     if (!isSupabaseConfigured) {
         return [...localState.activityGroups]

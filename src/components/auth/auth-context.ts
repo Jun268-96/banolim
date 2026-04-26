@@ -11,6 +11,7 @@ export interface AuthContextValue {
     session: Session | null;
     profile: UserProfile | null;
     requiresPasswordSetup: boolean;
+    requiresConsent: boolean;
     role: AppRole;
     permissions: AppPermissions;
     signInWithPassword: (email: string, password: string) => Promise<{ error?: string }>;
@@ -22,6 +23,7 @@ export interface AuthContextValue {
         type: 'recovery' | 'invite' | 'email',
     ) => Promise<{ error?: string }>;
     refreshProfile: () => Promise<void>;
+    refreshConsentStatus: () => Promise<void>;
     signOut: () => Promise<void>;
 }
 

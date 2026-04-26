@@ -283,6 +283,18 @@ export const AuthScreen: React.FC = () => {
                                     className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
                                 />
                             </label>
+                            <p className="rounded-2xl bg-indigo-50/60 px-4 py-3 text-xs text-slate-700">
+                                비밀번호를 저장한 뒤 다음 단계에서{' '}
+                                <a
+                                    href="/privacy"
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="font-semibold text-indigo-600 underline hover:text-indigo-700"
+                                >
+                                    개인정보 처리방침
+                                </a>
+                                에 동의해야 서비스를 이용할 수 있습니다.
+                            </p>
                             <button
                                 type="submit"
                                 disabled={isSubmitting}

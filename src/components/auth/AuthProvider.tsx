@@ -3,6 +3,7 @@ import type { AuthChangeEvent, Session, User } from '@supabase/supabase-js';
 import type { AppRole, UserProfile } from '../../types';
 import { completeMyPasswordSetup, isRegisteredLoginEmail } from '../../lib/api/auth/account';
 import { buildPermissions } from '../../lib/permissions';
+import { getMyConsentStatus, hasCompletedRequiredConsent } from '../../lib/db';
 import { isAuthBypassed, isSupabaseConfigured, supabase } from '../../lib/supabase';
 import type { Database } from '../../types/database';
 import { AuthContext, type AuthContextValue } from './auth-context';
@@ -156,6 +157,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const [isLoading, setIsLoading] = useState(isSupabaseConfigured && !isAuthBypassed);
     const [authError, setAuthError] = useState<string | null>(null);
     const [requiresPasswordSetup, setRequiresPasswordSetup] = useState(false);
+    const [requiresConsent, setRequiresConsent] = useState(false);
+
+    const evaluateConsentStatus = async (): Promise<boolean> => {
+        if (!isSupabaseConfigured || !supabase) {
+            return false;
+        }
+
+        try {
+            const records = await getMyConsentStatus();
+            return !hasCompletedRequiredConsent(records);
+        } catch (error) {
+            console.warn('[auth] failed to evaluate consent status', error);
+            // 동의 조회 실패 시 안전한 기본값: 미동의로 간주해 ConsentForm 노출
+            return true;
+        }
+    };
 
     useEffect(() => {
         const client = supabase;
@@ -212,6 +229,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 if (isMounted) {
                     setProfile(null);
                     setAuthError(null);
+                    setRequiresConsent(false);
                 }
                 return;
             }
@@ -222,12 +240,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                     setProfile(resolvedProfile);
                     setAuthError(getProfileAccessMessage(resolvedProfile));
                 }
+
+                // 활성 회원만 동의 상태 평가 (memberId 미연결·비활성은 어차피 isAuthenticated=false)
+                if (resolvedProfile.memberId && resolvedProfile.isActive && !resolvedProfile.mustResetPassword) {
+                    const needsConsent = await evaluateConsentStatus();
+                    if (isMounted) {
+                        setRequiresConsent(needsConsent);
+                    }
+                } else if (isMounted) {
+                    setRequiresConsent(false);
+                }
             } catch (error) {
                 console.error('[auth] failed to resolve user profile', error);
 
                 if (isMounted) {
                     setProfile(null);
                     setAuthError(getProfileErrorMessage(error));
+                    setRequiresConsent(false);
                 }
             }
         };
@@ -261,6 +290,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             }
             if (event === 'SIGNED_OUT') {
                 setRequiresPasswordSetup(false);
+                setRequiresConsent(false);
             }
 
             void resolveProfile(nextSession?.user ?? null);
@@ -282,12 +312,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const value = useMemo<AuthContextValue>(
         () => ({
             isLoading,
-            isAuthenticated: Boolean(profile && profile.isActive && profile.memberId && !profile.mustResetPassword && !requiresPasswordSetup),
+            isAuthenticated: Boolean(
+                profile &&
+                profile.isActive &&
+                profile.memberId &&
+                !profile.mustResetPassword &&
+                !requiresPasswordSetup &&
+                !requiresConsent,
+            ),
             authError,
             user,
             session,
             profile,
             requiresPasswordSetup,
+            requiresConsent,
             role,
             permissions,
             signInWithPassword: async (email: string, password: string) => {
@@ -411,22 +449,36 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                     const resolvedProfile = await fetchProfile(user);
                     setProfile(resolvedProfile);
                     setAuthError(getProfileAccessMessage(resolvedProfile));
+
+                    if (resolvedProfile.memberId && resolvedProfile.isActive && !resolvedProfile.mustResetPassword) {
+                        const needsConsent = await evaluateConsentStatus();
+                        setRequiresConsent(needsConsent);
+                    } else {
+                        setRequiresConsent(false);
+                    }
                 } catch (error) {
                     console.error('[auth] failed to refresh user profile', error);
                     setProfile(null);
                     setAuthError(getProfileErrorMessage(error));
+                    setRequiresConsent(false);
                 } finally {
                     setIsLoading(false);
                 }
+            },
+            refreshConsentStatus: async () => {
+                if (!supabase || !user || !profile?.memberId) return;
+                const needsConsent = await evaluateConsentStatus();
+                setRequiresConsent(needsConsent);
             },
             signOut: async () => {
                 if (isAuthBypassed || !supabase) return;
                 setAuthError(null);
                 setRequiresPasswordSetup(false);
+                setRequiresConsent(false);
                 await supabase.auth.signOut();
             },
         }),
-        [authError, isLoading, permissions, profile, requiresPasswordSetup, role, session, user],
+        [authError, isLoading, permissions, profile, requiresConsent, requiresPasswordSetup, role, session, user],
     );
 
     return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
