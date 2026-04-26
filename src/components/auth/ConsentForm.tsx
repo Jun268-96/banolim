@@ -1,11 +1,6 @@
 import React, { useState } from 'react';
 import { CheckCircle2, ExternalLink, ShieldCheck } from 'lucide-react';
-import {
-    REQUIRED_CONSENT_TYPE,
-    REQUIRED_CONSENT_VERSION,
-    recordMyConsent,
-    type MemberConsentType,
-} from '../../lib/db';
+import { recordMyConsent, type MemberConsentType } from '../../lib/db';
 import { useAuth } from './auth-context';
 
 interface ConsentFormProps {
@@ -13,21 +8,53 @@ interface ConsentFormProps {
     onOpenPrivacy: () => void;
 }
 
-interface OptionalItem {
+interface ConsentItem {
     type: MemberConsentType;
     version: number;
     label: string;
-    description: string;
+    description: React.ReactNode;
 }
 
-const OPTIONAL_ITEMS: OptionalItem[] = [
+const REQUIRED_ITEMS: ConsentItem[] = [
+    {
+        type: 'required_v1',
+        version: 1,
+        label: '[필수] 개인정보 수집·이용 동의',
+        description: (
+            <>
+                항목: 이름, 이메일, 비밀번호(암호화), 팀·직책·점수·활동기록, 접속 로그(IP·UA·시각)
+                <br />
+                목적: 회원 식별, 활동 기록 관리, 알림 발송, 보안 로그
+                <br />
+                보유 기간: 회원 탈퇴 또는 단체 해체 시까지
+                <br />
+                <span className="text-rose-600">※ 거부 시 서비스 이용이 제한됩니다.</span>
+            </>
+        ),
+    },
     {
         type: 'overseas_transfer_v1',
         version: 1,
-        label: '[선택] 개인정보의 국외 이전 동의',
-        description:
-            'Supabase(미국), Vercel(미국), Google(미국)으로 가입 정보가 이전되어야 서비스가 동작합니다. 미동의 시 서비스 이용이 제한됩니다.',
+        label: '[필수] 개인정보의 국외 이전 동의',
+        description: (
+            <>
+                이전 받는 자: Supabase Inc.(미국), Vercel Inc.(미국), Google LLC(미국)
+                <br />
+                이전 항목: 위 [필수] 수집 항목 전체
+                <br />
+                이전 목적: 데이터베이스·인증·호스팅·메일 발송
+                <br />
+                보유 기간: 위탁 계약 종료 시까지
+                <br />
+                <span className="text-rose-600">
+                    ※ 본 단체는 미국 호스팅 서비스를 사용하므로 거부 시 서비스 이용이 불가합니다.
+                </span>
+            </>
+        ),
     },
+];
+
+const OPTIONAL_ITEMS: ConsentItem[] = [
     {
         type: 'push_token_v1',
         version: 1,
@@ -39,20 +66,28 @@ const OPTIONAL_ITEMS: OptionalItem[] = [
 
 export const ConsentForm: React.FC<ConsentFormProps> = ({ onCompleted, onOpenPrivacy }) => {
     const { signOut, profile } = useAuth();
-    const [requiredAgreed, setRequiredAgreed] = useState(false);
+    const [requiredAgreed, setRequiredAgreed] = useState<Record<string, boolean>>({});
     const [optionalAgreed, setOptionalAgreed] = useState<Record<string, boolean>>({});
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [error, setError] = useState<string | null>(null);
+
+    const toggleRequired = (key: string) => {
+        setRequiredAgreed((prev) => ({ ...prev, [key]: !prev[key] }));
+    };
 
     const toggleOptional = (key: string) => {
         setOptionalAgreed((prev) => ({ ...prev, [key]: !prev[key] }));
     };
 
+    const allRequiredChecked = REQUIRED_ITEMS.every(
+        (item) => requiredAgreed[`${item.type}:${item.version}`],
+    );
+
     const handleSubmit = async (event: React.FormEvent) => {
         event.preventDefault();
 
-        if (!requiredAgreed) {
-            setError('필수 동의 항목에 체크해야 서비스를 이용할 수 있습니다.');
+        if (!allRequiredChecked) {
+            setError('필수 동의 항목 모두에 체크해야 서비스를 이용할 수 있습니다.');
             return;
         }
 
@@ -60,7 +95,9 @@ export const ConsentForm: React.FC<ConsentFormProps> = ({ onCompleted, onOpenPri
         setError(null);
 
         try {
-            await recordMyConsent(REQUIRED_CONSENT_TYPE, REQUIRED_CONSENT_VERSION, true);
+            for (const item of REQUIRED_ITEMS) {
+                await recordMyConsent(item.type, item.version, true);
+            }
 
             for (const item of OPTIONAL_ITEMS) {
                 const key = `${item.type}:${item.version}`;
@@ -99,30 +136,26 @@ export const ConsentForm: React.FC<ConsentFormProps> = ({ onCompleted, onOpenPri
                 </button>
 
                 <form className="mt-6 space-y-3" onSubmit={handleSubmit}>
-                    <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-indigo-200 bg-indigo-50/40 p-4 transition-colors hover:bg-indigo-50">
-                        <input
-                            type="checkbox"
-                            checked={requiredAgreed}
-                            onChange={(event) => setRequiredAgreed(event.target.checked)}
-                            className="mt-0.5 h-4 w-4 cursor-pointer rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                        />
-                        <span className="flex-1 text-sm">
-                            <span className="block font-semibold text-indigo-900">
-                                [필수] 개인정보 수집·이용 동의
-                            </span>
-                            <span className="mt-1 block text-slate-700">
-                                항목: 이름, 이메일, 비밀번호(암호화), 팀·직책·점수·활동기록, 접속 로그(IP·UA·시각)
-                                <br />
-                                목적: 회원 식별, 활동 기록 관리, 알림 발송, 보안 로그
-                                <br />
-                                보유 기간: 회원 탈퇴 또는 단체 해체 시까지
-                                <br />
-                                <span className="text-rose-600">
-                                    ※ 거부 시 서비스 이용이 제한됩니다 (회원 가입 자체가 불가).
+                    {REQUIRED_ITEMS.map((item) => {
+                        const key = `${item.type}:${item.version}`;
+                        return (
+                            <label
+                                key={key}
+                                className="flex cursor-pointer items-start gap-3 rounded-2xl border border-indigo-200 bg-indigo-50/40 p-4 transition-colors hover:bg-indigo-50"
+                            >
+                                <input
+                                    type="checkbox"
+                                    checked={Boolean(requiredAgreed[key])}
+                                    onChange={() => toggleRequired(key)}
+                                    className="mt-0.5 h-4 w-4 cursor-pointer rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                                />
+                                <span className="flex-1 text-sm">
+                                    <span className="block font-semibold text-indigo-900">{item.label}</span>
+                                    <span className="mt-1 block text-slate-700">{item.description}</span>
                                 </span>
-                            </span>
-                        </span>
-                    </label>
+                            </label>
+                        );
+                    })}
 
                     {OPTIONAL_ITEMS.map((item) => {
                         const key = `${item.type}:${item.version}`;
@@ -153,7 +186,7 @@ export const ConsentForm: React.FC<ConsentFormProps> = ({ onCompleted, onOpenPri
 
                     <button
                         type="submit"
-                        disabled={isSubmitting || !requiredAgreed}
+                        disabled={isSubmitting || !allRequiredChecked}
                         className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-indigo-600 px-4 py-3 text-sm font-semibold text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-indigo-300"
                     >
                         <CheckCircle2 size={16} />

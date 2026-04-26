@@ -1103,6 +1103,11 @@ export interface MemberConsentRecord {
 export const REQUIRED_CONSENT_TYPE: MemberConsentType = 'required_v1';
 export const REQUIRED_CONSENT_VERSION = 1;
 
+export const REQUIRED_CONSENTS: { type: MemberConsentType; version: number }[] = [
+    { type: 'required_v1', version: 1 },
+    { type: 'overseas_transfer_v1', version: 1 },
+];
+
 export const recordMyConsent = async (
     consentType: MemberConsentType,
     consentVersion: number,
@@ -1145,11 +1150,13 @@ export const getMyConsentStatus = async (): Promise<MemberConsentRecord[]> => {
 };
 
 export const hasCompletedRequiredConsent = (records: MemberConsentRecord[]): boolean =>
-    records.some(
-        (record) =>
-            record.consentType === REQUIRED_CONSENT_TYPE &&
-            record.consentVersion === REQUIRED_CONSENT_VERSION &&
-            record.agreed === true,
+    REQUIRED_CONSENTS.every(({ type, version }) =>
+        records.some(
+            (record) =>
+                record.consentType === type &&
+                record.consentVersion === version &&
+                record.agreed === true,
+        ),
     );
 
 export const getActivityGroups = async (): Promise<ActivityGroup[]> => {
