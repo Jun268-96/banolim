@@ -268,3 +268,64 @@ WHERE id IN (...)
 | 회원 관리 UI | `src/components/dashboard/DashboardTab.tsx`, `dialogs/MemberAccountDialog.tsx`, `dialogs/ProvisionedAccountDialog.tsx` |
 | Edge Functions | `supabase/functions/<name>/index.ts` |
 | 마이그레이션 | `supabase/migrations/<timestamp>_<name>.sql` |
+
+---
+
+## 개인정보 동의 시스템 (PIPA 준수, 2026-04-26 도입)
+
+### 운영 조건 (사용자 확정)
+- 회원은 모두 **만 14세 이상** → 제22조의2 법정대리인 동의 절차 없음
+- **학생·회원 자율 운영 사적 모임** → 제15조 1항 3호(공공기관 면제) 적용 불가, 처리방침·CPO 의무 운영진 직접 부담
+
+### 동의 항목 (`public.member_consents.consent_type`)
+| type | version | 분류 | 동작 |
+|---|---|---|---|
+| `required_v1` | 1 | **필수** | 미체크 시 가입 불가 |
+| `overseas_transfer_v1` | 1 | **필수** | 미체크 시 가입 불가 (Supabase·Vercel·Google 모두 미국 서버라 거부 시 운영 불가) |
+| `push_token_v1` | 1 | 선택 | 미체크해도 가입 가능, 푸시 알림만 미발송 |
+| `marketing_v1` | (미사용) | 선택 | 향후 도입 대비 — 현재 호출 코드 없음 |
+
+`REQUIRED_CONSENTS` 배열(`src/lib/db.ts`)에 정의된 모든 항목이 `agreed=true`여야 통과. 추가/제거 시 이 배열만 갱신하면 자동 반영됨.
+
+### DB
+- 테이블: `public.member_consents` — 같은 `(member_id, consent_type, consent_version)`은 행 1개로 갱신(감사 로그)
+- RLS: 본인 또는 super_admin/operator만 SELECT. INSERT/UPDATE/DELETE 정책 없음 → RPC 통해서만 변경
+- RPC: `record_my_consent(p_consent_type, p_consent_version, p_agreed)`, `get_my_consent_status()` (security definer)
+
+### 게이트 흐름
+1. 회원이 비번 설정(`AuthScreen` requiresPasswordReset) 후 → `AuthProvider.evaluateConsentStatus()`가 `get_my_consent_status` 호출
+2. 필수 동의 미완료면 `requiresConsent=true` → `isAuthenticated=false`로 떨어져 dashboard 차단
+3. `AuthShell`이 `requiresConsent && !requiresPasswordSetup && session` 분기에서 풀스크린 `ConsentForm` 강제 노출
+4. 동의 후 `refreshConsentStatus()` 호출로 상태 갱신 → dashboard 진입
+
+### 처리방침
+- 페이지: `src/components/legal/PrivacyPolicy.tsx` — 11개 섹션(목적·항목·기간·국외이전·CPO 등 제30조)
+- 라우팅: `/privacy` SPA 경로 (`vercel.json`에 SPA fallback rewrites)
+- 버전 상수: `PRIVACY_POLICY_VERSION` (현재 v1, 시행일 2026-04-26)
+- **CPO**: "사이트 관리자" / `hhj96916@gmail.com` (9번 섹션) — 책임자 변경 시 이 파일 수정
+- AuthScreen 비번 설정 폼에서 `target="_blank"`로 새 탭 링크
+- ConsentForm에서 `usePrivacyOverlay`로 same-origin overlay 노출
+
+### 처리방침 변경 시 재동의 받는 패턴
+처리방침 수정 → `PRIVACY_POLICY_VERSION` 올림 → `REQUIRED_CONSENTS`에 새 버전(`required_v2` 등) 추가 → `record_my_consent`로 새 행 INSERT. 회원이 다음 로그인 시 ConsentForm 다시 노출됨(이전 버전 v1 동의는 더 이상 필수 충족 못 시킴).
+
+---
+
+## 운영 노트: Supabase 마이그레이션 적용
+
+### 히스토리 불일치 (현재 상태)
+- 로컬 파일명: 8자리 `20260426_*.sql`
+- 원격 `supabase_migrations` 테이블: 14자리 `20260422221714` 형식 9개가 따로 등록됨 (이전 운영자가 Studio에서 직접 적용한 흔적)
+- → `supabase db push`는 모든 로컬 마이그레이션을 재적용하려 시도해 충돌. **사용 금지**.
+
+### 표준 적용 경로 — Studio SQL Editor
+1. SQL을 클립보드에 복사: `pbcopy < supabase/migrations/<file>.sql`
+2. Studio 열기: `open -a "Google Chrome" "https://supabase.com/dashboard/project/rmqngqehthovhcwnwjpj/sql/new"`
+3. 사용자가 ⌘V → [Run] 클릭
+4. 모든 마이그레이션은 **idempotent** 작성 (`CREATE TABLE IF NOT EXISTS`, `CREATE OR REPLACE FUNCTION`, `DROP ... IF EXISTS` 후 재생성) — 실수로 재실행돼도 안전
+
+### MCP/CLI 자동 적용 시도가 막힌 이유 (확인됨)
+- `mcp__claude_ai_Supabase__*` 도구는 일부 세션에서만 deferred로 노출됨. 항상 ToolSearch로 사전 확인 필요
+- macOS keychain `Supabase CLI` 항목의 토큰은 78자 — Personal Access Token(`sbp_…`) 형식 아님, Management API 401
+- `psql` 미설치
+- 자동 경로가 막히면 위 Studio 직접 적용이 가장 빠름
