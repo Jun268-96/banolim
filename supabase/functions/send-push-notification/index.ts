@@ -28,6 +28,45 @@ Deno.serve(async (request) => {
     }
 
     try {
+        const authorization = request.headers.get('Authorization');
+        if (!authorization) {
+            return new Response(JSON.stringify({ error: '인증 헤더가 없습니다.' }), {
+                status: 401,
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
+        }
+
+        const adminClient = createClient(supabaseUrl, supabaseServiceRoleKey, {
+            auth: { autoRefreshToken: false, persistSession: false },
+        });
+
+        // verify_jwt: true로 게이트웨이에서 검증된 토큰의 sub만 추출 후 app_role 화이트리스트 확인.
+        // provision-member-auth와 동일한 패턴 — super_admin/operator만 푸시 발송 허용.
+        const token = authorization.replace(/^Bearer\s+/i, '').trim();
+        const payloadBase64 = token.split('.')[1];
+        const jwtPayload = JSON.parse(atob(payloadBase64)) as { sub?: string };
+        const callerUserId = jwtPayload.sub;
+
+        if (!callerUserId) {
+            return new Response(JSON.stringify({ error: '인증 정보를 확인하지 못했습니다.' }), {
+                status: 401,
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
+        }
+
+        const { data: profile, error: profileError } = await adminClient
+            .from('user_profiles')
+            .select('id, app_role')
+            .eq('id', callerUserId)
+            .maybeSingle();
+
+        if (profileError || !profile || !['super_admin', 'operator'].includes(profile.app_role)) {
+            return new Response(JSON.stringify({ error: '푸시 알림 발송 권한이 없습니다.' }), {
+                status: 403,
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
+        }
+
         const { title, body, url } = (await request.json()) as {
             title: string;
             body: string;
@@ -40,10 +79,6 @@ Deno.serve(async (request) => {
                 headers: { ...corsHeaders, 'Content-Type': 'application/json' },
             });
         }
-
-        const adminClient = createClient(supabaseUrl, supabaseServiceRoleKey, {
-            auth: { autoRefreshToken: false, persistSession: false },
-        });
 
         const { data: subscriptions, error } = await adminClient
             .from('push_subscriptions')

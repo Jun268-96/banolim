@@ -234,9 +234,43 @@ WHERE id IN (...)
 |---|---|---|
 | `provision-member-auth` | true | 회원 [계정 발급]/[재발급] — invite/recovery 메일 + 백업 링크 발급 |
 | `hard-delete-member` | true | 회원 영구 삭제 (soft delete 우회) |
-| `send-push-notification` | false | 웹푸시 발송 |
+| `send-push-notification` | true | 웹푸시 발송 — 운영진(super_admin/operator)만 발송 가능 |
 
 배포: `mcp__claude_ai_Supabase__deploy_edge_function` (files 배열로 단일 파일 업로드).
+
+### Edge Function 빌드 사각지대 ⚠️
+
+`tsconfig.app.json`의 `include: ["src"]`가 `supabase/functions/`를 **검증 제외**한다. 이 때문에:
+
+- 변수 shadowing (`const x` 두 번 선언), 타입 불일치, import 오타 같은 기본 SyntaxError가 `npx tsc -b`에서 통과됨
+- 실제로는 Deno cold start 시점에 함수 전체가 죽음 → 사용자 영향 발생 후 발견
+- 배포 전 수동 리뷰 또는 `deno check supabase/functions/<name>/index.ts` 별도 실행 권장
+- `mcp__claude_ai_Supabase__deploy_edge_function`은 syntax 검증 없이 그대로 업로드함
+
+### 신규 Edge Function 권한 검증 체크리스트
+
+`verify_jwt: true`는 **게이트웨이 인증**만 보장(토큰 유효성). **권한 검증은 함수 내에서 별도**로 해야 한다. send-push-notification v1이 이 단계를 통째로 빠뜨려 일반 회원도 호출 가능했던 사례가 있음 (v2에서 패치).
+
+신규 Edge Function 작성 시 다음 패턴 필수:
+
+```typescript
+// 1. Authorization 헤더 확인
+const authorization = request.headers.get('Authorization');
+if (!authorization) return 401;
+
+// 2. JWT sub 추출 (게이트웨이 검증 후라 디코딩만)
+const token = authorization.replace(/^Bearer\s+/i, '').trim();
+const jwtPayload = JSON.parse(atob(token.split('.')[1])) as { sub?: string };
+const callerUserId = jwtPayload.sub;
+if (!callerUserId) return 401;
+
+// 3. user_profiles.app_role 화이트리스트
+const { data: profile } = await adminClient
+  .from('user_profiles').select('app_role').eq('id', callerUserId).maybeSingle();
+if (!profile || !['super_admin', 'operator'].includes(profile.app_role)) return 403;
+```
+
+레퍼런스 구현: `provision-member-auth/index.ts:25-58`, `hard-delete-member/index.ts`, `send-push-notification/index.ts:31-68` (v2). 모두 동일 패턴.
 
 ---
 
