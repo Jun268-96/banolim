@@ -375,6 +375,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                         const resolvedProfile = await fetchProfile(user);
                         setProfile(resolvedProfile);
                         setAuthError(getProfileAccessMessage(resolvedProfile));
+
+                        if (
+                            resolvedProfile.memberId &&
+                            resolvedProfile.isActive &&
+                            !resolvedProfile.mustResetPassword
+                        ) {
+                            const needsConsent = await evaluateConsentStatus();
+                            setRequiresConsent(needsConsent);
+                        }
                     }
 
                     setRequiresPasswordSetup(false);
