@@ -1385,6 +1385,23 @@ export const getLogs = async (cachedMembers?: Member[]): Promise<ActivityLog[]> 
         const memberMap = new Map(members.map((member) => [member.id, member.name]));
         const categoryMap = new Map(categories.map((category) => [category.id, category.categoryName]));
 
+        // 새 버전 생성 시 이전 규칙은 is_active=false가 되어 getCategories()에서 빠지지만,
+        // ledger.point_rule_id는 발생 당시 규칙을 영원히 가리킨다. 누락된 ID만 별도 조회로 보충.
+        const missingRuleIds = [
+            ...new Set(ledgerRows.map((ledger) => ledger.point_rule_id).filter((id): id is string => Boolean(id) && !categoryMap.has(id))),
+        ];
+        if (missingRuleIds.length > 0) {
+            const { data: archivedRules } = await client
+                .from('point_rule_catalog')
+                .select('id, category_name')
+                .in('id', missingRuleIds);
+            archivedRules?.forEach((rule) => {
+                if (rule.id) {
+                    categoryMap.set(rule.id, rule.category_name ?? '알 수 없는 규칙');
+                }
+            });
+        }
+
         return ledgerRows.map((ledger) => {
             const record = recordMap.get(ledger.record_id);
 
