@@ -288,6 +288,22 @@ if (!profile || !['super_admin', 'operator'].includes(profile.app_role)) return 
 
 ---
 
+## 코드 패턴 (반복 적용 룰)
+
+### 후속 게이트는 setter에서 명시 평가
+
+`supabase.auth.updateUser({ password })`처럼 인증 상태를 바꾸는 호출은 `USER_UPDATED` 이벤트를 발화시켜 `onAuthStateChange` 리스너의 `resolveProfile`을 백그라운드로 다시 돌린다. 동시에 호출자(예: `updatePassword`)가 직접 `setRequiresPasswordSetup(false)` 같은 게이트 해제를 commit하면 두 경로가 race를 만들어, `requiresConsent` 같은 후속 게이트가 늦게 set되는 사이 `isAuthenticated=true`로 잠깐 평가됨 → dashboard 깜빡임 발생.
+
+**룰**: 인증 상태를 바꾸는 함수는 그 함수 안에서 후속 게이트(consent, role, profile)도 **명시적으로 await + setState** 후 마지막에 본 게이트 해제. 백그라운드 `onAuthStateChange`에 의존 X. 레퍼런스: `AuthProvider.tsx:374-385` `updatePassword` (커밋 efc60e7).
+
+### 버전 관리 catalog enrich는 archived 별도 조회로 보충
+
+`point_rule_catalog`처럼 새 버전 만들면 이전 버전을 `is_active=false`로 마킹하는 catalog는 active-only fetch(`getCategories`)로만 enrich하면 ledger·log·history가 가리키는 archived ID가 누락 → "알 수 없는 규칙" 같은 fallback 노출.
+
+**룰**: catalog enrich 시 (1) 1차로 active만 모아 Map 구성 (2) 데이터 행에서 가리키는 ID 중 Map에 없는 것만 `Set`으로 모음 (3) inactive 포함 별도 조회로 이름만 보충. 레퍼런스: `db.ts:1389-1404` `getLogs` (커밋 55a39ad).
+
+---
+
 ## 자주 보는 파일
 
 | 영역 | 파일 |
