@@ -500,7 +500,7 @@ const mapAttendanceSessionMember = (
         memberName: member?.name ?? '알 수 없는 멤버',
         roleName: member?.roleName ?? null,
         teamNames,
-        status: (row.attendance_status as AttendanceStatus) ?? 'present',
+        status: (row.attendance_status as AttendanceStatus) ?? 'absent',
         activityRecordId: row.activity_record_id ?? null,
         createdAt: row.created_at,
         updatedAt: row.updated_at,
@@ -2688,24 +2688,17 @@ export const createAttendanceSession = async (input: {
     const createLocalSession = async () => {
         const createdAt = new Date().toISOString();
         const sessionId = createLocalId('attendance_session');
-        const recordIds = await createBatchActivityEntryRecords(
-            targetMembers.map((member) => member.id),
-            presentRule.id,
-            note ?? undefined,
-            {
-                occurredAt: input.startsAt,
-                reason: `${title} · ${attendanceStatusLabels.present}`,
-            },
-        );
-        const entries = targetMembers.map<AttendanceSessionMember>((member, index) => ({
+        // 기본값은 '결석' — 생성 시 아무에게도 점수를 부여하지 않는다.
+        // 출석으로 직접 체크한 사람만 그 시점에 출석 점수를 받는다.
+        const entries = targetMembers.map<AttendanceSessionMember>((member) => ({
             id: createLocalId('attendance_entry'),
             sessionId,
             memberId: member.id,
             memberName: member.name,
             roleName: member.roleName ?? null,
             teamNames: member.teamNames ?? (member.teamName ? [member.teamName] : []),
-            status: 'present',
-            activityRecordId: recordIds[index] ?? null,
+            status: 'absent',
+            activityRecordId: null,
             createdAt,
             updatedAt: createdAt,
         }));
@@ -2761,21 +2754,13 @@ export const createAttendanceSession = async (input: {
             throw error ?? new Error('출석 세션을 만들지 못했습니다.');
         }
 
-        const recordIds = await createBatchActivityEntryRecords(
-            targetMembers.map((member) => member.id),
-            presentRule.id,
-            note ?? undefined,
-            {
-                occurredAt: input.startsAt,
-                reason: `${title} · ${attendanceStatusLabels.present}`,
-            },
-        );
+        // 기본값은 '결석' — 생성 시 점수 부여 없이 멤버 항목만 만든다.
         const { error: entryError } = await client.from('attendance_session_members').insert(
-            targetMembers.map((member, index) => ({
+            targetMembers.map((member) => ({
                 session_id: data.id,
                 member_id: member.id,
-                attendance_status: 'present',
-                activity_record_id: recordIds[index] ?? null,
+                attendance_status: 'absent',
+                activity_record_id: null,
             })),
         );
 
@@ -2865,9 +2850,11 @@ export const updateAttendanceSessionMemberStatus = async (input: {
     note?: string | null;
 }): Promise<void> => {
     const categories = await getCategories();
-    const targetRule = getAttendanceRule(categories, input.status);
+    // '결석'은 항상 0점(점수 기록 없음)으로 취급한다. 따라서 규칙 조회/검증도 건너뛴다.
+    const isAbsent = input.status === 'absent';
+    const targetRule = isAbsent ? null : getAttendanceRule(categories, input.status);
 
-    if (!targetRule) {
+    if (!isAbsent && !targetRule) {
         throw new Error(`${attendanceStatusLabels[input.status]} 처리 규칙을 찾지 못했습니다. 설정에서 출석 규칙을 확인해 주세요.`);
     }
 
@@ -2882,10 +2869,12 @@ export const updateAttendanceSessionMemberStatus = async (input: {
             await reverseActivityEntryRecord(sessionMember.activityRecordId, `${reason}으로 재조정`);
         }
 
-        const recordId = await createActivityEntryRecord(input.memberId, targetRule.id, input.note ?? undefined, {
-            occurredAt: input.startsAt,
-            reason,
-        });
+        const recordId = isAbsent
+            ? null
+            : await createActivityEntryRecord(input.memberId, targetRule!.id, input.note ?? undefined, {
+                occurredAt: input.startsAt,
+                reason,
+            });
 
         localState.attendanceSessionMembers = localState.attendanceSessionMembers.map((entry) =>
             entry.id === sessionMember.id
@@ -2945,10 +2934,12 @@ export const updateAttendanceSessionMemberStatus = async (input: {
             await reverseActivityEntryRecord(data.activity_record_id, `${reason}으로 재조정`);
         }
 
-        const recordId = await createActivityEntryRecord(input.memberId, targetRule.id, input.note ?? undefined, {
-            occurredAt: input.startsAt,
-            reason,
-        });
+        const recordId = isAbsent
+            ? null
+            : await createActivityEntryRecord(input.memberId, targetRule!.id, input.note ?? undefined, {
+                occurredAt: input.startsAt,
+                reason,
+            });
         const { error: updateError } = await client
             .from('attendance_session_members')
             .update({
